@@ -245,7 +245,7 @@ export function configureAgent(home, agent, { enabled, port = DEFAULT_PORT, majo
   if (agent === "opencode" && opencodeMajor >= 2 && enabled) {
     return {
       ok: false,
-      message: "OpenCode 2 trims inside its plugin and is not pointed at the proxy. Link plugin/opencode/shelf.js into ~/.config/opencode/plugins/.",
+      message: "OpenCode 2 trims inside its plugin and is not pointed at the proxy. Run: opencode plugin opencode-shelf (or opencode plugin -g opencode-shelf).",
     };
   }
   const key = enabled ? ensureKey(home) : "";

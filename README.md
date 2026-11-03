@@ -62,15 +62,18 @@ Reload Cursor and confirm `shelf` appears under local plugins. Cursor's hooks re
 
 ### OpenCode
 
-OpenCode 2 trims in the plugin. It does not use the proxy.
+Same install flow as [opencode-clm](https://github.com/bcmyguest/opencode-clm):
 
-```
+```sh
 git clone https://github.com/bcmyguest/shelf.git
-mkdir -p ~/.config/opencode/plugins
-ln -s "$PWD/shelf/plugin/opencode/shelf.js" ~/.config/opencode/plugins/
+cd shelf
+opencode plugin opencode-shelf        # project .opencode/opencode.json
+opencode plugin -g opencode-shelf       # global ~/.config/opencode/
 ```
 
-OpenCode 1 is the proxy path: `./plugin/scripts/shelf enable opencode`, then `./plugin/scripts/shelf proxy`. `enable opencode` refuses to set a base URL when `opencode --version` reports major 2.
+**OpenCode 2** trims in the plugin (`context` hook). Add options on the plugin entry if you need them; see [docs/opencode.md](docs/opencode.md).
+
+**OpenCode 1** has no context hook, so run `./plugin/scripts/shelf enable opencode` and `./plugin/scripts/shelf proxy` as well. `enable opencode` refuses a proxy base URL when `opencode --version` reports major 2.
 
 ## Commands
 

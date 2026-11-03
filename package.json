@@ -1,16 +1,56 @@
 {
-  "name": "shelf",
-  "version": "0.1.0",
-  "private": true,
-  "description": "Trim coding-agent context without a summary. Older turns stay in a local store the agent can search.",
+  "name": "opencode-shelf",
+  "version": "0.1.1",
+  "description": "OpenCode plugin: trim context without a summary; older turns stay in a local store the agent can search.",
   "license": "Apache-2.0",
   "type": "module",
-  "repository": "https://github.com/bcmyguest/shelf",
+  "author": "B Guest",
+  "homepage": "https://github.com/bcmyguest/shelf#readme",
+  "bugs": {
+    "url": "https://github.com/bcmyguest/shelf/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bcmyguest/shelf.git"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "context-management",
+    "smart-compaction",
+    "shelf"
+  ],
+  "main": "./index.mjs",
+  "exports": {
+    ".": "./index.mjs"
+  },
   "bin": {
     "shelf": "plugin/scripts/shelf.mjs"
   },
+  "files": [
+    "index.mjs",
+    "src/**/*.mjs",
+    "plugin/lib/**/*.mjs",
+    "plugin/scripts/shelf",
+    "plugin/scripts/shelf.mjs",
+    "plugin/scripts/shelf-hook",
+    "plugin/scripts/shelf-hook.mjs",
+    "plugin/scripts/shelf-mcp",
+    "plugin/lib/mcp/**/*.mjs",
+    "proxy/openmem_context/**/*.py",
+    "proxy/openmem_context_hook.py",
+    "proxy/config.yaml",
+    "docs/context-store.md",
+    "docs/opencode.md",
+    "LICENSE",
+    "README.md"
+  ],
   "engines": {
-    "node": ">=22.16"
+    "node": ">=22.16",
+    "opencode": ">=1.18"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "pi": {
     "extensions": [
@@ -18,6 +58,6 @@
     ]
   },
   "scripts": {
-    "test": "node --test tests/plugin.test.mjs"
+    "test": "node --test tests/plugin.test.mjs tests/opencode-export.test.mjs"
   }
 }

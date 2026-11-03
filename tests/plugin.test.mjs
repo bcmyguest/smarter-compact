@@ -85,6 +85,7 @@ test("opencode 2 is not given a proxy base URL", () => {
   const result = configureAgent(home, "opencode", { enabled: true, port: 4101, major: 2 });
   assert.equal(result.ok, false);
   assert.match(result.message, /OpenCode 2/);
+  assert.match(result.message, /opencode plugin opencode-shelf/);
   assert.equal(fs.existsSync(path.join(home, ".config", "opencode", "opencode.json")), false);
 });
 
