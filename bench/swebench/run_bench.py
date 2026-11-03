@@ -489,6 +489,16 @@ def run_trial(client, inst, arm, args, run_dir: Path) -> dict:
                 str(trial_dir): {"bind": "/opt/trial", "mode": "rw"},
             },
         )
+        # The session store makes itself 0700 (private by design) and the pass below opens the
+        # artifacts up only once the trial finishes, so while a trial runs a watcher on the host
+        # gets EACCES on exactly the trial it is watching. Nudge the evidence dirs open while the
+        # agent works; the loop dies with the container, and it skips /opt/trial/home (npm/opencode
+        # caches) so it stays cheap.
+        container.exec_run(
+            ["sh", "-c", "while :; do chmod -R a+rX /opt/trial/state /opt/trial/requests "
+                          "/opt/trial/logs 2>/dev/null; sleep 30; done"],
+            detach=True,
+        )
         models = [args.model]
         # Route the trial through the in-container logging forwarder so its own requests prove
         # what the model was offered (BENCH_CAPTURE=0 to skip).
