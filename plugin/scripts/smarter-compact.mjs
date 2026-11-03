@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * smart-compact status | compact | enable | disable | proxy
+ * smarter-compact status | compact | enable | disable | proxy
  */
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -19,8 +19,10 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 function repoRoot() {
   const candidate = path.resolve(HERE, "../..");
   if (fs.existsSync(path.join(candidate, "proxy", "openmem_context_hook.py"))) return candidate;
-  const fromEnv = process.env[ROOT_ENV];
-  if (fromEnv && fs.existsSync(path.join(fromEnv, "proxy", "openmem_context_hook.py"))) return fromEnv;
+  for (const key of [ROOT_ENV, "SMART_COMPACT_ROOT"]) {
+    const fromEnv = process.env[key];
+    if (fromEnv && fs.existsSync(path.join(fromEnv, "proxy", "openmem_context_hook.py"))) return fromEnv;
+  }
   return null;
 }
 

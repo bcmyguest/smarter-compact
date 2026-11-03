@@ -1,6 +1,6 @@
 /**
  * OpenCode 1 `server`: session id on outbound chat (for the proxy), `/compact` force flag, registration.
- * Trimming on OpenCode 1 runs in the LiteLLM proxy (`smart-compact enable opencode` + `smart-compact proxy`), not here.
+ * Trimming on OpenCode 1 runs in the LiteLLM proxy (`smarter-compact enable opencode` + `smarter-compact proxy`), not here.
  */
 import fs from "node:fs";
 import os from "node:os";

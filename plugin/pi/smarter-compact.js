@@ -1,14 +1,14 @@
 /**
- * Smart Compact for Pi. Pi has no pre-request rewrite, so this extension only forwards
- * Pi's events to the shared hook (session note, /compact force flag) and runs smart-compact.
+ * Smarter Compact for Pi. Pi has no pre-request rewrite, so this extension only forwards
+ * Pi's events to the shared hook (session note, /compact force flag) and runs smarter-compact.
  */
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const HOOK = join(HERE, "..", "scripts", "smart-compact-hook.mjs");
-const CLI = join(HERE, "..", "scripts", "smart-compact.mjs");
+const HOOK = join(HERE, "..", "scripts", "smarter-compact-hook.mjs");
+const CLI = join(HERE, "..", "scripts", "smarter-compact.mjs");
 
 function run(script, args, input) {
   return new Promise((resolve) => {
@@ -54,14 +54,19 @@ export default function smartCompact(pi) {
     }));
   });
 
-  pi.registerCommand("smart-compact", {
-    description: "Smart Compact: status, or compact to trim this session on the next request",
-    handler: async (args, ctx) => {
-      const argv = (args || "status").trim().split(/\s+/).filter(Boolean);
-      if (argv[0] === "compact") argv.push("--session", ctx.sessionManager.getSessionId());
-      const out = await run(CLI, argv, "");
-      if (ctx.hasUI) ctx.ui.notify(out.trim() || "smart-compact: no output", "info");
-      else console.error(out.trim());
-    },
+  const cliHandler = async (args, ctx) => {
+    const argv = (args || "status").trim().split(/\s+/).filter(Boolean);
+    if (argv[0] === "compact") argv.push("--session", ctx.sessionManager.getSessionId());
+    const out = await run(CLI, argv, "");
+    if (ctx.hasUI) ctx.ui.notify(out.trim() || "sc: no output", "info");
+    else console.error(out.trim());
+  };
+  pi.registerCommand("sc", {
+    description: "Smarter Compact: status, or compact to trim this session on the next request",
+    handler: cliHandler,
+  });
+  pi.registerCommand("smarter-compact", {
+    description: "Same as /sc",
+    handler: cliHandler,
   });
 }

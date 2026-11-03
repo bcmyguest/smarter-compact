@@ -1,6 +1,6 @@
 # Context store contract
 
-This file is the OpenMem context-store contract, extracted with the trimmer. In this repository the Python package is `proxy/openmem_context` and the JavaScript port is `plugin/lib/`. `smart-compact` sets `OPENMEM_STATE_DIR` to `~/.local/share/smart-compact` when it is unset, so the store below that variable is `~/.local/share/smart-compact/context`. The wire text (`[openmem: …]`, `smart_compact_*`, `<openmem-recall>`) is unchanged.
+This file is the OpenMem context-store contract, extracted with the trimmer. In this repository the Python package is `proxy/openmem_context` and the JavaScript port is `plugin/lib/`. `smarter-compact` sets `OPENMEM_STATE_DIR` to `~/.local/share/smarter-compact` when it is unset, so the store below that variable is `~/.local/share/smarter-compact/context`. The wire text (`[openmem: …]`, `smart_compact_*`, `<openmem-recall>`) is unchanged.
 
 The context proxy, the OpenCode plugin (which trims in-process), and the `smart_compact_*` MCP tools exchange state through local files. Below, "proxy" means whichever of the two trims a session. This page is the contract between them; change it before changing any side.
 
@@ -11,7 +11,7 @@ Root: `$OPENMEM_STATE_DIR/context`, default `~/.local/share/openmem/context`. Su
 | Path | Writer | Reader | Content |
 | --- | --- | --- | --- |
 | `sessions/<sid>.json` | SessionStart hook, OpenCode plugins | proxy, MCP | Registration: `{"session_id", "agent", "cwd", "bank", "registered_at"}` (ISO 8601 UTC) |
-| `sessions/<sid>.force` | prompt hook or OpenCode plugin on `/smart-compact` | proxy | Empty flag. The proxy trims on the next request for that session, then deletes the flag. |
+| `sessions/<sid>.force` | prompt hook or OpenCode plugin on `/smarter-compact` | proxy | Empty flag. The proxy trims on the next request for that session, then deletes the flag. |
 | `sessions/<sid>.trim.json` | proxy | proxy | Proxy-private trim state (cut point, fingerprints, reported-usage samples for the token estimate, see [context-proxy.md](context-proxy.md#token-estimate)). Other components must not depend on its shape. |
 | `sessions/<sid>.db` (+ `-wal`, `-shm`) | proxy | MCP `smart_compact_search`, `smart_compact_sql`, shell `sqlite3` | [Session database](#session-database): every message of the session, in or out of context. The only store of record for message content. |
 | `blobs/<id>.txt` | proxy | MCP `smart_compact_get` | Full text of a compressed tool result. `id` = first 16 hex chars of SHA-256 of the UTF-8 content. |
@@ -137,7 +137,7 @@ The writer appends one `events` row per trim and per fail-open it can attribute 
 | Column | Values |
 | --- | --- |
 | `at` | ISO 8601 UTC without fractions |
-| `kind` | `trim` (a new cut, including a `/smart-compact` one) · `fail_open` (the rewrite raised; the request went upstream unmodified) · `usage` (a model call finished) |
+| `kind` | `trim` (a new cut, including a `/smarter-compact` one) · `fail_open` (the rewrite raised; the request went upstream unmodified) · `usage` (a model call finished) |
 | `version` | The writer: `proxy:<12 hex>`, the first 12 hex of SHA-256 over `proxy/openmem_context/*.py` (each file's name, NUL, bytes, NUL, sorted by name; `core.code_hash`, `proxyCodeVersion`), or `opencode:<package version>` for the OpenCode 2 plugin. Status compares the newest `proxy:` value with the checkout's hash to spot a proxy running old code |
 | `location`, `error` | Fail-open only: `<file>:<line>` (JS adds `:<column>`) and the exception type. Never message content |
 | `tokens_before`, `tokens_after` | Trim only: the writer's calibrated estimate ([token estimate](context-proxy.md#token-estimate)) of the request before and after the cut, not provider-billed counts |

@@ -1,16 +1,16 @@
 {
-  "name": "smart-compact",
+  "name": "smarter-compact",
   "version": "0.2.0",
   "description": "Trim coding-agent context without a summary. Older turns stay in a local store and come back through smart_compact_search, smart_compact_sql, and smart_compact_get.",
   "author": { "name": "B Guest" },
-  "repository": "https://github.com/bcmyguest/smart-compact",
+  "repository": "https://github.com/bcmyguest/smarter-compact",
   "license": "Apache-2.0",
-  "keywords": ["context", "tokens", "trim", "coding-agents", "smart-compaction"],
+  "keywords": ["context", "tokens", "trim", "coding-agents", "smarter-compaction"],
   "hooks": "./hooks/codex-hooks.json",
   "skills": "./codex-skills",
   "mcpServers": {
-    "smart-compact": {
-      "command": "${PLUGIN_ROOT}/scripts/smart-compact-mcp"
+    "smarter-compact": {
+      "command": "${PLUGIN_ROOT}/scripts/smarter-compact-mcp"
     }
   }
 }

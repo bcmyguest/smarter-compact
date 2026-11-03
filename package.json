@@ -1,41 +1,43 @@
 {
-  "name": "smart-compact",
+  "name": "smarter-compact",
   "version": "0.2.0",
   "description": "Smart compaction for coding agents: trim context without a summary; older turns stay in a local store the agent can search.",
   "license": "Apache-2.0",
   "type": "module",
   "author": "B Guest",
-  "homepage": "https://github.com/bcmyguest/smart-compact#readme",
+  "homepage": "https://github.com/bcmyguest/smarter-compact#readme",
   "bugs": {
-    "url": "https://github.com/bcmyguest/smart-compact/issues"
+    "url": "https://github.com/bcmyguest/smarter-compact/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/bcmyguest/smart-compact.git"
+    "url": "git+https://github.com/bcmyguest/smarter-compact.git"
   },
   "keywords": [
     "opencode",
     "opencode-plugin",
     "context-management",
-    "smart-compaction",
-    "smart-compact"
+    "smarter-compaction",
+    "smarter-compact"
   ],
   "main": "./index.mjs",
   "exports": {
     ".": "./index.mjs"
   },
   "bin": {
-    "smart-compact": "plugin/scripts/smart-compact.mjs"
+    "sc": "plugin/scripts/smarter-compact.mjs",
+    "smarter-compact": "plugin/scripts/smarter-compact.mjs"
   },
   "files": [
     "index.mjs",
     "src/**/*.mjs",
     "plugin/lib/**/*.mjs",
-    "plugin/scripts/smart-compact",
-    "plugin/scripts/smart-compact.mjs",
-    "plugin/scripts/smart-compact-hook",
-    "plugin/scripts/smart-compact-hook.mjs",
-    "plugin/scripts/smart-compact-mcp",
+    "plugin/scripts/sc",
+    "plugin/scripts/smarter-compact",
+    "plugin/scripts/smarter-compact.mjs",
+    "plugin/scripts/smarter-compact-hook",
+    "plugin/scripts/smarter-compact-hook.mjs",
+    "plugin/scripts/smarter-compact-mcp",
     "plugin/lib/mcp/**/*.mjs",
     "proxy/openmem_context/**/*.py",
     "proxy/openmem_context_hook.py",
@@ -54,7 +56,7 @@
   },
   "pi": {
     "extensions": [
-      "./plugin/pi/smart-compact.js"
+      "./plugin/pi/smarter-compact.js"
     ]
   },
   "scripts": {

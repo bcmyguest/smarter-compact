@@ -4,8 +4,8 @@
     python scripts/build_plugin.py --out ~/.cursor/plugins/local/
 
 The JavaScript the hooks and the MCP server run already lives under plugin/, so the
-copy is the plugin directory itself. The LiteLLM proxy stays in the clone: `smart-compact proxy`
-finds it next to this script's repository, or via SMART_COMPACT_ROOT.
+copy is the plugin directory itself. The LiteLLM proxy stays in the clone: `smarter-compact proxy`
+finds it next to this script's repository, or via SMARTER_COMPACT_ROOT.
 """
 import argparse
 import os
@@ -19,7 +19,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", default=os.path.join(REPO, "dist"))
     args = parser.parse_args(argv)
-    dest = os.path.join(os.path.abspath(args.out), "smart-compact")
+    dest = os.path.join(os.path.abspath(args.out), "smarter-compact")
     if os.path.exists(dest):
         shutil.rmtree(dest)
     shutil.copytree(

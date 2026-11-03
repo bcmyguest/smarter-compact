@@ -1,6 +1,6 @@
-# Smart Compact
+# Smarter Compact
 
-Smart Compact trims a coding-agent session when the prompt crosses a token threshold. The turns that leave the window stay verbatim in a local SQLite store. The agent reads them back with `smart_compact_search`, `smart_compact_sql`, and `smart_compact_get`. The cut stays put on later requests, so the prompt cache keeps hitting.
+Smarter Compact trims a coding-agent session when the prompt crosses a token threshold. The turns that leave the window stay verbatim in a local SQLite store. The agent reads them back with `smart_compact_search`, `smart_compact_sql`, and `smart_compact_get`. The cut stays put on later requests, so the prompt cache keeps hitting.
 
 The trimmer is the OpenMem context proxy and its OpenCode port, extracted into this repository. The stored text still uses the OpenMem wire format (`[openmem: …]`, `<openmem-recall>`). Memory recall on a trim is off unless you set `CONTEXT_COMPACTION_RECALL=1`.
 
@@ -13,33 +13,33 @@ Clone this repository and leave the clone where it is. Claude Code, Codex, the C
 ### Claude Code
 
 ```
-git clone https://github.com/bcmyguest/smart-compact.git
-claude plugin marketplace add "$PWD/smart-compact"
-claude plugin install smart-compact@smart-compact
-./plugin/scripts/smart-compact enable claude
-./plugin/scripts/smart-compact proxy
+git clone https://github.com/bcmyguest/smarter-compact.git
+claude plugin marketplace add "$PWD/smarter-compact"
+claude plugin install smarter-compact@smarter-compact
+./plugin/scripts/smarter-compact enable claude
+./plugin/scripts/smarter-compact proxy
 ```
 
-Start a new `claude` session after `enable`. The marketplace install registers the search tools and the compact command. `enable` points `ANTHROPIC_BASE_URL` at `http://127.0.0.1:4101` and stores a LiteLLM key in `~/.config/smart-compact/proxy.env` (mode 600). A previous base URL is written to `~/.config/smart-compact/proxy-backup.json` and restored by `smart-compact disable claude`. `proxy` must stay running.
+Start a new `claude` session after `enable`. The marketplace install registers the search tools and the compact command. `enable` points `ANTHROPIC_BASE_URL` at `http://127.0.0.1:4101` and stores a LiteLLM key in `~/.config/smarter-compact/proxy.env` (mode 600). A previous base URL is written to `~/.config/smarter-compact/proxy-backup.json` and restored by `smarter-compact disable claude`. `proxy` must stay running.
 
 ### Codex
 
 ```
-git clone https://github.com/bcmyguest/smart-compact.git
-codex plugin marketplace add "$PWD/smart-compact"
-codex plugin add smart-compact@smart-compact
-./plugin/scripts/smart-compact enable codex
-./plugin/scripts/smart-compact proxy
+git clone https://github.com/bcmyguest/smarter-compact.git
+codex plugin marketplace add "$PWD/smarter-compact"
+codex plugin add smarter-compact@smarter-compact
+./plugin/scripts/smarter-compact enable codex
+./plugin/scripts/smarter-compact proxy
 ```
 
-`enable` sets `model_provider = "smart-compact"` in `~/.codex/config.toml`. Codex keeps its ChatGPT login: the provider uses `requires_openai_auth` and LiteLLM's `/backend-api/codex` pass-through. Trust the hooks, quit Codex, and start it again.
+`enable` sets `model_provider = "smarter-compact"` in `~/.codex/config.toml`. Codex keeps its ChatGPT login: the provider uses `requires_openai_auth` and LiteLLM's `/backend-api/codex` pass-through. Trust the hooks, quit Codex, and start it again.
 
 ### Copilot CLI
 
 ```
-git clone https://github.com/bcmyguest/smart-compact.git
-copilot plugin marketplace add "$PWD/smart-compact"
-copilot plugin install smart-compact@smart-compact
+git clone https://github.com/bcmyguest/smarter-compact.git
+copilot plugin marketplace add "$PWD/smarter-compact"
+copilot plugin install smarter-compact@smarter-compact
 ```
 
 The plugin registers the search tools and the compact hook. Copilot's model URL is not rewritten. Trimming on Copilot requires the CLI to send model traffic through the proxy yourself.
@@ -47,10 +47,10 @@ The plugin registers the search tools and the compact hook. Copilot's model URL 
 ### Pi
 
 ```
-pi install git:github.com/bcmyguest/smart-compact
+pi install git:github.com/bcmyguest/smarter-compact
 ```
 
-`/smart-compact status` and `/smart-compact compact` call the same command as the other agents. Pi does not rewrite the outgoing model request, so a trim happens only when that request already goes through the proxy.
+`/smarter-compact status` and `/smarter-compact compact` call the same command as the other agents. Pi does not rewrite the outgoing model request, so a trim happens only when that request already goes through the proxy.
 
 ### Cursor Agent
 
@@ -58,39 +58,47 @@ pi install git:github.com/bcmyguest/smart-compact
 python scripts/build_plugin.py --out ~/.cursor/plugins/local/
 ```
 
-Reload Cursor and confirm `smart-compact` appears under local plugins. Cursor's hooks record a compact request and the MCP server serves search. Cursor does not rewrite the model request from a hook.
+Reload Cursor and confirm `smarter-compact` appears under local plugins. Cursor's hooks record a compact request and the MCP server serves search. Cursor does not rewrite the model request from a hook.
 
 ### OpenCode
 
 Same install flow as [opencode-clm](https://github.com/bcmyguest/opencode-clm):
 
 ```sh
-git clone https://github.com/bcmyguest/smart-compact.git
-cd smart-compact
-opencode plugin smart-compact        # project .opencode/opencode.json
-opencode plugin -g smart-compact       # global ~/.config/opencode/
+git clone https://github.com/bcmyguest/smarter-compact.git
+cd smarter-compact
+opencode plugin smarter-compact        # project .opencode/opencode.json
+opencode plugin -g smarter-compact       # global ~/.config/opencode/
 ```
 
 **OpenCode 2** trims in the plugin (`context` hook). Add options on the plugin entry if you need them; see [docs/opencode.md](docs/opencode.md).
 
-**OpenCode 1** has no context hook, so run `./plugin/scripts/smart-compact enable opencode` and `./plugin/scripts/smart-compact proxy` as well. `enable opencode` refuses a proxy base URL when `opencode --version` reports major 2.
+**OpenCode 1** has no context hook, so run `./plugin/scripts/smarter-compact enable opencode` and `./plugin/scripts/smarter-compact proxy` as well. `enable opencode` refuses a proxy base URL when `opencode --version` reports major 2.
+
+## CLI
+
+After `npm install -g smarter-compact`, the command on your PATH is **`sc`** (short) or **`smarter-compact`** (same binary). From a clone, use `./plugin/scripts/sc` or `./plugin/scripts/smarter-compact`.
+
+The npm **package** name is `smarter-compact` (the registry name `sc` is taken by an unrelated Sauce Labs package). A global install only adds our `sc`; it does not replace other tools unless your shell picks this one first.
+
+**Name collision:** on some Linux distros, `apt install sc` installs the classic terminal spreadsheet **`sc`**. That binary is uncommon on developer machines (nothing on PATH on a typical Ubuntu desktop unless you install it). Run `command -v sc` before relying on the short name; use `smarter-compact` if another `sc` wins.
 
 ## Commands
 
 | Command | Effect |
 | --- | --- |
-| `/smart-compact:status` | Trims, estimated tokens saved, and fail-opens in the last day |
-| `/smart-compact:compact` | Trim on the next request. The hook writes `sessions/<id>.force` |
-| `smart-compact enable <claude\|codex\|opencode>` | Point that agent at the proxy |
-| `smart-compact disable <claude\|codex\|opencode>` | Remove that pointing and restore the backup |
-| `smart-compact proxy` | Run LiteLLM on `127.0.0.1:4101` with `proxy/config.yaml` |
-| `smart-compact status` | Same numbers as the slash command |
+| `/smarter-compact:status` | Trims, estimated tokens saved, and fail-opens in the last day |
+| `/smarter-compact:compact` | Trim on the next request. The hook writes `sessions/<id>.force` |
+| `sc enable <claude\|codex\|opencode>` | Point that agent at the proxy |
+| `sc disable <claude\|codex\|opencode>` | Remove that pointing and restore the backup |
+| `sc proxy` | Run LiteLLM on `127.0.0.1:4101` with `proxy/config.yaml` |
+| `sc status` | Same numbers as the slash command |
 
 A fail-open sends the request on untrimmed and records the error. The request is not blocked.
 
 ## Where state lives
 
-`OPENMEM_STATE_DIR` defaults to `~/.local/share/smart-compact` for smart-compact and the plugin. The store is `$OPENMEM_STATE_DIR/context`. Schema and file layout: [docs/context-store.md](docs/context-store.md).
+`OPENMEM_STATE_DIR` defaults to `~/.local/share/smarter-compact` for smarter-compact and the plugin. The store is `$OPENMEM_STATE_DIR/context`. Schema and file layout: [docs/context-store.md](docs/context-store.md).
 
 | Variable | Default | Effect |
 | --- | --- | --- |

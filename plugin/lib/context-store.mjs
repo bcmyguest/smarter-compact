@@ -2,19 +2,21 @@
 import fs from "node:fs";
 import path from "node:path";
 
-/** Marker in the installed smart-compact command body; survives command expansion. */
-export const SMART_COMPACT_MARKER = "openmem:smart-compact";
-/** Prompt that `/smart-compact` sends in every agent (Claude Code command file, OpenCode 2 command). */
+/** Marker in the installed smarter-compact command body; survives command expansion. */
+export const SMART_COMPACT_MARKER = "openmem:smarter-compact";
+/** Legacy marker from the smart-compact rename; still recognized in prompts. */
+export const SMART_COMPACT_MARKER_LEGACY = "openmem:smart-compact";
+/** Prompt that `/smarter-compact` sends in every agent (Claude Code command file, OpenCode 2 command). */
 export const SMART_COMPACT_BODY = `<!-- ${SMART_COMPACT_MARKER} -->
 OpenMem will trim this session's earlier context on the next request. Reply with one short line acknowledging this; do not summarize the conversation. After the trim, use \`smart_compact_search\` with this session's id to look up anything earlier.`;
-/** Claude Code command file (`~/.claude/commands/smart-compact.md`): frontmatter plus SMART_COMPACT_BODY. */
+/** Claude Code command file (`~/.claude/commands/smarter-compact.md`): frontmatter plus SMART_COMPACT_BODY. */
 export const SMART_COMPACT_COMMAND = `---
 description: Trim this session's context on the next request (OpenMem)
 ---
 ${SMART_COMPACT_BODY}
 `;
-const SMART_COMPACT_PREFIX = /^\s*\/smart-compact(?:\s|$)/;
-const SMART_COMPACT_TAG = "<command-name>/smart-compact</command-name>";
+const SMART_COMPACT_PREFIX = /^\s*\/(?:smarter-compact|smart-compact)(?:\s|$)/;
+const SMART_COMPACT_TAG = /<command-name>\/(?:smarter-compact|smart-compact)<\/command-name>/;
 /** ASCII whitespace only, so the hooks and the proxy trim the same characters (session ids, OPENMEM_STATE_DIR). */
 const ASCII_TRIM_RE = /^[ \t\n\v\f\r]+|[ \t\n\v\f\r]+$/g;
 const SID_UNSAFE_RE = /[^A-Za-z0-9._-]/gu;
@@ -74,8 +76,13 @@ export function writeForceFlag({ home, env, sessionId }) {
   return file;
 }
 
-/** True for `/smart-compact …`, Claude Code's command tag, or the expanded command body. */
+/** True for `/smarter-compact …`, Claude Code's command tag, or the expanded command body. */
 export function isSmartCompactPrompt(prompt) {
   const text = String(prompt || "");
-  return SMART_COMPACT_PREFIX.test(text) || text.includes(SMART_COMPACT_TAG) || text.includes(SMART_COMPACT_MARKER);
+  return (
+    SMART_COMPACT_PREFIX.test(text) ||
+    SMART_COMPACT_TAG.test(text) ||
+    text.includes(SMART_COMPACT_MARKER) ||
+    text.includes(SMART_COMPACT_MARKER_LEGACY)
+  );
 }

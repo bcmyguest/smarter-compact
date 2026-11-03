@@ -1,10 +1,10 @@
 {
-  "name": "smart-compact",
+  "name": "smarter-compact",
   "owner": { "name": "B Guest" },
-  "description": "Smart Compact: trim coding-agent context without a summary. Older turns stay in a local store the agent can search.",
+  "description": "Smarter Compact: trim coding-agent context without a summary. Older turns stay in a local store the agent can search.",
   "plugins": [
     {
-      "name": "smart-compact",
+      "name": "smarter-compact",
       "source": "./plugin",
       "description": "Drops older turns from the model request once the prompt crosses a token threshold, keeps them verbatim, and exposes smart_compact_search, smart_compact_sql, and smart_compact_get."
     }

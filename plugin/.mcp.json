@@ -1,7 +1,7 @@
 {
   "mcpServers": {
-    "smart-compact": {
-      "command": "${CLAUDE_PLUGIN_ROOT}/scripts/smart-compact-mcp"
+    "smarter-compact": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/scripts/smarter-compact-mcp"
     }
   }
 }
