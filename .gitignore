@@ -3,6 +3,15 @@
 
 node_modules/
 dist/
+.env
+.codegraph/
+logs/
 __pycache__/
 *.pyc
 .pytest_cache/
+bench/swebench/venv/
+bench/swebench/data/
+bench/swebench/results/
+
+bench/mlruns/
+bench/swebench/proxyenv/

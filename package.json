@@ -1,6 +1,6 @@
 {
   "name": "smarter-compact",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Context management (smart compaction) for coding agents: keep long sessions under a token limit without an LLM summary. Every message goes into a local SQLite session store; older turns leave the context and the agent searches the store when it needs a detail back.",
   "license": "Apache-2.0",
   "type": "module",
@@ -37,8 +37,8 @@
     "plugin/scripts/smarter-compact-hook.mjs",
     "plugin/scripts/smarter-compact-mcp",
     "plugin/lib/mcp/**/*.mjs",
-    "proxy/openmem_context/**/*.py",
-    "proxy/openmem_context_hook.py",
+    "proxy/smarter_compact/**/*.py",
+    "proxy/smarter_compact_hook.py",
     "proxy/config.yaml",
     "docs/_config.yml",
     "docs/index.md",
@@ -63,7 +63,7 @@
     ]
   },
   "scripts": {
-    "test": "node --test tests/plugin.test.mjs tests/opencode-export.test.mjs tests/proxy-daemon.test.mjs tests/context-config.test.mjs",
+    "test": "node --test tests/plugin.test.mjs tests/opencode-export.test.mjs tests/proxy-daemon.test.mjs tests/context-config.test.mjs tests/recall-mcp.test.mjs tests/context-trim.test.mjs",
     "pack:check": "node scripts/check-pack.mjs"
   },
   "dependencies": {
