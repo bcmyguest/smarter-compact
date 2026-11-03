@@ -146,7 +146,7 @@ Claude Code keeps its own auto-compact as a safety net if the proxy is down. `/c
 | --- | --- |
 | `smart_compact_search` | FTS / hybrid search over trimmed session rows |
 | `smart_compact_sql` | Read-only SQL on one session database |
-| `smart_compact_get` | Full text of a compressed tool result by blob id |
+| `smart_compact_get` | Text of a compressed tool result by blob id, `BLOB_PAGE_CHARS` (12,000) per call; `offset`/`next_offset` page, `max_chars` (≤100,000) asks for more at once |
 | `context_status` | Trims, fail-opens, writer versions, usage summary |
 
 Wire format and SQL rules: [context store](context-store.md).

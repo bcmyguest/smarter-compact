@@ -23,7 +23,11 @@ const DEFAULT_LIMIT = 8;
 const MAX_SESSIONS = 20;
 const RESULT_MAX_CHARS = 8000;
 const EXCERPT_CHARS = 400;
-const BLOB_MAX_CHARS = 100_000;
+// A trimmed run cut the window to fit; one recall call that hands back a whole compressed result
+// puts it straight back. Measured on the SWE-bench sweep: a 44,241-char `get` into a 40k-token trial.
+// So a page is sized like a lookup (~3k tokens), and the caller pages onward with `next_offset`.
+const BLOB_PAGE_CHARS = 12_000;
+const BLOB_MAX_CHARS = 100_000; // ceiling for an explicit max_chars
 const BLOB_ID_RE = /^[0-9a-f]{16}$/;
 const PATTERN_MAX_CHARS = 200;
 const PATTERN_ROW_CHARS = 20_000;
@@ -97,15 +101,18 @@ export const CONTEXT_STORE_MCP_TOOLS = [
     name: "smart_compact_get",
     title: "Read a compressed tool result",
     description:
-      "Return the full text of a tool result the context proxy compressed, by the 16-hex id from "
+      "Return the text of a tool result the context proxy compressed, by the 16-hex id from "
       + '[smarter-compact: tool result compressed … smart_compact_get(id="<id>")] or a smart_compact_search blob_ids entry. '
-      + `Output is capped at ${BLOB_MAX_CHARS} characters; pass offset (next_offset) to page.`,
+      + `Returns at most ${BLOB_PAGE_CHARS} characters per call so one recall cannot re-inflate the window the trim `
+      + `just freed: page with offset (next_offset), or pass max_chars (up to ${BLOB_MAX_CHARS}) when the whole `
+      + "result really is needed at once.",
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: "object",
       properties: {
         id: { type: "string", description: "Blob id: exactly 16 lowercase hex characters" },
         offset: { type: "number", description: "Character offset to start from (default 0)" },
+        max_chars: { type: "number", description: `Characters to return this call (default ${BLOB_PAGE_CHARS}, max ${BLOB_MAX_CHARS})` },
       },
       required: ["id"],
       additionalProperties: false,
@@ -674,19 +681,24 @@ function getBlob(args, env) {
   const id = String(args.id ?? "").trim();
   if (!BLOB_ID_RE.test(id)) throw new Error("id must be exactly 16 lowercase hex characters");
   const offset = Number(args.offset) > 0 ? Math.floor(Number(args.offset)) : 0;
+  const page = given(args.max_chars) ? Number(args.max_chars) : BLOB_PAGE_CHARS;
+  if (!Number.isInteger(page) || page < 1 || page > BLOB_MAX_CHARS) {
+    throw new Error(`max_chars must be an integer 1-${BLOB_MAX_CHARS}`);
+  }
   let text;
   try {
     text = fs.readFileSync(path.join(contextRoot(env), "blobs", `${id}.txt`), "utf8");
   } catch {
     return { id, found: false, text: "" };
   }
-  const chunk = text.slice(offset, offset + BLOB_MAX_CHARS);
+  const chunk = text.slice(offset, offset + page);
   const end = offset + chunk.length;
   return {
     id,
     found: true,
     total_chars: text.length,
     offset,
+    page_chars: page,
     text: chunk,
     truncated: end < text.length,
     ...(end < text.length ? { next_offset: end } : {}),

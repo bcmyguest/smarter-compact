@@ -103,6 +103,38 @@ function store({ cwd, sids }) {
   return { opts: { env: { ...process.env, HOME: root, SMARTER_COMPACT_STATE_DIR: state }, cwd } };
 }
 
+test("get: one call cannot hand back a whole compressed result", async () => {
+  const s = store({ cwd: "/work", sids: ["ses_one"] });
+  const blobs = path.join(s.opts.env.SMARTER_COMPACT_STATE_DIR, "context", "blobs");
+  fs.mkdirSync(blobs, { recursive: true });
+  const body = "x".repeat(44_241); // the real blob a 40k-token trial pulled back in one call
+  fs.writeFileSync(path.join(blobs, "0123456789abcdef.txt"), body);
+
+  const first = await callContextStoreTool("smart_compact_get", { id: "0123456789abcdef" }, s.opts);
+  assert.equal(first.found, true);
+  assert.ok(first.text.length <= 12_000, `default page must be ~3k tokens, got ${first.text.length} chars`);
+  assert.equal(first.truncated, true);
+  assert.equal(first.total_chars, 44_241);
+  assert.equal(first.next_offset, first.text.length, "must say where to resume");
+
+  // Paging reaches the end, and every page stays inside the cap.
+  let seen = 0;
+  for (let i = 0; i < 10; i += 1) {
+    const p = await callContextStoreTool("smart_compact_get", { id: "0123456789abcdef", offset: seen }, s.opts);
+    assert.ok(p.text.length <= 12_000);
+    seen += p.text.length;
+    if (!p.truncated) break;
+  }
+  assert.equal(seen, 44_241, "offset paging must be able to read the whole blob");
+
+  const big = await callContextStoreTool("smart_compact_get", { id: "0123456789abcdef", max_chars: 50_000 }, s.opts);
+  assert.equal(big.text.length, 44_241, "an explicit max_chars may still take it at once");
+  await assert.rejects(
+    () => callContextStoreTool("smart_compact_get", { id: "0123456789abcdef", max_chars: 5_000_000 }, s.opts),
+    /max_chars must be an integer 1-100000/,
+  );
+});
+
 test("search: a real session id searches only that session, and says nothing extra", async () => {
   const s = store({ cwd: "/work", sids: ["ses_one", "ses_two"] });
   const r = await callContextStoreTool("smart_compact_search", { session_id: "ses_one", pattern: "COUPLED_WCS_HEADER" }, s.opts);

@@ -16,7 +16,7 @@ Root: `$SMARTER_COMPACT_STATE_DIR/context`, default `~/.local/share/smarter-comp
 | `sessions/<sid>.force` | prompt hook or OpenCode plugin on `/smarter-compact` | proxy | Empty flag. The proxy trims on the next request for that session, then deletes the flag. |
 | `sessions/<sid>.trim.json` | proxy | proxy | Proxy-private trim state (cut point, fingerprints, reported-usage samples for the token estimate, see [context-proxy.md](context-proxy.md#token-estimate)). Other components must not depend on its shape. |
 | `sessions/<sid>.db` (+ `-wal`, `-shm`) | proxy | MCP `smart_compact_search`, `smart_compact_sql`, shell `sqlite3` | [Session database](#session-database): every message of the session, in or out of context. The only store of record for message content. |
-| `blobs/<id>.txt` | proxy | MCP `smart_compact_get` | Full text of a compressed tool result. `id` = first 16 hex chars of SHA-256 of the UTF-8 content. |
+| `blobs/<id>.txt` | proxy | MCP `smart_compact_get` | Full text of a compressed tool result, served back in 12,000-char pages. `id` = first 16 hex chars of SHA-256 of the UTF-8 content. |
 | `tool-calls.jsonl` | MCP `smart_compact_*` tools | `smarter-compact context stats` | One JSON line per search / sql / get call (`at`, `tool`, hit/row/char counts). Best-effort telemetry; not part of the session rewrite contract. |
 | `.ttl-stamp` | proxy, MCP server | proxy, MCP server | Empty; its mtime records the last [retention](#retention) sweep |
 
