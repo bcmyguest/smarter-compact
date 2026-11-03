@@ -22,6 +22,33 @@ export const DEFAULT_TRIM_AT_TOKENS = 125000;
  * unset; same table as MODEL_TRIM_AT_TOKENS in proxy/openmem_context/settings.py.
  */
 export const MODEL_TRIM_AT_TOKENS = [["haiku", 95000]];
+
+function parseTrimOverrides(env) {
+  const raw = String(env.CONTEXT_TRIM_AT_OVERRIDES ?? "").trim();
+  if (!raw) return { default: null, families: {} };
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { default: null, families: {} };
+    const families = {};
+    let def = null;
+    for (const [k, v] of Object.entries(parsed)) {
+      const n = Number(v);
+      if (!Number.isFinite(n) || n <= 0) continue;
+      const key = String(k).toLowerCase();
+      if (key === "default") def = Math.floor(n);
+      else families[key] = Math.floor(n);
+    }
+    return { default: def, families };
+  } catch {
+    return { default: null, families: {} };
+  }
+}
+
+function mergedTrimFamilies(overrideFamilies) {
+  const map = new Map(MODEL_TRIM_AT_TOKENS);
+  for (const [k, v] of Object.entries(overrideFamilies)) map.set(k, v);
+  return map;
+}
 /** A trim keeps older in-turn exchanges while the request stays under this fraction of trimAtTokens; same as the proxy. */
 export const DEFAULT_TRIM_TO_FRACTION = 0.3;
 export const DEFAULT_COMPRESS_OVER_TOKENS = 4000;
@@ -83,11 +110,14 @@ export function trimSettings(env = process.env, home = env.HOME) {
     return value > 0 && value < 1 ? value : fallback;
   };
   const flag = (name) => !["0", "false", "no", "off"].includes(String(env[name] ?? "1").trim().toLowerCase());
+  const overrides = parseTrimOverrides(env);
   return {
     enabled: flag("CONTEXT_PROXY_ENABLED"),
     standingInstruction: flag("CONTEXT_STANDING_INSTRUCTION"),
     trimAtTokens: int("CONTEXT_TRIM_AT_TOKENS", DEFAULT_TRIM_AT_TOKENS),
     trimAtByModel: int("CONTEXT_TRIM_AT_TOKENS", null) === null,
+    trimDefault: overrides.default ?? DEFAULT_TRIM_AT_TOKENS,
+    trimFamilies: overrides.families,
     trimToFraction: fraction("CONTEXT_TRIM_TO_FRACTION", DEFAULT_TRIM_TO_FRACTION),
     compressOverTokens: int("CONTEXT_COMPRESS_OVER_TOKENS", DEFAULT_COMPRESS_OVER_TOKENS),
     charsPerToken: positive("CONTEXT_CHARS_PER_TOKEN", DEFAULT_CHARS_PER_TOKEN),
@@ -101,12 +131,14 @@ export function trimSettings(env = process.env, home = env.HOME) {
 
 /** The trim threshold for a request to model (an OpenCode model object, an id, or null); Settings.trim_at_for. */
 export function trimAtFor(settings, model) {
+  if (!settings.trimAtByModel) return settings.trimAtTokens;
   const name = modelName(model);
-  if (settings.trimAtByModel && name) {
-    const id = name.toLowerCase();
-    for (const [family, tokens] of MODEL_TRIM_AT_TOKENS) if (id.includes(family)) return tokens;
+  if (!name) return settings.trimDefault ?? settings.trimAtTokens;
+  const id = name.toLowerCase();
+  for (const [family, tokens] of mergedTrimFamilies(settings.trimFamilies ?? {})) {
+    if (id.includes(family)) return tokens;
   }
-  return settings.trimAtTokens;
+  return settings.trimDefault ?? settings.trimAtTokens;
 }
 
 export function textTokens(text) {

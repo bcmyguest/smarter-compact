@@ -110,7 +110,7 @@ On Sonnet 5 log L6400, two seed-matched pairs favored smart compaction by 0.0625
 | --- | --- |
 | Sessions grow past `trim_at_tokens` (default 125k estimated tokens, 95k for Haiku) | Sessions stay under the limit |
 | You want trimmed turns searchable, not summarized away | You cannot run `litellm` on the host (Claude, OpenCode 1, Codex point at the proxy) |
-| You use Claude Code, Codex, or OpenCode | You need only Cursor hooks without routing model traffic |
+| You use Claude Code, Codex, OpenCode 2, or Pi | You only need MCP search hooks on Cursor or Copilot (no automatic trim) |
 
 ## Turn it on
 
@@ -126,13 +126,17 @@ Status: `smarter-compact status` or MCP `context_status`.
 
 ## Agent support
 
-| Agent | Trim | How |
+| Agent | On-wire trim | How |
 | --- | --- | --- |
 | Claude Code | yes | Loopback proxy via `smarter-compact enable claude` |
 | Codex | yes | `model_provider = "smarter-compact"` + LiteLLM Codex pass-through |
 | OpenCode 2 | yes | Native `context` hook in this package |
 | OpenCode 1 | yes | Proxy via `smarter-compact enable opencode` |
-| Cursor / Copilot | partial | MCP search + compact hook; model URL not rewritten by default |
+| Pi | yes | Pi extension → `context` hook ([pi.dev docs](https://pi.dev/docs/latest/extensions#context)) |
+| Cursor Agent | no | Optional MCP + hooks only; not listed in main install flow |
+| Copilot CLI | no | Optional MCP + hooks only; no proxy base URL |
+
+**Cursor / Copilot** register sessions and expose search tools but do not shrink the model context. **Pi / OpenCode 2** use the same `trimContext` path as the proxy.
 
 Claude Code keeps its own auto-compact as a safety net if the proxy is down. `/context` in Claude Code counts the full local transcript, not the trimmed request the proxy sends, so it can read higher than API usage.
 
@@ -153,7 +157,7 @@ Environment variables (OpenCode plugin options use camelCase equivalents — see
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `CONTEXT_TRIM_AT_TOKENS` | 95k Haiku / 125k else when unset | Trim threshold; one set value applies to all models |
+| `CONTEXT_TRIM_AT_TOKENS` | unset → per-model table | When unset, thresholds come from `config.toml` `[context_proxy.trim_at]` (built-in `haiku` 95k, `default` 125k). When set, one value for all models. `smarter-compact context set …` edits the table. |
 | `CONTEXT_TRIM_TO_FRACTION` | `0.3` | In-turn tool exchanges kept under this fraction of threshold |
 | `CONTEXT_COMPRESS_OVER_TOKENS` | `4000` | Tool result compression threshold |
 | `CONTEXT_COMPACTION_RECALL` | `0` | Recall on trim |

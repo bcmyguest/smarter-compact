@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { applyTrimConfigToEnv } from "./context-config.mjs";
 
 export const PRODUCT = "smarter-compact";
 export const PRODUCT_NAME = "Smarter Compact";
@@ -47,6 +48,7 @@ export function ensureProductEnv(env = process.env, home = os.homedir()) {
       env[key] = String(file[key]);
     }
   }
+  applyTrimConfigToEnv(env, home);
   return env;
 }
 

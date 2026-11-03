@@ -17,12 +17,12 @@ The agent searches the store with `smart_compact_search`, `smart_compact_sql`, a
 
 **Learn more:** [Smart compaction](https://bcmyguest.github.io/smarter-compact/context-management.html) (benchmarks and how it trims) · [Context proxy & port](https://bcmyguest.github.io/smarter-compact/context-proxy.html) · [Context store](https://bcmyguest.github.io/smarter-compact/context-store.html)
 
-**Benchmarks:** In seed-matched [ContextBench](https://github.com/RulinShao/ContextBench) log tasks on Haiku 5.5, smart compaction scored **0.469** higher than keep-everything (95% bootstrap interval 0.339–0.578; eight pairs). All arms scored 1.0 on kv R4000. Costs fell at R4000, L6400, and L12800. [Full tables and charts](https://bcmyguest.github.io/smarter-compact/context-management.html#benchmarks) · [methods](https://bcmyguest.github.io/smarter-compact/context-research.html).
+**Benchmarks:** In seed-matched [ContextBench](https://github.com/RulinShao/ContextBench) log tasks on Haiku 5.5, smart compaction scored **0.469** higher than keep-everything (95% bootstrap interval 0.339–0.578; eight pairs). Costs fell at R4000, L6400, and L12800. kv-store is a small ceiling test (all arms tie at R4000); the chart below is log-triage only. [Full tables and charts](https://bcmyguest.github.io/smarter-compact/context-management.html#benchmarks) · [methods](https://bcmyguest.github.io/smarter-compact/context-research.html).
 
 <p align="center">
 <picture>
-<source media="(prefers-color-scheme: dark)" srcset="docs/media/contextbench-quality-compact-dark.png" />
-<img src="docs/media/contextbench-quality-compact.png" alt="ContextBench scores: kv R4000 at 1.00 in all arms; log tasks favor smart compaction over native and keep-everything at larger sizes" width="480" />
+<source media="(prefers-color-scheme: dark)" srcset="docs/media/contextbench-quality-log-dark.png" />
+<img src="docs/media/contextbench-quality-log.png" alt="ContextBench log-triage: smart compaction at 1.00 on L12800 overall vs 0.35 for native and keep-everything; lookup and count panels" width="480" />
 </picture>
 </p>
 
@@ -30,17 +30,26 @@ The stored text still uses the OpenMem wire format (`[openmem: …]`, `<openmem-
 
 You need Node 24 or newer (for `node:sqlite`) and, for agents that trim through the proxy, the LiteLLM dev build `v1.109.0-dev.1` on `PATH` as `litellm`. The plugin has no API key of its own. Your agent keeps its own login.
 
+### How agents integrate
+
+Smart compaction only works when something **sees and rewrites the model request** before it is sent. That happens in one of two ways:
+
+| Tier | Agents | What you get |
+| --- | --- | --- |
+| **Full trim (proxy)** | Claude Code, Codex, OpenCode 1 | `smarter-compact enable` points the CLI at the loopback LiteLLM proxy; every turn is stored and older turns drop off the wire at the token threshold. |
+| **Full trim (in-process)** | OpenCode 2, Pi | Same trim core in the agent's **`context` hook** ([OpenCode plugin](docs/opencode.md), [Pi extension](https://pi.dev/docs/latest/extensions#context) in this package). No proxy URL. |
+
+Cursor and Copilot CLI are **not** supported for automatic trim (hooks + MCP only). See [Optional: Cursor and Copilot](#optional-cursor-and-copilot) if you still want search tools there.
+
 ## Install
 
-Install from npm (`npm install -g smarter-compact`). Plugin marketplaces need the package directory on disk once; you do not need a git clone for that. A **git clone** is optional if you are developing the trimmer or prefer a fixed checkout path.
+Install from npm (`npm install -g smarter-compact`). Register plugins with **`smarter-compact plugins add <claude|codex>`** (resolves the installed package path itself; no `npm root -g`). You do not need a git clone for that. **`smarter-compact enable -g`** detects Claude Code, Codex, and OpenCode (config dirs or `opencode` on PATH), wires each one at the proxy, and starts the proxy. A **git clone** is optional if you are developing the trimmer or prefer a fixed checkout path.
 
 ### Claude Code
 
 ```sh
 npm install -g smarter-compact
-ROOT="$(npm root -g)/smarter-compact"
-claude plugin marketplace add "$ROOT"
-claude plugin install smarter-compact@smarter-compact
+smarter-compact plugins add claude
 smarter-compact enable claude
 ```
 
@@ -52,8 +61,7 @@ Start a new `claude` session after `enable`. The marketplace install registers t
 ```sh
 git clone https://github.com/bcmyguest/smarter-compact.git
 cd smarter-compact
-claude plugin marketplace add "$PWD"
-claude plugin install smarter-compact@smarter-compact
+./plugin/scripts/smarter-compact plugins add claude
 ./plugin/scripts/smarter-compact enable claude
 ```
 
@@ -65,9 +73,7 @@ Leave the clone in place; Claude resolves the marketplace from that path.
 
 ```sh
 npm install -g smarter-compact
-ROOT="$(npm root -g)/smarter-compact"
-codex plugin marketplace add "$ROOT"
-codex plugin add smarter-compact@smarter-compact
+smarter-compact plugins add codex
 smarter-compact enable codex
 ```
 
@@ -79,32 +85,8 @@ smarter-compact enable codex
 ```sh
 git clone https://github.com/bcmyguest/smarter-compact.git
 cd smarter-compact
-codex plugin marketplace add "$PWD"
-codex plugin add smarter-compact@smarter-compact
+./plugin/scripts/smarter-compact plugins add codex
 ./plugin/scripts/smarter-compact enable codex
-```
-
-</details>
-
-### Copilot CLI
-
-```sh
-npm install -g smarter-compact
-ROOT="$(npm root -g)/smarter-compact"
-copilot plugin marketplace add "$ROOT"
-copilot plugin install smarter-compact@smarter-compact
-```
-
-The plugin registers the search tools and the compact hook. Copilot's model URL is not rewritten. Trimming on Copilot requires the CLI to send model traffic through the proxy yourself.
-
-<details>
-<summary>Optional: install from a git clone</summary>
-
-```sh
-git clone https://github.com/bcmyguest/smarter-compact.git
-cd smarter-compact
-copilot plugin marketplace add "$PWD"
-copilot plugin install smarter-compact@smarter-compact
 ```
 
 </details>
@@ -115,7 +97,7 @@ copilot plugin install smarter-compact@smarter-compact
 pi install git:github.com/bcmyguest/smarter-compact
 ```
 
-`/smarter-compact status` and `/smarter-compact compact` call the same command as the other agents. Pi does not rewrite the outgoing model request, so a trim happens only when that request already goes through the proxy.
+Pi loads `plugin/pi/smarter-compact.js`, which registers on Pi's **`context` hook** (documented on [pi.dev](https://pi.dev/docs/latest/extensions#context)) and runs the same in-process trim as OpenCode 2. Configure thresholds with `smarter-compact context set …` or `~/.config/smarter-compact/config.toml`. Command: `/smarter-compact compact` forces a trim on the next request.
 
 <details>
 <summary>Optional: git clone (local extension path)</summary>
@@ -123,26 +105,6 @@ pi install git:github.com/bcmyguest/smarter-compact
 ```sh
 git clone https://github.com/bcmyguest/smarter-compact.git
 # Point Pi at smarter-compact/plugin/pi/smarter-compact.js per Pi's local-extension docs.
-```
-
-</details>
-
-### Cursor Agent
-
-```sh
-npm install -g smarter-compact
-smarter-compact install cursor
-```
-
-This symlinks the bundled `plugin/` tree into `~/.cursor/plugins/local/smarter-compact` (use `smarter-compact install cursor --copy` if symlinks are blocked). Reload Cursor and enable the local plugin. Hooks record compact requests; MCP serves `smart_compact_*`. Cursor does not rewrite the model request from a hook.
-
-<details>
-<summary>Optional: install from a git clone</summary>
-
-```sh
-git clone https://github.com/bcmyguest/smarter-compact.git
-cd smarter-compact
-./plugin/scripts/smarter-compact install cursor
 ```
 
 </details>
@@ -182,7 +144,11 @@ After `npm install -g smarter-compact`, the command on your PATH is **`smarter-c
 | --- | --- |
 | `/smarter-compact:status` | Trims, estimated tokens saved, and fail-opens in the last day |
 | `/smarter-compact:compact` | Trim on the next request. The hook writes `sessions/<id>.force` |
-| `smarter-compact enable <claude\|codex\|opencode>` | Point that agent at the proxy |
+| `smarter-compact plugins add <claude\|codex\|copilot>` | Add the bundled plugin marketplace to that CLI (Copilot: MCP only — no trim) |
+| `smarter-compact path` | Print the installed package root (for custom scripts) |
+| `smarter-compact enable -g` | Detect Claude/Codex/OpenCode and point each at the proxy |
+| `smarter-compact install cursor` | Optional: MCP + hooks for Cursor Agent (no automatic trim) |
+| `smarter-compact enable <claude\|codex\|opencode>` | Point one agent at the proxy |
 | `smarter-compact disable <claude\|codex\|opencode>` | Remove that pointing and restore the backup |
 | `smarter-compact proxy` | Run LiteLLM in the foreground (debugging; hooks normally start it detached) |
 | `smarter-compact status` | Same numbers as the slash command |
@@ -196,7 +162,7 @@ A fail-open sends the request on untrimmed and records the error. The request is
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `CONTEXT_PROXY_ENABLED` | `1` | `0` forwards every request unchanged |
-| `CONTEXT_TRIM_AT_TOKENS` | unset: 95000 when the model id contains `haiku`, else 125000 | Estimated prompt size that triggers a trim (or `/smarter-compact:compact`). Set one integer (shell, `proxy.env`, or OpenCode `trimAtTokens`) to use that threshold for **every** model. |
+| `CONTEXT_TRIM_AT_TOKENS` | unset → per-model table | When **set** (env, `proxy.env`, OpenCode `trimAtTokens`, or `smarter-compact context set trim=N`), one threshold for **every** model. When **unset**, the model id is matched against `[context_proxy.trim_at]` in `~/.config/smarter-compact/config.toml` (built-in: `haiku` → 95000, else `default` 125000). Example: `smarter-compact context set haiku=88000`. |
 | `CONTEXT_TRIM_TO_FRACTION` | `0.3` | In-turn tool steps kept while the request stays under this fraction of the threshold |
 | `CONTEXT_COMPRESS_OVER_TOKENS` | `4000` | Tool results above this are stored in full and replaced by a short header |
 | `CONTEXT_COMPACTION_RECALL` | `0` by default | `1` asks a memory bank named on the session registration |
@@ -215,7 +181,13 @@ Or set it once in `~/.config/smarter-compact/proxy.env` (same file as the LiteLL
 
 ```
 CONTEXT_PROXY_PORT=4200
-# CONTEXT_TRIM_AT_TOKENS=120000   # optional: one threshold for all models
+# Per-model thresholds (config.toml — preferred):
+#   smarter-compact context set haiku=95000
+#   smarter-compact context set default=125000
+# Global override for every model:
+#   smarter-compact context set trim=120000
+# Or uncomment:
+# CONTEXT_TRIM_AT_TOKENS=120000
 ```
 
 OpenCode 2 plugin options: `"proxyPort": 4200` in the plugin entry (maps to `CONTEXT_PROXY_PORT` for in-process trim settings; proxy auto-start uses the same resolution).
@@ -228,6 +200,18 @@ node --test tests/plugin.test.mjs
 ```
 
 The Python package is still `openmem_context`. `plugin/lib/context-trim.mjs` is the OpenCode port of that package; the two stay on the same store contract.
+
+### Optional: Cursor and Copilot
+
+These agents expose **MCP and session hooks only**. They do not rewrite model traffic, so **context is not trimmed automatically**. Use them if you want `smart_compact_*` tools and session registration while you work in Claude, Codex, OpenCode, or Pi for long sessions.
+
+**Copilot CLI:** `smarter-compact plugins add copilot` after the npm install.
+
+**Cursor Agent:** `smarter-compact install cursor`, reload Cursor, enable the local plugin. `enable -g` does not install Cursor unless you set `SMARTER_COMPACT_INSTALL_CURSOR=1`.
+
+## Releases
+
+Version bumps follow [Conventional Commits](https://www.conventionalcommits.org/) via [git-cliff](https://git-cliff.org/) (`cliff.toml`, same rules as [openmem](https://github.com/bcmyguest/openmem)). On `main`, run the **Prepare release** GitHub Action (dry-run first if you want the proposed version and notes). It bumps `package.json`, tags `vX.Y.Z`, and dispatches **Release** (tests, npm publish, GitHub Release body from git-cliff). Locally: `git-cliff --bumped-version` and `git-cliff --unreleased --strip header`.
 
 ## License
 

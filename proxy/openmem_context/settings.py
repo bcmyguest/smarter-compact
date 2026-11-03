@@ -1,5 +1,6 @@
 """Runtime settings for the context proxy, read from environment variables."""
 
+import json
 import math
 import os
 from dataclasses import dataclass
@@ -68,6 +69,34 @@ def _flag(env, name):
     return str(env.get(name, "1")).strip().lower() not in ("0", "false", "no", "off")
 
 
+def _trim_overrides(env):
+    """JSON from CONTEXT_TRIM_AT_OVERRIDES: per-family tokens and optional default fallback."""
+    raw = str(env.get("CONTEXT_TRIM_AT_OVERRIDES", "")).strip()
+    if not raw:
+        return {}, None
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return {}, None
+    if not isinstance(parsed, dict):
+        return {}, None
+    families = {}
+    default = None
+    for key, value in parsed.items():
+        try:
+            tokens = int(value)
+        except (TypeError, ValueError):
+            continue
+        if tokens <= 0:
+            continue
+        name = str(key).lower()
+        if name == "default":
+            default = tokens
+        else:
+            families[name] = tokens
+    return families, default
+
+
 @dataclass(frozen=True)
 class Settings:
     enabled: bool = True
@@ -97,12 +126,15 @@ class Settings:
     embedding_timeout_s: float = DEFAULT_EMBEDDING_TIMEOUT_S
     # Each row's first this many characters are embedded (CONTEXT_EMBEDDING_MAX_CHARS).
     embedding_max_chars: int = DEFAULT_EMBEDDING_MAX_CHARS
+    trim_families: tuple = ()
+    trim_default: int = DEFAULT_TRIM_AT_TOKENS
 
     @classmethod
     def from_env(cls, env=None):
         env = os.environ if env is None else env
         state_dir = str(env.get("OPENMEM_STATE_DIR", "")).strip(ASCII_WHITESPACE)
         root = Path(state_dir) if state_dir else Path.home() / ".local" / "share" / "openmem"
+        families, default = _trim_overrides(env)
         return cls(
             enabled=_flag(env, "CONTEXT_PROXY_ENABLED"),
             standing_instruction=_flag(env, "CONTEXT_STANDING_INSTRUCTION"),
@@ -122,13 +154,21 @@ class Settings:
             embedding_api_key=str(env.get("CONTEXT_EMBEDDING_API_KEY", "")).strip(),
             embedding_timeout_s=_positive_float(env, "CONTEXT_EMBEDDING_TIMEOUT_S", DEFAULT_EMBEDDING_TIMEOUT_S),
             embedding_max_chars=_positive_int(env, "CONTEXT_EMBEDDING_MAX_CHARS", DEFAULT_EMBEDDING_MAX_CHARS),
+            trim_families=tuple(families.items()),
+            trim_default=default if default is not None else DEFAULT_TRIM_AT_TOKENS,
         )
+
+    def _merged_trim_families(self):
+        merged = dict(MODEL_TRIM_AT_TOKENS)
+        merged.update(dict(self.trim_families))
+        return merged.items()
 
     def trim_at_for(self, model):
         """The trim threshold for a request to model (its id, or None)."""
         if self.trim_at_by_model and isinstance(model, str):
             name = model.lower()
-            for family, tokens in MODEL_TRIM_AT_TOKENS:
+            for family, tokens in self._merged_trim_families():
                 if family in name:
                     return tokens
+            return self.trim_default
         return self.trim_at_tokens

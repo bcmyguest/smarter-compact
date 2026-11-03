@@ -42,7 +42,7 @@ Auto-start is off when `SMARTER_COMPACT_AUTO_PROXY=0`. Logs: `~/.config/smarter-
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `CONTEXT_PROXY_ENABLED` | `1` | `0` forwards requests unchanged |
-| `CONTEXT_TRIM_AT_TOKENS` | unset: 95k when model id contains `haiku`, else 125k | Trim threshold. **Unset** uses the built-in table in `settings.py` (`MODEL_TRIM_AT_TOKENS`). **Set** (env, `proxy.env`, or OpenCode `trimAtTokens`) applies the same value to every model. |
+| `CONTEXT_TRIM_AT_TOKENS` | unset → per-model | **Set** (env, `proxy.env`, OpenCode `trimAtTokens`, or `[context_proxy] trim_at_tokens` / `context set trim=`) → one threshold for every model. **Unset** → `[context_proxy.trim_at]` in `~/.config/smarter-compact/config.toml` merged with built-in `haiku=95000`, fallback `default=125000`. CLI: `smarter-compact context set haiku=88000`. |
 | `CONTEXT_TRIM_TO_FRACTION` | `0.3` | In-turn tool retention fraction |
 | `CONTEXT_CHARS_PER_TOKEN` | `2.5` | Estimate before usage calibration |
 | `CONTEXT_COMPRESS_OVER_TOKENS` | `4000` | Tool compression threshold; `0` off |

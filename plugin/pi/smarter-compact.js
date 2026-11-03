@@ -1,21 +1,23 @@
 /**
- * Smarter Compact for Pi. Pi has no pre-request rewrite, so this extension only forwards
- * Pi's events to the shared hook (session note, /compact force flag) and runs smarter-compact.
+ * Smarter Compact for Pi: native trim via Pi's `context` hook (same trim core as OpenCode 2).
+ * @see https://pi.dev/docs/latest/extensions#context
  */
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ensureProductEnv, PRODUCT_NAME } from "../lib/brand.mjs";
+import { isSmartCompactPrompt, registerSession, writeForceFlag } from "../lib/context-store.mjs";
+import { logFailOpen, trimContext, trimSettings } from "../lib/context-trim.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const HOOK = join(HERE, "..", "scripts", "smarter-compact-hook.mjs");
 const CLI = join(HERE, "..", "scripts", "smarter-compact.mjs");
 
-function run(script, args, input) {
+function runCli(args) {
   return new Promise((resolve) => {
     let out = "";
     let child;
     try {
-      child = spawn(process.execPath, [script, ...args], { stdio: ["pipe", "pipe", "ignore"] });
+      child = spawn(process.execPath, [CLI, ...args], { stdio: ["ignore", "pipe", "ignore"] });
     } catch {
       resolve("");
       return;
@@ -25,42 +27,63 @@ function run(script, args, input) {
     child.stdout.on("data", (d) => { out += d; });
     child.on("error", () => { clearTimeout(timer); resolve(""); });
     child.on("close", () => { clearTimeout(timer); resolve(out); });
-    child.stdin.on("error", () => {});
-    child.stdin.end(input);
   });
 }
 
 export default function smartCompact(pi) {
-  const base = (ctx) => ({
-    session_id: ctx.sessionManager.getSessionId(),
-    cwd: ctx.cwd,
-    host: "pi",
-  });
+  ensureProductEnv();
+  const home = process.env.HOME;
+  const settings = trimSettings(process.env, home);
+
+  const sid = (ctx) => ctx.sessionManager.getSessionId();
 
   pi.on("session_start", async (_event, ctx) => {
-    const out = await run(HOOK, [], JSON.stringify({ ...base(ctx), hook_event_name: "SessionStart" }));
     try {
-      const parsed = JSON.parse(out.trim().split("\n").pop() || "{}");
-      const text = parsed?.hookSpecificOutput?.additionalContext;
-      if (text && ctx.hasUI) ctx.ui.notify(text, "info");
-    } catch { /* fail open */ }
+      registerSession({ home, env: process.env, sessionId: sid(ctx), agent: "pi", cwd: ctx.cwd });
+    } catch { /* best effort */ }
+    if (ctx.hasUI) {
+      ctx.ui.notify(
+        `${PRODUCT_NAME}: trims on each LLM call via the context hook; use smart_compact_search when you need an earlier turn.`,
+        "info",
+      );
+    }
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
-    await run(HOOK, [], JSON.stringify({
-      ...base(ctx),
-      hook_event_name: "UserPromptSubmit",
-      prompt: event.prompt,
-    }));
+    const sessionID = sid(ctx);
+    if (sessionID && isSmartCompactPrompt(String(event.prompt ?? ""))) {
+      try { writeForceFlag({ home, env: process.env, sessionId: sessionID }); } catch { /* best effort */ }
+    }
+  });
+
+  pi.on("context", async (event, ctx) => {
+    const sessionID = sid(ctx);
+    if (!sessionID) return;
+    try {
+      registerSession({ home, env: process.env, sessionId: sessionID, agent: "pi", cwd: ctx.cwd });
+    } catch { /* best effort */ }
+    const original = event.messages;
+    let messages = original;
+    try {
+      messages = await trimContext(
+        { sessionID, model: ctx.model, messages: original },
+        settings,
+      );
+    } catch (error) {
+      logFailOpen(error);
+    }
+    if (messages !== original) return { messages };
   });
 
   const cliHandler = async (args, ctx) => {
     const argv = (args || "status").trim().split(/\s+/).filter(Boolean);
-    if (argv[0] === "compact") argv.push("--session", ctx.sessionManager.getSessionId());
-    const out = await run(CLI, argv, "");
-    if (ctx.hasUI) ctx.ui.notify(out.trim() || "smarter-compact: no output", "info");
-    else console.error(out.trim());
+    if (argv[0] === "compact") argv.push("--session", sid(ctx));
+    const out = await runCli(argv);
+    const text = out.trim() || "smarter-compact: no output";
+    if (ctx.hasUI) ctx.ui.notify(text, "info");
+    else console.error(text);
   };
+
   pi.registerCommand("smarter-compact", {
     description: "Smarter Compact: status, or compact to trim this session on the next request",
     handler: cliHandler,

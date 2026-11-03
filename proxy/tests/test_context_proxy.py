@@ -930,6 +930,9 @@ class SafetyTests(Base):
     def test_trim_at_by_model(self):
         s = Settings.from_env({})
         self.assertEqual(s.trim_at_for("anthropic/claude-haiku-5-5"), 95000)
+        over = Settings.from_env({"CONTEXT_TRIM_AT_OVERRIDES": '{"haiku": 88000, "default": 130000}'})
+        self.assertEqual(over.trim_at_for("claude-haiku-5"), 88000)
+        self.assertEqual(over.trim_at_for("claude-sonnet-5"), 130000)
         self.assertEqual(s.trim_at_for("Claude-HAIKU"), 95000)
         for model in ("claude-sonnet-5", "anthropic/claude-opus-5-5", None, 7):
             self.assertEqual(s.trim_at_for(model), 125000, model)

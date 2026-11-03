@@ -9,8 +9,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureProductEnv, PRODUCT, PRODUCT_NAME, ROOT_ENV, resolveProxyPort, stateParent } from "../lib/brand.mjs";
 import { contextRoot, writeForceFlag } from "../lib/context-store.mjs";
-import { AGENTS, configureAgent, ensureKey } from "../lib/enable.mjs";
+import { AGENTS, configureAgent, detectInstalledAgents, ensureKey } from "../lib/enable.mjs";
 import { installCursorPlugin } from "../lib/install-cursor.mjs";
+import { addPluginMarketplace, PLUGIN_AGENTS } from "../lib/plugins-cli.mjs";
+import { runContextCommand } from "../lib/context-config.mjs";
 import { ensureContextProxyRunning, packageRoot } from "../lib/proxy-daemon.mjs";
 import { summarizeEvents } from "../lib/session-db.mjs";
 
@@ -25,10 +27,42 @@ function repoRoot() {
 function usage() {
   return `${PRODUCT} status
 ${PRODUCT} compact --session <id>
-${PRODUCT} enable <claude|codex|opencode>
-${PRODUCT} disable <claude|codex|opencode>
+${PRODUCT} enable [-g] [<claude|codex|opencode>]
+${PRODUCT} disable [-g] [<claude|codex|opencode>]
 ${PRODUCT} install cursor [--copy]
+${PRODUCT} path
+${PRODUCT} plugins add <claude|codex|copilot>
+${PRODUCT} context list|set|unset
 ${PRODUCT} proxy`;
+}
+
+function printPath() {
+  const root = repoRoot();
+  if (!root) {
+    console.error(`${PRODUCT} path: package root not found (reinstall smarter-compact or set ${ROOT_ENV})`);
+    process.exit(1);
+  }
+  console.log(root);
+}
+
+function plugins(argv) {
+  const sub = argv[0];
+  const agent = argv[1];
+  if (sub !== "add" || !PLUGIN_AGENTS.includes(agent)) {
+    console.error(usage());
+    process.exit(2);
+  }
+  const root = repoRoot();
+  if (!root) {
+    console.error(`${PRODUCT}: package root not found`);
+    process.exit(1);
+  }
+  const result = addPluginMarketplace(agent, root);
+  if (!result.ok) {
+    console.error(`${PRODUCT}: ${result.message}`);
+    process.exit(1);
+  }
+  console.log(result.message);
 }
 
 function status() {
@@ -59,30 +93,58 @@ function compact(argv) {
   console.log(file);
 }
 
+function parseEnableArgv(argv) {
+  const global = argv.includes("-g") || argv.includes("--global");
+  const agents = argv.filter((a) => !a.startsWith("-"));
+  return { global, agents };
+}
+
 async function enable(argv, enabled) {
-  const agent = argv[0];
-  if (!AGENTS.includes(agent)) {
+  const { global, agents: named } = parseEnableArgv(argv);
+  const home = os.homedir();
+  let targets = named;
+  if (global) {
+    if (named.length) {
+      console.error(`${PRODUCT}: use either -g or agent names, not both`);
+      process.exit(2);
+    }
+    targets = detectInstalledAgents(home);
+    if (!targets.length) {
+      console.error(
+        `${PRODUCT}: no supported agents detected (~/.claude, ~/.codex, ~/.config/opencode, or opencode on PATH)`,
+      );
+      process.exit(1);
+    }
+    console.error(`${PRODUCT}: ${enabled ? "enabling" : "disabling"} ${targets.join(", ")}`);
+  } else if (targets.length !== 1 || !AGENTS.includes(targets[0])) {
     console.error(usage());
     process.exit(2);
   }
-  const home = os.homedir();
+
   const port = resolveProxyPort(home, process.env);
-  const result = configureAgent(home, agent, { enabled, port });
-  if (!result.ok) {
-    console.log(result.message);
-    process.exit(1);
-  }
-  if (enabled) {
+  const results = targets.map((agent) => ({ agent, ...configureAgent(home, agent, { enabled, port }) }));
+  const ok = results.filter((r) => r.ok);
+  const bad = results.filter((r) => !r.ok);
+
+  if (enabled && ok.length) {
     const proxy = await ensureContextProxyRunning({ importMetaUrl: import.meta.url, waitMs: 12_000 });
     if (!proxy.ok) {
-      console.log(result.message);
+      for (const r of ok) console.log(r.message);
       console.error(`${PRODUCT}: proxy did not start (${proxy.status}${proxy.reason ? `: ${proxy.reason}` : ""}${proxy.log ? `; see ${proxy.log}` : ""})`);
       process.exit(1);
     }
     if (proxy.status === "started") console.error(`${PRODUCT}: proxy listening on http://127.0.0.1:${port}`);
   }
-  console.log(result.message);
-  process.exit(0);
+
+  if (global && enabled && process.env.SMARTER_COMPACT_INSTALL_CURSOR === "1" && fs.existsSync(path.join(home, ".cursor"))) {
+    const cursor = installCursorPlugin({ importMetaUrl: import.meta.url });
+    if (cursor.ok) console.error(`${PRODUCT}: cursor plugin ${cursor.mode} → ${cursor.dest} (enable in Cursor settings)`);
+    else console.error(`${PRODUCT}: cursor install skipped (${cursor.message || "failed"})`);
+  }
+
+  for (const r of ok) console.log(r.message);
+  for (const r of bad) console.error(`${r.agent}: ${r.message}`);
+  process.exit(bad.length && !ok.length ? 1 : bad.length ? 1 : 0);
 }
 
 function install(argv) {
@@ -134,6 +196,9 @@ else if (cmd === "compact") compact(rest);
 else if (cmd === "enable") enable(rest, true).catch((err) => { console.error(err?.message || err); process.exit(1); });
 else if (cmd === "disable") enable(rest, false).catch((err) => { console.error(err?.message || err); process.exit(1); });
 else if (cmd === "install") install(rest);
+else if (cmd === "path") printPath();
+else if (cmd === "plugins") plugins(rest);
+else if (cmd === "context") process.exit(runContextCommand(rest, { home: os.homedir() }));
 else if (cmd === "proxy") proxy();
 else {
   console.error(usage());

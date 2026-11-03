@@ -1,0 +1,9 @@
+# Smarter Compact — copy to ~/.config/smarter-compact/config.toml
+# Docs: docs/context-proxy.md
+
+# One threshold for every model (same as CONTEXT_TRIM_AT_TOKENS). Leave unset to use [context_proxy.trim_at].
+# trim_at_tokens = 120000
+
+[context_proxy.trim_at]
+default = 125000
+haiku = 95000

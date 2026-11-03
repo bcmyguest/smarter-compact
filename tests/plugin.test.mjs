@@ -5,7 +5,8 @@ import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import { configureAgent } from "../plugin/lib/enable.mjs";
+import { configureAgent, detectInstalledAgents } from "../plugin/lib/enable.mjs";
+import { pluginMarketplaceSteps } from "../plugin/lib/plugins-cli.mjs";
 import { cursorPluginDest, installCursorPlugin } from "../plugin/lib/install-cursor.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -30,6 +31,35 @@ test("session start returns the standing note", () => {
   assert.equal(fs.existsSync(path.join(state, "context", "sessions", "s1.json")), true);
 });
 
+test("copilot host does not write force flag on compact prompt", () => {
+  const home = tmpHome();
+  const state = path.join(home, "state");
+  const result = spawnSync(process.execPath, [HOOK, "--host", "copilot"], {
+    input: JSON.stringify({
+      hook_event_name: "UserPromptSubmit",
+      session_id: "s-copilot",
+      prompt: "<!-- openmem:smarter-compact --> trim",
+    }),
+    encoding: "utf8",
+    env: { ...process.env, HOME: home, OPENMEM_STATE_DIR: state, SMARTER_COMPACT_AUTO_PROXY: "0" },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(fs.existsSync(path.join(state, "context", "sessions", "s-copilot.force")), false);
+});
+
+test("copilot session start explains MCP-only integration", () => {
+  const home = tmpHome();
+  const state = path.join(home, "state");
+  const result = spawnSync(process.execPath, [HOOK, "--host", "copilot"], {
+    input: JSON.stringify({ hook_event_name: "SessionStart", session_id: "s3", cwd: home }),
+    encoding: "utf8",
+    env: { ...process.env, HOME: home, OPENMEM_STATE_DIR: state, SMARTER_COMPACT_AUTO_PROXY: "0" },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const out = JSON.parse(result.stdout);
+  assert.match(out.hookSpecificOutput.additionalContext, /does not rewrite model traffic/);
+});
+
 test("compact prompt writes the force flag", () => {
   const home = tmpHome();
   const state = path.join(home, "state");
@@ -44,6 +74,27 @@ test("compact prompt writes the force flag", () => {
   });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(fs.existsSync(path.join(state, "context", "sessions", "s2.force")), true);
+});
+
+test("path prints package root", () => {
+  const r = spawnSync(process.execPath, [CLI, "path"], { encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout.trim(), ROOT);
+});
+
+test("pluginMarketplaceSteps passes package root to agent CLI", () => {
+  const root = "/opt/smarter-compact";
+  assert.deepEqual(pluginMarketplaceSteps("claude", root)[0], ["claude", "plugin", "marketplace", "add", root]);
+  assert.deepEqual(pluginMarketplaceSteps("codex", root)[1], ["codex", "plugin", "add", "smarter-compact@smarter-compact"]);
+});
+
+test("detectInstalledAgents finds claude and codex config dirs", () => {
+  const home = tmpHome();
+  fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
+  fs.mkdirSync(path.join(home, ".codex"), { recursive: true });
+  const found = detectInstalledAgents(home);
+  assert.ok(found.includes("claude"));
+  assert.ok(found.includes("codex"));
 });
 
 test("enable and disable claude rewrite only our settings", () => {

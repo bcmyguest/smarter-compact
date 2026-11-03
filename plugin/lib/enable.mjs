@@ -2,6 +2,7 @@
  * Point one agent at the local proxy, or remove that pointing.
  * OpenCode 2 trims in its plugin and is never given a base URL.
  */
+import { spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -18,6 +19,26 @@ const LOOPBACK = (port) => new RegExp(`^http://127\\.0\\.0\\.1:${port}(?:/v1)?$`
 const CODEX_LOOPBACK = (port) => new RegExp(`^http://127\\.0\\.0\\.1:${port}/backend-api/codex$`);
 
 export const AGENTS = ["claude", "codex", "opencode"];
+
+/**
+ * Agents that look installed on this machine (config dirs or OpenCode on PATH).
+ * OpenCode 2 is included when present; `configureAgent` still refuses proxy wiring for v2.
+ */
+export function detectInstalledAgents(home) {
+  const found = [];
+  if (fs.existsSync(path.join(home, ".claude"))) found.push("claude");
+  if (fs.existsSync(path.join(home, ".codex"))) found.push("codex");
+  const opencodeDir = path.join(home, ".config", "opencode");
+  if (fs.existsSync(opencodeDir)) {
+    found.push("opencode");
+  } else {
+    try {
+      const r = spawnSync("opencode", ["--version"], { encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "ignore"] });
+      if (r?.status === 0) found.push("opencode");
+    } catch { /* not on PATH */ }
+  }
+  return found.filter((a, i, arr) => arr.indexOf(a) === i);
+}
 
 /** Agents whose config still points at this package's loopback LiteLLM proxy. */
 export function agentsPointedAtProxy(home, port = resolveProxyPort(home)) {

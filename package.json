@@ -63,7 +63,10 @@
     ]
   },
   "scripts": {
-    "test": "node --test tests/plugin.test.mjs tests/opencode-export.test.mjs tests/proxy-daemon.test.mjs",
+    "test": "node --test tests/plugin.test.mjs tests/opencode-export.test.mjs tests/proxy-daemon.test.mjs tests/context-config.test.mjs",
     "pack:check": "node scripts/check-pack.mjs"
+  },
+  "dependencies": {
+    "@iarna/toml": "^2.2.5"
   }
 }
