@@ -60,7 +60,27 @@ def facts(body: dict) -> dict:
     # hard45-haiku-60k-cap capture, that read 254/528 requests as pointed and let a run where no
     # pointer ever reached the model pass the "trimmed but no pointer" check.
     prompt = json.dumps(body.get("messages") or []) + json.dumps(body.get("system") or "")
+    # Tool calls the model had already made, visible as history in THIS request. Bodies are
+    # stored once per offering signature (the earliest request of each), so a call made mid-trial
+    # lands in no stored body at all -- cairn-probe-15k kept 2 of 25 requests and looked like a
+    # trial that never called anything. The index has a row per request, so recording calls here
+    # is what makes "did the model actually use recall?" answerable from the capture. Take the
+    # MAX of `recall_calls` across a trial's rows, never the sum: a call persists in every later
+    # request's history, so summing counts one call dozens of times.
+    calls = []
+    for m in body.get("messages") or []:
+        for tc in (m.get("tool_calls") or []):  # OpenAI-compatible wire shape
+            n = (tc.get("function") or {}).get("name") or tc.get("name")
+            if isinstance(n, str):
+                calls.append(n)
+        content = m.get("content")
+        if isinstance(content, list):  # Anthropic content blocks
+            for blk in content:
+                if isinstance(blk, dict) and blk.get("type") == "tool_use" and isinstance(blk.get("name"), str):
+                    calls.append(blk["name"])
     return {
+        "calls": sorted(set(calls)),
+        "recall_calls": sum(1 for n in calls if "smart_compact" in n or n == "context_status"),
         "model": body.get("model"),
         "messages": len(body.get("messages") or []),
         "tools": names,
@@ -85,11 +105,15 @@ def record(body, status: int, path: str, headers: dict | None = None) -> None:
         with open(os.path.join(CAPTURE_DIR, "index.jsonl"), "a") as fh:
             fh.write(json.dumps(row) + "\n")
         if isinstance(parsed, dict):
-            key = (tuple(row.get("tools") or []), bool(row.get("pointer")))
+            # Store each offering once, plus the first request in which the model had actually
+            # called recall: that body carries the call and its arguments, which is the proof a
+            # "did it use search?" question needs. Bounded at a few bodies per trial.
+            key = (tuple(row.get("tools") or []), bool(row.get("pointer")), bool(row.get("recall_calls")))
             if key not in SEEN:  # the offering is stable across a trial; store each variant once
                 SEEN.add(key)
                 name = f"{row['seq']:04d}-tools{len(row.get('tools') or [])}" \
-                       + ("-pointer" if row.get("pointer") else "") + ".json.gz"
+                       + ("-pointer" if row.get("pointer") else "") \
+                       + ("-recall" if row.get("recall_calls") else "") + ".json.gz"
                 with gzip.open(os.path.join(CAPTURE_DIR, name), "wb") as fh:
                     fh.write(json.dumps(parsed).encode())
     except Exception as e:  # noqa: BLE001 - never break the agent's own request

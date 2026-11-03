@@ -113,6 +113,26 @@ def main() -> int:
         stored = gzip.decompress(open(os.path.join(tmp, bodies[0]), "rb").read()).decode()
         assert "sk-ant-secret" not in json.dumps(rows), "headers leaked a key into index.jsonl"
         assert json.loads(stored)["x_api_key_leak"] == "sk-ant-secret", "body should be stored verbatim"
+        # A request whose history contains a recall call must get its own body: offering-based
+        # dedupe would otherwise drop it, leaving no proof the model ever used recall.
+        recalled = json.dumps({
+            "model": "claude-test",
+            "messages": [
+                {"role": "assistant", "tool_calls": [
+                    {"id": "t1", "function": {"name": "smart_compact_search",
+                                              "arguments": "{\"query\": \"the patch\"}"}}]},
+                {"role": "tool", "tool_call_id": "t1", "content": "found it"}],
+            "tools": json.loads(body)["tools"],
+        }).encode()
+        urllib.request.urlopen(urllib.request.Request(f"http://127.0.0.1:{CAP_PORT}/v1/messages", data=recalled,
+                                                      headers={"content-type": "application/json"}), timeout=10)
+        time.sleep(0.4)
+        rows = [json.loads(l) for l in open(os.path.join(tmp, "index.jsonl"))]
+        assert rows[-1]["recall_calls"] == 1, rows[-1]
+        bodies = sorted(f for f in os.listdir(tmp) if f.endswith(".json.gz"))
+        assert len(bodies) == 3, f"a recall-carrying request is its own variant, got {bodies}"
+        assert any(f.endswith("-recall.json.gz") for f in bodies), bodies
+
         # Tool names arrive in two wire shapes. Reading only Anthropic's flat form made every
         # OpenAI-compatible capture (cairn2) report tools=[] and recall_tools=[], which hides
         # exactly the "pointer names a tool that was never offered" case this recorder exists
@@ -125,6 +145,14 @@ def main() -> int:
         assert flat["recall_tools"] == ["smart_compact_search"], flat
         assert nested["recall_tools"] == ["smarter-compact_smart_compact_search"], nested
         assert nested["tools"] == ["smarter-compact_smart_compact_search"], nested
+        # Recall usage has to be readable from the index: stored bodies are the earliest request
+        # of each offering signature, so calls made later in a trial appear in none of them.
+        called = facts({"tools": [], "messages": [
+            {"role": "assistant", "tool_calls": [{"function": {"name": "smarter-compact_smart_compact_search"}}]},
+            {"role": "assistant", "content": [{"type": "tool_use", "name": "smart_compact_sql"}]}]})
+        assert called["recall_calls"] == 2, called
+        assert called["calls"] == ["smart_compact_sql", "smarter-compact_smart_compact_search"], called
+        assert facts({"tools": [], "messages": []})["recall_calls"] == 0, "no history, no calls"
         print(f"PASS  forwarded={SEEN_UPSTREAM} rows={len(rows)} bodies={bodies} recall_tools={row['recall_tools']}")
         return 0
     finally:
