@@ -50,7 +50,7 @@ Commands:
 OpenCode 1 has no context hook, so trimming goes through the LiteLLM proxy:
 
 ```sh
-./plugin/scripts/sc enable opencode
+./plugin/scripts/smarter-compact enable opencode
 ```
 
 The plugin starts the proxy in the background when needed (`CONTEXT_PROXY_PORT`, default 4101).
@@ -69,7 +69,7 @@ The `server` hook sends `x-openmem-session-id` when your Anthropic `baseURL` is 
 | --- | --- | --- |
 | `enabled` | `CONTEXT_PROXY_ENABLED` | on |
 | `standingInstruction` | `CONTEXT_STANDING_INSTRUCTION` | on |
-| `trimAtTokens` | `CONTEXT_TRIM_AT_TOKENS` | 125000 (95000 for Haiku when unset) |
+| `trimAtTokens` | `CONTEXT_TRIM_AT_TOKENS` | 125000 (95000 for Haiku when unset; setting this disables per-model defaults) |
 | `trimToFraction` | `CONTEXT_TRIM_TO_FRACTION` | 0.3 |
 | `compressOverTokens` | `CONTEXT_COMPRESS_OVER_TOKENS` | 4000 |
 | `charsPerToken` | `CONTEXT_CHARS_PER_TOKEN` | 2.5 |

@@ -1,7 +1,7 @@
 {
   "name": "smarter-compact",
   "version": "0.2.0",
-  "description": "Trim coding-agent context without a summary. Search what left the window with smart_compact_search.",
+  "description": "Context management (smart compaction): trimmed turns stay in a local SQLite store; search what left the window with smart_compact_search.",
   "author": { "name": "B Guest" },
   "hooks": "./hooks/cursor-hooks.json",
   "mcpServers": {

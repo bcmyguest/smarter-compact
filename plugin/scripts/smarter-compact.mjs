@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { ensureProductEnv, PRODUCT, PRODUCT_NAME, ROOT_ENV, resolveProxyPort, stateParent } from "../lib/brand.mjs";
 import { contextRoot, writeForceFlag } from "../lib/context-store.mjs";
 import { AGENTS, configureAgent, ensureKey } from "../lib/enable.mjs";
+import { installCursorPlugin } from "../lib/install-cursor.mjs";
 import { ensureContextProxyRunning, packageRoot } from "../lib/proxy-daemon.mjs";
 import { summarizeEvents } from "../lib/session-db.mjs";
 
@@ -26,6 +27,7 @@ function usage() {
 ${PRODUCT} compact --session <id>
 ${PRODUCT} enable <claude|codex|opencode>
 ${PRODUCT} disable <claude|codex|opencode>
+${PRODUCT} install cursor [--copy]
 ${PRODUCT} proxy`;
 }
 
@@ -83,6 +85,23 @@ async function enable(argv, enabled) {
   process.exit(0);
 }
 
+function install(argv) {
+  const target = argv[0];
+  if (target !== "cursor") {
+    console.error(usage());
+    process.exit(2);
+  }
+  const copy = argv.includes("--copy");
+  const result = installCursorPlugin({ importMetaUrl: import.meta.url, copy });
+  if (!result.ok) {
+    console.error(result.message || `${PRODUCT} install cursor failed`);
+    process.exit(1);
+  }
+  const note = result.message ? ` (${result.message})` : "";
+  console.log(`${result.mode} → ${result.dest}${note}`);
+  console.log("Reload Cursor and enable the smarter-compact local plugin.");
+}
+
 function proxy() {
   const root = repoRoot();
   if (!root) {
@@ -114,6 +133,7 @@ if (cmd === "status" || !cmd) status();
 else if (cmd === "compact") compact(rest);
 else if (cmd === "enable") enable(rest, true).catch((err) => { console.error(err?.message || err); process.exit(1); });
 else if (cmd === "disable") enable(rest, false).catch((err) => { console.error(err?.message || err); process.exit(1); });
+else if (cmd === "install") install(rest);
 else if (cmd === "proxy") proxy();
 else {
   console.error(usage());

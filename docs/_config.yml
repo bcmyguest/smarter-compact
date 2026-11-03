@@ -1,5 +1,5 @@
 title: Smarter Compact
-description: Smart compaction for coding agents — trim context without a summary.
+description: Context management (smart compaction) for coding agents — long sessions under a token limit without an LLM summary.
 theme: jekyll-theme-cayman
 markdown: GFM
 baseurl: "/smarter-compact"

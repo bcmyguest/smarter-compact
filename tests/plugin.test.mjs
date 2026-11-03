@@ -6,6 +6,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { configureAgent } from "../plugin/lib/enable.mjs";
+import { cursorPluginDest, installCursorPlugin } from "../plugin/lib/install-cursor.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const HOOK = path.join(ROOT, "plugin/scripts/smarter-compact-hook.mjs");
@@ -87,6 +88,17 @@ test("opencode 2 is not given a proxy base URL", () => {
   assert.match(result.message, /OpenCode 2/);
   assert.match(result.message, /opencode plugin smarter-compact/);
   assert.equal(fs.existsSync(path.join(home, ".config", "opencode", "opencode.json")), false);
+});
+
+test("install cursor symlinks plugin into ~/.cursor/plugins/local", () => {
+  const home = tmpHome();
+  const cli = path.join(ROOT, "plugin/scripts/smarter-compact.mjs");
+  const result = installCursorPlugin({ home, importMetaUrl: cli });
+  assert.equal(result.ok, true);
+  assert.equal(result.mode, "symlink");
+  assert.equal(fs.realpathSync(result.dest), fs.realpathSync(path.join(ROOT, "plugin")));
+  assert.equal(result.dest, cursorPluginDest(home));
+  assert.equal(fs.existsSync(path.join(result.dest, ".cursor-plugin", "plugin.json")), true);
 });
 
 test("status runs against an empty store", () => {

@@ -1,7 +1,7 @@
 {
   "name": "smarter-compact",
   "owner": { "name": "B Guest" },
-  "description": "Smarter Compact: trim coding-agent context without a summary. Older turns stay in a local store the agent can search.",
+  "description": "Context management (smart compaction): long sessions under a token limit without an LLM summary; trimmed turns stay in a local SQLite store the agent can search.",
   "plugins": [
     {
       "name": "smarter-compact",
