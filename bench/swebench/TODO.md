@@ -27,11 +27,24 @@ compaction study this repo builds on). Model under test: Qwen 3.8 Flash Next
   so no agent config moved); openmem's `context-proxy` stopped — revert with
   `docker compose --profile context-proxy start context-proxy` in `~/personal-memory`.
   **(b) pointer named tools the client was never offered.** Both texts hard-coded bare `smart_compact_search`;
-  harnesses namespace it (`smarter-compact.smart_compact_search` in OpenCode), so the note ordered a tool absent
-  from the request. Names now resolve from each request's own `tools` (Py `recall_tool_names` / JS
-  `recallToolNames`), proven through the live proxy with a capture upstream: standing instruction and trim
-  pointer both carried the prefixed names, bare name gone. The JS/OpenCode-2 in-process path already resolved
-  names (`src/v2.mjs:132`), so this bug was proxy-only (Claude Code / Codex).
+  harnesses namespace it (`smarter-compact_smart_compact_search` in OpenCode — underscore, not the dot this
+  entry used to claim), so the note ordered a tool absent from the request. Names now resolve from each
+  request's own `tools` (Py `recall_tool_names` / JS `recallToolNames`).
+- [x] **(b) was NOT fixed on the JS/OpenCode-2 path — the shape, not the separator, was the bug.** This entry
+  claimed `src/v2.mjs:132` already resolved names, so the bug was proxy-only. It was wrong: `recallToolNames`
+  iterated `Array.isArray(tools) ? tools : []`, but OpenCode's `context` hook hands tools over **keyed by id**
+  (`delete q.tools.edit` in its own bundle), so `offered` was always empty and both texts took the bare-name
+  fallback in silence. Proven live, not inferred: a cairn2 trim (`results/namerun`, `0011-tools0-pointer`)
+  ordered `smart_compact_search` in a request whose only recall tools were `smarter-compact_smart_compact_*`.
+  Fixed by accepting list / string-list / keyed-object / `{definitions:[]}` shapes, with `seen` reported so a
+  shape we cannot read can't masquerade as "recall not installed" (`standing_instruction … recall=3/15`).
+  Re-verified end to end: `results/namerun2` pointer names are the offered names.
+- [x] **`request_capture.py` counted our own tool description as a trim pointer.** `facts()` scanned
+  `json.dumps(whole body)` for `[smarter-compact: continuing session`, and `smart_compact_search`'s
+  description quotes exactly that phrase — so every request that merely *offered* recall read as pointed
+  (254/528 in hard45-haiku-60k-cap), and `pointer_in_request` could never raise "trimmed but no pointer
+  reached the model". Now scans messages+system only; `test_request_capture.py` pins both directions
+  (marker in a description → not pointed; marker in a message → pointed) and fails on the old detector.
 - [ ] Rerun the hard45 smart arm with `request_capture.py` on: it records `recall_tools` per request, which is
       the datum whose absence made the last sweep uninterpretable ("model ignored the tool" vs "tool never offered").
 - [ ] 500 (full Verified) only as the final headline artifact; needs image pull→run→evict pipeline

@@ -207,8 +207,9 @@ def write_agent_config(
             "servers": {
                 # Server key = product name, matching the plugin's own ctx.mcp.add (src/v2.mjs):
                 # the two registration paths must yield the SAME tool names, or a session with
-                # both sees two differently-named copies of recall. OpenCode namespaces with a
-                # dot, so the agent is offered `smarter-compact.smart_compact_search`.
+                # both sees two differently-named copies of recall. OpenCode namespaces with an
+                # underscore, so the agent is offered `smarter-compact_smart_compact_search`
+                # (confirmed in captured requests, and what the pointer must therefore name).
                 "smarter-compact": {
                     "type": "local",
                     "command": ["node", f"{REPO_MOUNT}/plugin/lib/mcp/server.mjs"],

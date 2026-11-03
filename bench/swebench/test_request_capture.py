@@ -56,10 +56,17 @@ def main() -> int:
         else:
             return print("FAIL: forwarder never came up") or 1
 
+        # The recall tool's real description quotes the pointer marker, so this body must read as
+        # "not pointed": only a marker in the prompt counts. See facts() in request_capture.py.
         body = json.dumps({
             "model": "claude-test",
-            "messages": [{"role": "user", "content": "[smarter-compact: continuing session ses_test; 9 earlier messages are NOT in your context]"}],
-            "tools": [{"name": "bash"}, {"name": "smart_compact_search"}, {"name": "smart_compact_sql"}],
+            "messages": [{"role": "user", "content": "what was the third api key?"}],
+            "tools": [
+                {"name": "bash"},
+                {"name": "smart_compact_search", "description":
+                    "Use it when an [smarter-compact: continuing session …] pointer says earlier messages were trimmed."},
+                {"name": "smart_compact_sql"},
+            ],
             "x_api_key_leak": "sk-ant-secret",
         }).encode()
         req = urllib.request.Request(f"http://127.0.0.1:{CAP_PORT}/v1/messages", data=body,
@@ -78,11 +85,30 @@ def main() -> int:
         row = rows[0]
         assert row["status"] == 200 and row["model"] == "claude-test", row
         assert row["recall_tools"] == ["smart_compact_search", "smart_compact_sql"], row
-        assert row["pointer"] is True, "trim pointer not detected"
+        assert row["pointer"] is False, "a marker quoted in a tool description is not a trim pointer"
         assert row["tools"] == ["bash", "smart_compact_search", "smart_compact_sql"], row
 
         bodies = [f for f in os.listdir(tmp) if f.endswith(".json.gz")]
         assert len(bodies) == 1, f"identical offerings should store one body, got {bodies}"
+
+        # A pointer in the prompt itself is the case that matters: same tools, so only the
+        # message content can distinguish it from the row above.
+        pointed = json.dumps({
+            "model": "claude-test",
+            "messages": [{"role": "user", "content":
+                "[smarter-compact: continuing session ses_test; 9 earlier messages are NOT in your context]"}],
+            "tools": json.loads(body)["tools"],
+        }).encode()
+        urllib.request.urlopen(urllib.request.Request(f"http://127.0.0.1:{CAP_PORT}/v1/messages", data=pointed,
+                                                      headers={"content-type": "application/json"}), timeout=10)
+        time.sleep(0.4)
+        rows = [json.loads(l) for l in open(os.path.join(tmp, "index.jsonl"))]
+        assert len(rows) == 3, f"expected a third index row, got {len(rows)}"
+        assert rows[-1]["pointer"] is True, "a pointer in the prompt must be detected"
+        assert rows[-1]["tools"] == row["tools"], "same offering, so only the pointer changed"
+        bodies = sorted(f for f in os.listdir(tmp) if f.endswith(".json.gz"))
+        assert len(bodies) == 2, f"a pointed offering is a distinct signature, got {bodies}"
+        assert any(f.endswith("-pointer.json.gz") for f in bodies), bodies
         import gzip
         stored = gzip.decompress(open(os.path.join(tmp, bodies[0]), "rb").read()).decode()
         assert "sk-ant-secret" not in json.dumps(rows), "headers leaked a key into index.jsonl"

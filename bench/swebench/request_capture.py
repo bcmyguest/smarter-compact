@@ -44,12 +44,18 @@ def facts(body: dict) -> dict:
     raw = json.dumps(body)
     tools = body.get("tools") or body.get("tool_definitions") or []
     names = sorted({t.get("name") for t in tools if isinstance(t, dict) and t.get("name")})
+    # Only the prompt, never the tool list: our own search tool's description quotes the pointer
+    # ("Use it when an [smarter-compact: continuing session …] pointer says…"), so a whole-body
+    # scan marks every request that merely *offers* the recall tools as pointed. Measured on the
+    # hard45-haiku-60k-cap capture, that read 254/528 requests as pointed and let a run where no
+    # pointer ever reached the model pass the "trimmed but no pointer" check.
+    prompt = json.dumps(body.get("messages") or []) + json.dumps(body.get("system") or "")
     return {
         "model": body.get("model"),
         "messages": len(body.get("messages") or []),
         "tools": names,
         "recall_tools": [n for n in names if "smart_compact" in n or n == "context_status"],
-        "pointer": any(p in raw for p in POINTERS),
+        "pointer": any(p in prompt for p in POINTERS),
         "chars": len(raw),
     }
 
