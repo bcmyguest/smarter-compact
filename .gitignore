@@ -1,3 +1,6 @@
+# Local-only author rewrite map (never commit)
+.mailmap
+
 node_modules/
 dist/
 __pycache__/
