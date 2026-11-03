@@ -1,0 +1,78 @@
+name: Release
+
+# First publish must be manual (`npm publish --access public`). Then add trusted publishing on
+# npmjs.com: smarter-compact -> Settings -> Trusted Publisher -> GitHub Actions (this workflow).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - id: tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          [ "$GITHUB_REF_TYPE" = tag ] || { echo "::error::run on a tag ref"; exit 1; }
+          [[ $TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::$TAG is not vX.Y.Z"; exit 1; }
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+      - env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          v=$(jq -r .version package.json)
+          [ "v$v" = "$TAG" ] || { echo "::error::package.json $v vs tag $TAG"; exit 1; }
+
+  test:
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.tag }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: python3 -m unittest discover -s proxy/tests
+      - run: npm test
+      - run: npm run pack:check
+
+  publish-npm:
+    needs: [gate, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@^11.5.1
+      - run: npm run pack:check
+      - name: npm publish
+        run: |
+          set -euo pipefail
+          name=$(jq -r .name package.json)
+          version=$(jq -r .version package.json)
+          if npm view "$name@$version" version > /dev/null 2>&1; then
+            echo "::notice::$name@$version already on npm"
+          else
+            npm publish --provenance --access public
+          fi
