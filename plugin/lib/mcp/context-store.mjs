@@ -205,10 +205,23 @@ export async function startContextStore(env = process.env, opts = {}) {
   }
 }
 
+function isGitWorkTreeRoot(dir) {
+  const entry = path.join(dir, ".git");
+  if (!fs.existsSync(entry)) return false;
+  try {
+    const st = fs.statSync(entry);
+    if (st.isDirectory()) return fs.existsSync(path.join(entry, "HEAD"));
+    if (st.isFile()) return /^gitdir:\s*\S+/m.test(fs.readFileSync(entry, "utf8"));
+  } catch {
+    return false;
+  }
+  return false;
+}
+
 function gitRoot(dir) {
   let candidate = path.resolve(dir);
   while (true) {
-    if (fs.existsSync(path.join(candidate, ".git"))) return candidate;
+    if (isGitWorkTreeRoot(candidate)) return candidate;
     const parent = path.dirname(candidate);
     if (parent === candidate) return null;
     candidate = parent;
