@@ -91,6 +91,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # git-cliff here hits the same /pulls call as prepare-release.yml (see there).
+      pull-requests: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

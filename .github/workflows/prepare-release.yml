@@ -18,6 +18,9 @@ on:
 permissions:
   contents: write
   actions: write
+  # git-cliff resolves [remote.github] + github.contributors through the API and
+  # panics with HTTP 403 on /pulls without this; unspecified scopes are `none`.
+  pull-requests: read
 
 concurrency:
   group: prepare-release
