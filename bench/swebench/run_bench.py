@@ -60,6 +60,17 @@ BENCH_DIR = Path(__file__).resolve().parent
 REPO_MOUNT = "/opt/smarter-compact"
 CONTAINER_HOME = "/opt/trial/home"
 CONTAINER_STATE = "/opt/trial/state"
+# The repo is bind-mounted live into every trial, so editing the plugin mid-run silently changes
+# behaviour for the next trial and nothing in the artifacts says which code a trial ran. Stamp it.
+def _code_sha() -> str:
+    try:
+        return subprocess.run(["git", "-C", str(REPO_ROOT), "rev-parse", "--short", "HEAD"],
+                              capture_output=True, text=True, timeout=5).stdout.strip() or "unknown"
+    except Exception:  # noqa: BLE001 - a stamp must never break a sweep
+        return "unknown"
+
+
+CODE_SHA = _code_sha()
 DEFAULT_INSTANCES = [
     "psf__requests-1142",
     "psf__requests-1766",
@@ -465,7 +476,7 @@ def run_trial(client, inst, arm, args, run_dir: Path) -> dict:
     trial_dir = run_dir / arm / iid
     for sub in ("home", "state", "logs"):
         (trial_dir / sub).mkdir(parents=True, exist_ok=True)
-    meta = {"instance_id": iid, "arm": arm, "image": inst["image"]}
+    meta = {"instance_id": iid, "arm": arm, "image": inst["image"], "code_sha": CODE_SHA}
     t0 = time.time()
     container = None
     log(f"{iid} arm={arm} start (pulls image if not local)")
