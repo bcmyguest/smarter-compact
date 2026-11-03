@@ -1,0 +1,15 @@
+# MLflow tracking server + UI for the benchmarks in this directory.
+#   docker compose -f bench/docker-compose.yml up -d
+# Bench runs log to it with BENCH_MLFLOW=1 (see run_bench.py; REST only, no client lib needed).
+# UI: http://localhost:5000
+services:
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v3.17.2
+    command: >
+      mlflow ui --host 0.0.0.0 --port 5000
+      --backend-store-uri sqlite:////mlruns/mlflow.db --serve-artifacts
+    volumes:
+      - ./mlruns:/mlruns
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
