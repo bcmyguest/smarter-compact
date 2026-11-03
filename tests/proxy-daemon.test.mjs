@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resolveProxyPort } from "../plugin/lib/brand.mjs";
+import { ensureProductEnv, resolveProxyPort } from "../plugin/lib/brand.mjs";
 import { agentsPointedAtProxy, configureAgent, proxyEnvPath } from "../plugin/lib/enable.mjs";
 import { upsertEnvFile } from "../plugin/lib/file-io.mjs";
 import { ensureContextProxyRunning, packageRoot, probeContextProxy } from "../plugin/lib/proxy-daemon.mjs";
@@ -38,6 +38,17 @@ test("resolveProxyPort reads proxy.env when env unset", () => {
   const env = { ...process.env };
   delete env.CONTEXT_PROXY_PORT;
   assert.equal(resolveProxyPort(home, env), 4209);
+});
+
+test("ensureProductEnv loads CONTEXT_TRIM_AT_TOKENS from proxy.env", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "sc-trim-"));
+  upsertEnvFile(proxyEnvPath(home), { CONTEXT_TRIM_AT_TOKENS: "88000" }, { mode: 0o600 });
+  const env = { HOME: home };
+  ensureProductEnv(env, home);
+  assert.equal(env.CONTEXT_TRIM_AT_TOKENS, "88000");
+  env.CONTEXT_TRIM_AT_TOKENS = "99000";
+  ensureProductEnv(env, home);
+  assert.equal(env.CONTEXT_TRIM_AT_TOKENS, "99000");
 });
 
 test("agentsPointedAtProxy detects claude wiring", () => {

@@ -1,7 +1,7 @@
 {
   "name": "smarter-compact",
   "version": "0.2.0",
-  "description": "Smart compaction for coding agents: trim context without a summary; older turns stay in a local store the agent can search.",
+  "description": "Context management (smart compaction) for coding agents: keep long sessions under a token limit without an LLM summary. Every message goes into a local SQLite session store; older turns leave the context and the agent searches the store when it needs a detail back.",
   "license": "Apache-2.0",
   "type": "module",
   "author": "B Guest",
@@ -25,14 +25,12 @@
     ".": "./index.mjs"
   },
   "bin": {
-    "sc": "plugin/scripts/smarter-compact.mjs",
     "smarter-compact": "plugin/scripts/smarter-compact.mjs"
   },
   "files": [
     "index.mjs",
     "src/**/*.mjs",
     "plugin/lib/**/*.mjs",
-    "plugin/scripts/sc",
     "plugin/scripts/smarter-compact",
     "plugin/scripts/smarter-compact.mjs",
     "plugin/scripts/smarter-compact-hook",
@@ -48,13 +46,12 @@
     "docs/context-proxy.md",
     "docs/context-store.md",
     "docs/opencode.md",
-    "docs/media/smart-compaction.gif",
-    "docs/media/smart-compaction-dark.gif",
+    "docs/media/**",
     "LICENSE",
     "README.md"
   ],
   "engines": {
-    "node": ">=22.16",
+    "node": ">=24",
     "opencode": ">=1.18"
   },
   "publishConfig": {

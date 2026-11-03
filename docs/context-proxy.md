@@ -1,6 +1,6 @@
 # Context proxy
 
-For Claude Code, OpenCode 1, and Codex, **Smarter Compact** runs a local **LiteLLM** process (`sc proxy`, or auto-started by the plugin) that rewrites each request before forwarding to the real model API:
+For Claude Code, OpenCode 1, and Codex, **Smarter Compact** runs a local **LiteLLM** process (`smarter-compact proxy`, or auto-started by the plugin) that rewrites each request before forwarding to the real model API:
 
 1. **Tool-result compression.** Results over `CONTEXT_COMPRESS_OVER_TOKENS` become a short header plus `smart_compact_get(id=...)`; full text in `blobs/<id>.txt`.
 2. **Store.** Messages go into `sessions/<sid>.db` ([session database](context-store.md#session-database)).
@@ -28,10 +28,10 @@ Change port before or during enable:
 
 ```sh
 export CONTEXT_PROXY_PORT=4200
-sc enable claude
+smarter-compact enable claude
 ```
 
-Or add `CONTEXT_PROXY_PORT=4200` to `proxy.env`, then run `sc enable` again so agent URLs match.
+Or add `CONTEXT_PROXY_PORT=4200` to `proxy.env`, then run `smarter-compact enable` again so agent URLs match.
 
 OpenCode 2 plugin JSON: `"proxyPort": 4200` (maps to `CONTEXT_PROXY_PORT` for settings and auto-start).
 
@@ -42,7 +42,7 @@ Auto-start is off when `SMARTER_COMPACT_AUTO_PROXY=0`. Logs: `~/.config/smarter-
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `CONTEXT_PROXY_ENABLED` | `1` | `0` forwards requests unchanged |
-| `CONTEXT_TRIM_AT_TOKENS` | unset: 95k Haiku / 125k else | Trim threshold (see `proxy/openmem_context/settings.py`) |
+| `CONTEXT_TRIM_AT_TOKENS` | unset: 95k when model id contains `haiku`, else 125k | Trim threshold. **Unset** uses the built-in table in `settings.py` (`MODEL_TRIM_AT_TOKENS`). **Set** (env, `proxy.env`, or OpenCode `trimAtTokens`) applies the same value to every model. |
 | `CONTEXT_TRIM_TO_FRACTION` | `0.3` | In-turn tool retention fraction |
 | `CONTEXT_CHARS_PER_TOKEN` | `2.5` | Estimate before usage calibration |
 | `CONTEXT_COMPRESS_OVER_TOKENS` | `4000` | Tool compression threshold; `0` off |
@@ -54,7 +54,7 @@ Auto-start is off when `SMARTER_COMPACT_AUTO_PROXY=0`. Logs: `~/.config/smarter-
 | `CONTEXT_STORE_TTL_DAYS` | `30` | Idle session cleanup at proxy start |
 | `CONTEXT_EMBEDDING_MODEL` | empty | Hybrid search embeddings (optional) |
 
-Secrets: `LITELLM_MASTER_KEY` in `~/.config/smarter-compact/proxy.env` (mode 600), created by `sc enable`.
+Secrets: `LITELLM_MASTER_KEY` in `~/.config/smarter-compact/proxy.env` (mode 600), created by `smarter-compact enable`.
 
 ## Token estimate
 
@@ -70,7 +70,7 @@ The estimate only decides **whether** to cut; it does not change an existing sti
 
 ```sh
 npm install -g smarter-compact   # or clone this repo
-sc enable claude                 # writes settings + starts proxy if needed
+smarter-compact enable claude                 # writes settings + starts proxy if needed
 ```
 
 Claude Code (`~/.claude/settings.json`):
@@ -100,7 +100,7 @@ supports_websockets = false
 http_headers = { "x-litellm-api-key" = "Bearer <LITELLM_MASTER_KEY>" }
 ```
 
-`sc enable codex` writes this block and keeps ChatGPT login via `requires_openai_auth`.
+`smarter-compact enable codex` writes this block and keeps ChatGPT login via `requires_openai_auth`.
 
 ## Limits
 

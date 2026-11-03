@@ -14,6 +14,6 @@ jobs:
           python-version: "3.12"
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
       - run: python3 -m unittest discover -s proxy/tests
       - run: node --test tests/plugin.test.mjs

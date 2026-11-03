@@ -1,22 +1,31 @@
 /**
- * Detached LiteLLM context proxy (same process as `sc proxy`, started in the background).
+ * Detached LiteLLM context proxy (same process as `smarter-compact proxy`, started in the background).
  */
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { configDir, resolveProxyPort, ROOT_ENV, stateParent } from "./brand.mjs";
+import { configDir, ensureProductEnv, resolveProxyPort, ROOT_ENV, stateParent } from "./brand.mjs";
 import { agentsPointedAtProxy, ensureKey } from "./enable.mjs";
 
 const PROBE_TIMEOUT_MS = 1500;
 const DEFAULT_WAIT_MS = 12_000;
 
+function dirFromImportMeta(importMetaUrl) {
+  if (!importMetaUrl) return null;
+  const filePath = importMetaUrl.startsWith("file:")
+    ? fileURLToPath(importMetaUrl)
+    : importMetaUrl;
+  return path.dirname(filePath);
+}
+
 /** Directory that contains `proxy/openmem_context_hook.py` (npm package or clone). */
 export function packageRoot(importMetaUrl) {
   const candidates = [];
-  if (importMetaUrl) {
-    let dir = path.dirname(fileURLToPath(importMetaUrl));
+  const start = dirFromImportMeta(importMetaUrl);
+  if (start) {
+    let dir = start;
     for (let i = 0; i < 8; i++) {
       candidates.push(dir);
       const parent = path.dirname(dir);
@@ -53,12 +62,14 @@ function proxyPidPath(home) {
 }
 
 function litellmEnv(home, root, port, env) {
+  const merged = { ...env };
+  ensureProductEnv(merged, home);
   return {
-    ...env,
+    ...merged,
     PYTHONPATH: path.join(root, "proxy"),
     LITELLM_MASTER_KEY: ensureKey(home),
     OPENMEM_STATE_DIR: stateParent(home, env),
-    CONTEXT_COMPACTION_RECALL: env.CONTEXT_COMPACTION_RECALL || "0",
+    CONTEXT_COMPACTION_RECALL: merged.CONTEXT_COMPACTION_RECALL || "0",
   };
 }
 

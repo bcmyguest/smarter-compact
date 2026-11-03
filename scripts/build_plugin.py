@@ -1,34 +1,19 @@
 #!/usr/bin/env python3
-"""Copy the plugin into a directory Cursor can load as a local plugin.
-
-    python scripts/build_plugin.py --out ~/.cursor/plugins/local/
-
-The JavaScript the hooks and the MCP server run already lives under plugin/, so the
-copy is the plugin directory itself. The LiteLLM proxy stays in the clone: `smarter-compact proxy`
-finds it next to this script's repository, or via SMARTER_COMPACT_ROOT.
-"""
-import argparse
+"""Deprecated: use `smarter-compact install cursor`."""
 import os
-import shutil
+import subprocess
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CLI = os.path.join(REPO, "plugin", "scripts", "smarter-compact.mjs")
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--out", default=os.path.join(REPO, "dist"))
-    args = parser.parse_args(argv)
-    dest = os.path.join(os.path.abspath(args.out), "smarter-compact")
-    if os.path.exists(dest):
-        shutil.rmtree(dest)
-    shutil.copytree(
-        os.path.join(REPO, "plugin"),
-        dest,
-        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
-    )
-    print(dest)
-    return 0
+def main():
+    if not os.path.isfile(CLI):
+        print("smarter-compact install cursor  (from npm: npm install -g smarter-compact)", file=sys.stderr)
+        return 1
+    argv = ["install", "cursor"] + (["--copy"] if "--copy" in sys.argv[1:] else [])
+    return subprocess.run([sys.executable, CLI, *argv], cwd=REPO).returncode
 
 
 if __name__ == "__main__":

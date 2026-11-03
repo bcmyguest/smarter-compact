@@ -58,15 +58,11 @@ export default function smartCompact(pi) {
     const argv = (args || "status").trim().split(/\s+/).filter(Boolean);
     if (argv[0] === "compact") argv.push("--session", ctx.sessionManager.getSessionId());
     const out = await run(CLI, argv, "");
-    if (ctx.hasUI) ctx.ui.notify(out.trim() || "sc: no output", "info");
+    if (ctx.hasUI) ctx.ui.notify(out.trim() || "smarter-compact: no output", "info");
     else console.error(out.trim());
   };
-  pi.registerCommand("sc", {
-    description: "Smarter Compact: status, or compact to trim this session on the next request",
-    handler: cliHandler,
-  });
   pi.registerCommand("smarter-compact", {
-    description: "Same as /sc",
+    description: "Smarter Compact: status, or compact to trim this session on the next request",
     handler: cliHandler,
   });
 }
