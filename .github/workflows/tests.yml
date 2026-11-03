@@ -5,6 +5,19 @@ on:
   pull_request:
 
 jobs:
+  prek:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - uses: astral-sh/setup-uv@v5
+      - run: uv tool install "prek>=0.5,<0.6"
+      - run: prek run --all-files
+
   test:
     runs-on: ubuntu-latest
     steps:

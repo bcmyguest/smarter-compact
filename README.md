@@ -209,6 +209,16 @@ These agents expose **MCP and session hooks only**. They do not rewrite model tr
 
 **Cursor Agent:** `smarter-compact install cursor`, reload Cursor, enable the local plugin. `enable -g` does not install Cursor unless you set `SMARTER_COMPACT_INSTALL_CURSOR=1`.
 
+## Developing (git clone)
+
+```sh
+npm ci
+npm test
+./setup_prek.sh   # prek hooks: file hygiene + Conventional Commits on commit-msg
+```
+
+CI runs the same `prek run --all-files` plus `npm test` and proxy unit tests. Use `feat:`, `fix:`, `docs:`, `chore:`, etc. so **Prepare release** can bump semver with git-cliff.
+
 ## Releases
 
 Version bumps follow [Conventional Commits](https://www.conventionalcommits.org/) via [git-cliff](https://git-cliff.org/) (`cliff.toml`, same rules as [openmem](https://github.com/bcmyguest/openmem)). On `main`, run the **Prepare release** GitHub Action (dry-run first if you want the proposed version and notes). It bumps `package.json`, tags `vX.Y.Z`, and dispatches **Release** (tests, npm publish, GitHub Release body from git-cliff). Locally: `git-cliff --bumped-version` and `git-cliff --unreleased --strip header`.
