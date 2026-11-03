@@ -1,0 +1,33 @@
+# LiteLLM config for the OpenMem context proxy (compose service context-proxy). See docs/context-proxy.md.
+#
+# Claude Code: requests on /v1/messages go to Anthropic. With no ANTHROPIC_API_KEY in the proxy environment, the
+# client's own credentials (Claude subscription OAuth or API key) pass through; the client sends the LiteLLM key in
+# the x-litellm-api-key header.
+#
+# OpenAI-format clients (/v1/chat/completions, /v1/responses) need explicit routes; the "*" catch-all below sends
+# every other model name to Anthropic. Add one entry per model, for example:
+#
+#   - model_name: gpt-5
+#     litellm_params:
+#       model: openai/gpt-5
+#       api_key: os.environ/OPENAI_API_KEY
+#
+# and put OPENAI_API_KEY in the env file (CONTEXT_PROXY_ENV_FILE).
+#
+# Codex with ChatGPT login needs no route: LiteLLM's built-in /backend-api/codex/{models,responses} pass-through
+# (PR #41522, in the pinned dev image) forwards the ChatGPT bearer to chatgpt.com; the client sends the LiteLLM key
+# in x-litellm-api-key. The hook sees those calls as call type pass_through_endpoint.
+model_list:
+  - model_name: "anthropic/*"
+    litellm_params:
+      model: "anthropic/*"
+  - model_name: "*"
+    litellm_params:
+      model: "anthropic/*"
+
+litellm_settings:
+  # Resolved relative to this file: proxy/openmem_context_hook.py
+  callbacks: openmem_context_hook.handler
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

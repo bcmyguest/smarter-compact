@@ -1,0 +1,12 @@
+{
+  "name": "shelf",
+  "version": "0.1.0",
+  "description": "Trim coding-agent context without a summary. Search what left the window with smart_compact_search.",
+  "author": { "name": "B Guest" },
+  "hooks": "./hooks/cursor-hooks.json",
+  "mcpServers": {
+    "shelf": {
+      "command": "${CURSOR_PLUGIN_ROOT}/scripts/shelf-mcp"
+    }
+  }
+}

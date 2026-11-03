@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "shelf": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/scripts/shelf-mcp"
+    }
+  }
+}

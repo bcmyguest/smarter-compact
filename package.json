@@ -1,0 +1,23 @@
+{
+  "name": "shelf",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Trim coding-agent context without a summary. Older turns stay in a local store the agent can search.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "repository": "https://github.com/bcmyguest/shelf",
+  "bin": {
+    "shelf": "plugin/scripts/shelf.mjs"
+  },
+  "engines": {
+    "node": ">=22.16"
+  },
+  "pi": {
+    "extensions": [
+      "./plugin/pi/shelf.js"
+    ]
+  },
+  "scripts": {
+    "test": "node --test tests/plugin.test.mjs"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "description": "Shelf: tell the session that trimmed turns are searchable, and record a compact request.",
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/shelf-hook\"", "timeout": 10 }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/shelf-hook\"", "timeout": 10 }] }]
+  }
+}
