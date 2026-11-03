@@ -77,7 +77,7 @@ export const CONTEXT_STORE_MCP_TOOLS = [
         },
         ignore_case: { type: "boolean", description: "Match pattern case-insensitively (default false)" },
         context: { type: "number", description: `Neighbouring rows of the same conversation to return before and after each hit, 0-${CONTEXT_MAX} (default 0)` },
-        session_id: { type: "string", description: "Session id from the [smarter-compact: continuing session …] pointer" },
+        session_id: { type: "string", description: "Session id from the [smarter-compact: continuing session …] pointer. Omit it, or pass \"current\", to search this workspace's own sessions" },
         limit: { type: "number", description: `Max rows (default ${DEFAULT_LIMIT})` },
         role: {
           description: 'Roles to search: "user", "assistant", "tool", a list of them, or "all" (default ["user", "tool"])',
@@ -130,7 +130,7 @@ export const CONTEXT_STORE_MCP_TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        session_id: { type: "string", description: "Session id from the [smarter-compact: continuing session …] pointer" },
+        session_id: { type: "string", description: "Session id from the [smarter-compact: continuing session …] pointer. Pass \"current\" when you have no pointer: the newest session of this workspace answers" },
         sql: { type: "string", description: `One SELECT or WITH statement, at most ${SQL_MAX_CHARS} characters` },
       },
       required: ["session_id", "sql"],
@@ -282,6 +282,38 @@ function workspaceSessions(sessionsDir, cwd) {
     found.push({ sid: file.slice(0, -".json".length), at: Number.isFinite(at) ? at : 0 });
   }
   return found.sort((a, b) => b.at - a.at).slice(0, MAX_SESSIONS).map((s) => s.sid);
+}
+
+/** What an agent writes for "this session" when nothing ever handed it an id: the recall tools are offered
+ *  from the first request, but the id arrives only with a trim pointer. */
+const SESSION_PLACEHOLDERS = new Set(["current", "this", "these", "latest", "self", "default", "now", "recent"]);
+
+/**
+ * Which session databases a recall call reads, and why.
+ *
+ * A call that carries a pointer's id is the normal path. A call whose id names no store must not answer
+ * with an empty success: the agent asked a real question, and `total_matches: 0` from a store that never
+ * existed reads as "this is not in your history" and sends it re-deriving what it already had. So a
+ * placeholder, or any id in a workspace that has exactly one session, resolves to that workspace's
+ * sessions; a plausible id that is wrong where several sessions exist fails, naming the ids that do exist.
+ * `sessions_searched` always reports what was actually read, so a substitution is never hidden.
+ */
+function targetSessions(args, sessionsDir, cwd) {
+  if (!given(args.session_id)) return { sessions: workspaceSessions(sessionsDir, cwd) };
+  const sid = sanitizeSessionId(args.session_id);
+  if (fs.existsSync(path.join(sessionsDir, `${sid}${DB_SUFFIX}`))) return { sessions: [sid] };
+  const here = workspaceSessions(sessionsDir, cwd);
+  if (!here.length) {
+    return { sessions: [], note: `no session store for ${JSON.stringify(sid)} and no session registered for this workspace` };
+  }
+  if (SESSION_PLACEHOLDERS.has(String(args.session_id).trim().toLowerCase()) || here.length === 1) {
+    return {
+      sessions: here,
+      note: `no session store for ${JSON.stringify(sid)}; searched this workspace's ${here.length === 1 ? "session" : `${here.length} sessions`} instead`,
+    };
+  }
+  throw new Error(`no session database for ${JSON.stringify(sid)}; this workspace has ${here.length}: `
+    + `${here.join(", ")} — pass one of those, or omit session_id to search all of them`);
 }
 
 /** Read-only connection to a session database, or null when it is missing or of a newer schema version (a v1
@@ -444,7 +476,8 @@ async function search(args, env, cwd, opts) {
   if (args.mode !== undefined && args.mode !== "hybrid" && args.mode !== "lexical") throw new Error('mode must be "hybrid" or "lexical"');
   const filter = { ...filterSql(roles, inContext), roles, inContext };
   const sessionsDir = path.join(contextRoot(env), "sessions");
-  const sessions = given(args.session_id) ? [sanitizeSessionId(args.session_id)] : workspaceSessions(sessionsDir, cwd);
+  const target = targetSessions(args, sessionsDir, cwd);
+  const sessions = target.sessions;
 
   const deadline = Date.now() + PATTERN_BUDGET_MS;
   let timedOut = false;
@@ -534,6 +567,7 @@ async function search(args, env, cwd, opts) {
       roles,
       ...(inContext === null ? {} : { in_context: inContext === 1 }),
       sessions_searched: sessions,
+      ...(target.note ? { session_id_note: target.note } : {}),
       databases,
       total_matches: lexical.length,
       line_matches: lineMatches,
@@ -597,12 +631,18 @@ export function checkReadOnlySql(sql) {
   return text.trim().replace(/;\s*$/, "");
 }
 
-function runSql(args, env) {
+function runSql(args, env, cwd) {
   if (!given(args.session_id)) throw new Error("session_id is required");
-  const sid = sanitizeSessionId(args.session_id);
+  const sessionsDir = path.join(contextRoot(env), "sessions");
   const sql = checkReadOnlySql(args.sql);
-  const file = path.join(contextRoot(env), "sessions", `${sid}${DB_SUFFIX}`);
-  if (!fs.existsSync(file)) throw new Error(`no session database for ${sid}`);
+  const target = targetSessions(args, sessionsDir, cwd);
+  // One statement runs against one database: the newest session the id resolved to.
+  const sid = target.sessions[0];
+  if (!sid) throw new Error(target.note || "no session database to query");
+  const note = target.note
+    ? (target.sessions.length > 1 ? `${target.note}, and the query ran against ${sid}` : target.note)
+    : null;
+  const file = path.join(sessionsDir, `${sid}${DB_SUFFIX}`);
   const child = spawnSync(process.execPath, ["--no-warnings", SQL_RUNNER], {
     input: JSON.stringify({ file, sql, cap: SQL_ROW_CAP, cellMax: SQL_CELL_MAX_CHARS }),
     encoding: "utf8",
@@ -621,7 +661,7 @@ function runSql(args, env) {
     throw new Error(`query failed: ${String(child.stderr || "no output").trim().split("\n").at(-1)}`);
   }
   if (out.error) throw new Error(`query failed: ${out.error}`);
-  const result = { session_id: sid, columns: out.columns, rows: out.rows, row_count: out.rows.length, truncated: out.truncated };
+  const result = { session_id: sid, ...(note ? { session_id_note: note } : {}), columns: out.columns, rows: out.rows, row_count: out.rows.length, truncated: out.truncated };
   while (result.rows.length && JSON.stringify(result).length > SQL_RESULT_MAX_CHARS) {
     result.rows = result.rows.slice(0, Math.floor(result.rows.length / 2));
     result.row_count = result.rows.length;
@@ -678,7 +718,7 @@ export async function callContextStoreTool(name, args = {}, opts = {}) {
   let result;
   if (name === "smart_compact_search") result = await search(args, env, opts.cwd || process.cwd(), opts);
   else if (name === "smart_compact_get") result = getBlob(args, env);
-  else if (name === "smart_compact_sql") result = runSql(args, env);
+  else if (name === "smart_compact_sql") result = runSql(args, env, opts.cwd || process.cwd());
   else if (name === "context_status") return contextStatusTool(args, env);
   else throw new Error(`unknown tool: ${name}`);
   // Telemetry for `smarter-compact context stats`; never affects the tool result.

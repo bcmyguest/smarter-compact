@@ -178,7 +178,7 @@ One writer per session at a time is the design: the proxy serializes a session u
 | `in_context` | `true`: rows still in context; `false`: trimmed rows; omitted: both |
 | `mode` | `hybrid` (default when the session has vectors) or `lexical` |
 | `context` | 0–5 neighbouring rows of the same `thread`, any role, before and after each hit |
-| `session_id`, `limit` | As before: one session, or recent sessions registered under the workspace's git root; result count (default 8) |
+| `session_id`, `limit` | One session by the id the pointer gave, or recent sessions registered under the workspace's git root when omitted; result count (default 8). Resolution rules below |
 
 | Field | Counts |
 | --- | --- |
@@ -189,6 +189,19 @@ One writer per session at a time is the design: the proxy serializes a session u
 `mode` in the response says which ranking ran. **Hybrid**: the MCP server embeds the query with the model that has the most vectors in the database (the configured `embedding_model` when it has vectors), takes the 50 nearest rows by brute-force cosine under the same filters, and merges them with the lexical ranking by reciprocal rank fusion (score Σ 1/(60 + rank)). Vector-only hits carry `similarity` and `matched_terms: 0`. When the query embedding fails, the response is lexical and carries `embedding_error`. `pattern` searches are always lexical.
 
 Results carry `session_id`, `seq`, `role`, `kind`, `name`, `in_context`, an excerpt, `matched_terms` (query), `similarity` (hybrid), `blob_ids`, and `before`/`after` with `context`. `databases` maps each searched session to its database path.
+
+## Which session a call reads
+
+The recall tools are offered from the first request, but the session id reaches the agent only inside a trim pointer. So a call can arrive with no id, or with one the agent made up because no pointer had arrived yet. What each means:
+
+| `session_id` | Reads |
+| --- | --- |
+| absent | Sessions registered under the workspace's git root, newest first (at most 20) |
+| an id whose `sessions/<sid>.db` exists | That session alone |
+| `current` / `this` / `these` / `latest` / `self` / `default` / `now` / `recent`, or any unknown id where the workspace has exactly one session | The workspace's sessions, newest first, and the response carries `session_id_note` naming the id that did not resolve |
+| any other unknown id, with several sessions in the workspace | Nothing: the call fails and names the ids that do exist |
+
+The middle row exists because the alternative was a `total_matches: 0` from a store that never existed, which reads to the agent as "that is not in my history" and sends it re-deriving what it already had. Substitution is never hidden: `sessions_searched` lists what was actually read and `session_id_note` says why. `smart_compact_sql` resolves the same way and runs its one statement against the newest resolved session, noting that in `session_id_note` when more than one matched.
 
 ## SQL
 
