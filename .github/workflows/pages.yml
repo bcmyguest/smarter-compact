@@ -24,6 +24,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+        with:
+          # Creates/enables Pages (Source: GitHub Actions) when missing; needs repo admin on the token.
+          enablement: true
       - uses: actions/jekyll-build-pages@v1
         with:
           source: docs

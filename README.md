@@ -1,6 +1,10 @@
 # Smarter Compact
 
-**Context management (smart compaction)** keeps long coding-agent sessions under a token limit without an LLM summary. Every message goes into a local SQLite session store; older turns leave the context and the turn they precede carries a pointer to them. The agent searches the store with `smart_compact_search`, `smart_compact_sql`, and `smart_compact_get` when it needs a detail back. The cut stays put on later requests, so the prompt cache keeps hitting.
+[![npm version](https://img.shields.io/npm/v/smarter-compact.svg)](https://www.npmjs.com/package/smarter-compact)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![GitHub](https://img.shields.io/badge/github-bcmyguest%2Fsmarter--compact-blue)](https://github.com/bcmyguest/smarter-compact)
+
+**Context management (smart compaction)** keeps long coding-agent sessions under a token limit without an LLM summary. Every message goes into a local SQLite session store; older turns leave the context and the turn they precede carries a pointer to them.
 
 <p align="center">
 <picture>
@@ -8,6 +12,8 @@
 <img src="docs/media/smart-compaction.gif" alt="Smart compaction: older turns move into the session store, the cut turn carries a pointer, smart_compact_search recovers a detail." width="720" />
 </picture>
 </p>
+
+The agent searches the store with `smart_compact_search`, `smart_compact_sql`, and `smart_compact_get` when it needs a detail back. The cut stays put on later requests, so the prompt cache keeps hitting.
 
 **Learn more:** [Smart compaction](https://bcmyguest.github.io/smarter-compact/context-management.html) (benchmarks and how it trims) · [Context proxy & port](https://bcmyguest.github.io/smarter-compact/context-proxy.html) · [Context store](https://bcmyguest.github.io/smarter-compact/context-store.html)
 
@@ -20,13 +26,13 @@
 </picture>
 </p>
 
-The trimmer is the OpenMem context proxy and its OpenCode port, extracted into this repository. The stored text still uses the OpenMem wire format (`[openmem: …]`, `<openmem-recall>`). Memory recall on a trim is off unless you set `CONTEXT_COMPACTION_RECALL=1`.
+The stored text still uses the OpenMem wire format (`[openmem: …]`, `<openmem-recall>`). Memory recall on a trim is off unless you set `CONTEXT_COMPACTION_RECALL=1`.
 
 You need Node 24 or newer (for `node:sqlite`) and, for agents that trim through the proxy, the LiteLLM dev build `v1.109.0-dev.1` on `PATH` as `litellm`. The plugin has no API key of its own. Your agent keeps its own login.
 
 ## Install
 
-Use the **npm package** when it is published (`npm install -g smarter-compact`). Plugin marketplaces need the package directory on disk once; you do not need a git clone for that. A **git clone** is optional if you are developing the trimmer or prefer a fixed checkout path.
+Install from npm (`npm install -g smarter-compact`). Plugin marketplaces need the package directory on disk once; you do not need a git clone for that. A **git clone** is optional if you are developing the trimmer or prefer a fixed checkout path.
 
 ### Claude Code
 
