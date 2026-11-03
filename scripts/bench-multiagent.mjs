@@ -159,7 +159,7 @@ let bad = 0;
 if (summary.trims < 1) { console.error("FAIL  no trims fired — session too short for the trim threshold"); bad++; }
 if (totalTaskCalls < 2) { console.error("FAIL  subagents were not used (expected >= 2 task-tool calls)"); bad++; }
 if (!recalled) { console.error("FAIL  session secret not recalled via search"); bad++; }
-if (!verified) { console.error("NOTE  agent did not report all tests passing — checking repo"); 
+if (!verified) { console.error("NOTE  agent did not report all tests passing — checking repo");
   const pytest = spawnSync("sh", [path.join(project, "run_tests.sh")], { encoding: "utf8" });
   if (pytest.exitCode === 0) ok("run_tests.sh passes on the working tree (agent report was wrong)");
   else { console.error(pytest.stdout + pytest.stderr); bad++; }
