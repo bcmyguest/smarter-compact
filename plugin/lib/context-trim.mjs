@@ -77,15 +77,30 @@ export const STANDING_MARKER = "Context management: to fit your context window";
  * assuming its spelling; the bare names stay the default for hosts that expose them that way.
  */
 export function recallToolNames(tools) {
+  // Three shapes, all real: the OpenCode `context` hook hands tools over keyed by id
+  // (`q.tools.edit` in its own bundle), an Anthropic/OpenAI request carries `[{name}]` (or a
+  // `{definitions: [...]}` wrapper), and some harnesses pass bare strings. Only the array-of-
+  // objects form used to be read, so with a keyed object nothing matched and both texts fell
+  // back to the bare names — proven on a live trim: the pointer ordered `smart_compact_search`
+  // while that request offered `smarter-compact_smart_compact_search`.
+  let entries = Array.isArray(tools) ? tools : [];
+  if (!Array.isArray(tools) && tools && typeof tools === "object") {
+    entries = Array.isArray(tools.definitions)
+      ? tools.definitions
+      : Object.entries(tools).map(([key, def]) => ({ name: (def && def.name) || key }));
+  }
   const offered = [];
-  for (const t of Array.isArray(tools) ? tools : []) {
+  for (const t of entries) {
     const name = typeof t === "string" ? t : t?.name;
     if (typeof name === "string" && /(?:^|[^a-z0-9])(?:smart_compact_search|smart_compact_sql|smart_compact_get|context_status)$/.test(name)) {
       offered.push(name);
     }
   }
   const pick = (suffix) => offered.find((n) => n.endsWith(suffix)) || suffix;
-  return { search: pick("smart_compact_search"), sql: pick("smart_compact_sql"), offered };
+  // `seen` tells a caller when a non-empty tool list yielded nothing: that is a shape or
+  // separator we do not read, and it degrades to bare names — the same symptom as recall
+  // never being installed at all, which is otherwise indistinguishable in the field.
+  return { search: pick("smart_compact_search"), sql: pick("smart_compact_sql"), offered, seen: entries.length };
 }
 
 export function standingInstruction(names = recallToolNames([])) {
@@ -638,9 +653,9 @@ export function addStandingInstruction(system, settings, names) {
   return true;
 }
 
-export function pendingText(sid) {
+export function pendingText(sid, names = LEGACY_RECALL_NAMES) {
   return "[smarter-compact: memory ingest is still running, so the most recent turns may not be in memory yet. "
-    + `Use smart_compact_search(session_id="${sid}", query=...) for them.]`;
+    + `Use ${names.search}(session_id="${sid}", query=...) for them.]`;
 }
 
 const utcNow = (now = new Date()) => now.toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -783,7 +798,7 @@ async function buildNote(items, cut, sid, dropped, store, settings, deps, names)
       } catch (error) { logFailOpen(error); }
     }
     if (deps.pending) {
-      try { if (await deps.pending(bank)) out.push(pendingText(sid)); } catch (error) { logFailOpen(error); }
+      try { if (await deps.pending(bank)) out.push(pendingText(sid, names)); } catch (error) { logFailOpen(error); }
     }
   }
   return out.join("\n");

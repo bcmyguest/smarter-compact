@@ -129,12 +129,17 @@ export async function setup(ctx, options = {}) {
     try {
       // Names come from this request: the model can only call what it was offered, and OpenCode
       // namespaces the recall tools as `<server>.<tool>`, i.e. `smarter-compact.smart_compact_search`.
-      const pushed = addStandingInstruction(event.system, settings, recallToolNames(event.tools));
+      const names = recallToolNames(event.tools);
+      const pushed = addStandingInstruction(event.system, settings, names);
       if (!reportedSystem.has(event.sessionID)) {
         if (reportedSystem.size > MAX_SESSIONS) reportedSystem.clear();
         reportedSystem.add(event.sessionID);
+        // offered/seen: a nonzero `seen` with zero `offered` means the tool list arrived in a
+        // shape or namespace we cannot read, and both texts fall back to bare names. Without
+        // this line that failure is invisible — it looks exactly like recall never installed.
         diag(`standing_instruction pushed=${pushed} system=${
-          Array.isArray(event.system) ? `array(${event.system.length})` : typeof event.system}`);
+          Array.isArray(event.system) ? `array(${event.system.length})` : typeof(event.system)
+        } recall=${names.offered.length}/${names.seen} search_tool=${names.search}`);
       }
     } catch (error) { logFailOpen(error); }
   }

@@ -71,10 +71,12 @@ Commands:
 
 Verify rather than assume: the plugin prints one `smarter-compact: recall MCP registered` (or
 `NOT registered reason=…`) line to stderr at startup, and every answered call appends a line to
-`$SMARTER_COMPACT_STATE_DIR/context/tool-calls.jsonl`. In clients that expose MCP tools through a code-mode
-runner, the calls appear as `tools.smarter-compact.smart_compact_search(...)` inside that runner's
-input (OpenCode namespaces MCP tools as `<server>.<tool>`),
-**not** as a tool name of its own — counting tool names alone under-reads recall to zero.
+`$SMARTER_COMPACT_STATE_DIR/context/tool-calls.jsonl`. OpenCode exposes an MCP tool as
+`<server>_<tool>` — `smarter-compact_smart_compact_search`, underscore, seen verbatim in captured
+requests — so the pointer and standing instruction name that qualified form, never the bare one.
+When a server is left behind code mode the tools are reachable only through that runner's
+`execute` input, so counting top-level tool names alone under-reads recall to zero; the bench
+therefore sets `"codemode": false` on this server.
 
 ## OpenCode 1
 

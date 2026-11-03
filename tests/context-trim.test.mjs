@@ -113,3 +113,31 @@ test("every harness namespace spelling resolves", () => {
   // Not a namespace, a different tool: must not be mistaken for recall.
   assert.deepEqual(recallToolNames([{ name: "xsmart_compact_search" }]).offered, []);
 });
+
+// OpenCode's `context` hook hands tools over keyed by id, not as a list — the shape that made the
+// pointer order bare `smart_compact_search` while the model was offered `smarter-compact_smart_compact_search`
+// (captured live in bench/swebench/results/namerun). All three delivery shapes must resolve.
+test("tools arrive as a list, a keyed object, or a definitions wrapper", () => {
+  const search = "smarter-compact_smart_compact_search";
+  const sql = "smarter-compact_smart_compact_sql";
+  const pair = [{ name: search }, { name: sql }, { name: "shell" }];
+  const shapes = {
+    list: pair,
+    strings: [search, sql, "shell"],
+    keyed: { [search]: { description: "search" }, [sql]: { description: "counts" }, shell: { description: "run" } },
+    wrapper: { definitions: pair },
+  };
+  for (const [shape, tools] of Object.entries(shapes)) {
+    const names = recallToolNames(tools);
+    assert.equal(names.search, search, shape);
+    assert.equal(names.sql, sql, shape);
+    assert.equal(names.offered.length, 2, shape);
+    assert.equal(names.seen, 3, shape);
+    assert.ok(pointerText(SID, 1, names).includes(search), shape);
+    assert.ok(standingInstruction(names).includes(`call ${search} (`), shape);
+  }
+  // Nothing offered: the bare fallback, and `seen` says so rather than hiding it.
+  const none = recallToolNames({ shell: {}, read: {} });
+  assert.deepEqual([none.search, none.sql, none.offered.length, none.seen],
+    ["smart_compact_search", "smart_compact_sql", 0, 2]);
+});
