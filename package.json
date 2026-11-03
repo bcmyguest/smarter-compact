@@ -1,6 +1,6 @@
 {
   "name": "smarter-compact",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Context management (smart compaction) for coding agents: keep long sessions under a token limit without an LLM summary. Every message goes into a local SQLite session store; older turns leave the context and the agent searches the store when it needs a detail back.",
   "license": "Apache-2.0",
   "type": "module",
