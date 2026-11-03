@@ -57,6 +57,10 @@ ARMS="${ARMS:-none,smart}"
 TIMEOUT="${TIMEOUT:-3600}"
 echo "run-id=$RUN_ID provider=$PROVIDER model=$MODEL context=$CONTEXT_LIMIT parallel=$PARALLEL trim=$TRIM_AT native=$NATIVE_AT arms=$ARMS timeout=$TIMEOUT instances=$(echo "$INSTANCES" | tr ',' '\n' | wc -l)"
 
+# Request capture is on by default (run_bench.py: BENCH_CAPTURE defaults to "1"),
+# so every trial already writes results/$RUN_ID/<arm>/<instance>/requests/
+# {index.jsonl,NNNN-*.json.gz} -- the only way to see what the model was actually
+# offered (tool names, the trim pointer). Set BENCH_CAPTURE=0 to skip it.
 exec env BENCH_MLFLOW=1 venv/bin/python run_bench.py \
   --run-id "$RUN_ID" \
   --instances "$INSTANCES" \

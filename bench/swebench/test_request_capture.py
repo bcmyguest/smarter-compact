@@ -113,6 +113,18 @@ def main() -> int:
         stored = gzip.decompress(open(os.path.join(tmp, bodies[0]), "rb").read()).decode()
         assert "sk-ant-secret" not in json.dumps(rows), "headers leaked a key into index.jsonl"
         assert json.loads(stored)["x_api_key_leak"] == "sk-ant-secret", "body should be stored verbatim"
+        # Tool names arrive in two wire shapes. Reading only Anthropic's flat form made every
+        # OpenAI-compatible capture (cairn2) report tools=[] and recall_tools=[], which hides
+        # exactly the "pointer names a tool that was never offered" case this recorder exists
+        # to catch — it happened on cairn-probe-15k while the pointer was in fact correct.
+        from request_capture import facts
+        flat = facts({"tools": [{"name": "smart_compact_search"}], "messages": []})
+        nested = facts({"tools": [{"type": "function",
+                                   "function": {"name": "smarter-compact_smart_compact_search"}}],
+                        "messages": []})
+        assert flat["recall_tools"] == ["smart_compact_search"], flat
+        assert nested["recall_tools"] == ["smarter-compact_smart_compact_search"], nested
+        assert nested["tools"] == ["smarter-compact_smart_compact_search"], nested
         print(f"PASS  forwarded={SEEN_UPSTREAM} rows={len(rows)} bodies={bodies} recall_tools={row['recall_tools']}")
         return 0
     finally:

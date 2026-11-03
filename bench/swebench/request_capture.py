@@ -43,7 +43,17 @@ def facts(body: dict) -> dict:
     """What this request offered: tools, message count, and whether the trim pointer is in it."""
     raw = json.dumps(body)
     tools = body.get("tools") or body.get("tool_definitions") or []
-    names = sorted({t.get("name") for t in tools if isinstance(t, dict) and t.get("name")})
+    # Two wire shapes, both seen here: Anthropic sends flat {"name": ...}, an
+    # OpenAI-compatible endpoint (cairn2, @ai-sdk/openai-compatible) nests it as
+    # {"type":"function","function":{"name":...}}. Reading only the flat key made
+    # every cairn2 capture report tools=[] and recall_tools=[], so "the pointer
+    # names a tool that was never offered" was undetectable on that provider --
+    # measured on cairn-probe-15k, where the pointer was in fact correct.
+    names = sorted({
+        n for t in tools if isinstance(t, dict)
+        for n in [t.get("name") or (t.get("function") or {}).get("name")]
+        if isinstance(n, str)
+    })
     # Only the prompt, never the tool list: our own search tool's description quotes the pointer
     # ("Use it when an [smarter-compact: continuing session …] pointer says…"), so a whole-body
     # scan marks every request that merely *offers* the recall tools as pointed. Measured on the
