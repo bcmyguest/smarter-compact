@@ -20,7 +20,7 @@ function dirFromImportMeta(importMetaUrl) {
   return path.dirname(filePath);
 }
 
-/** Directory that contains `proxy/openmem_context_hook.py` (npm package or clone). */
+/** Directory that contains `proxy/smarter_compact_hook.py` (npm package or clone). */
 export function packageRoot(importMetaUrl) {
   const candidates = [];
   const start = dirFromImportMeta(importMetaUrl);
@@ -37,7 +37,7 @@ export function packageRoot(importMetaUrl) {
     if (process.env[key]) candidates.push(process.env[key]);
   }
   for (const candidate of candidates) {
-    if (fs.existsSync(path.join(candidate, "proxy", "openmem_context_hook.py"))) return candidate;
+    if (fs.existsSync(path.join(candidate, "proxy", "smarter_compact_hook.py"))) return candidate;
   }
   return null;
 }
@@ -68,7 +68,7 @@ function litellmEnv(home, root, port, env) {
     ...merged,
     PYTHONPATH: path.join(root, "proxy"),
     LITELLM_MASTER_KEY: ensureKey(home),
-    OPENMEM_STATE_DIR: stateParent(home, env),
+    SMARTER_COMPACT_STATE_DIR: stateParent(home, env),
     CONTEXT_COMPACTION_RECALL: merged.CONTEXT_COMPACTION_RECALL || "0",
   };
 }

@@ -13,7 +13,7 @@ const REQUIRED = [
   "LICENSE",
   "index.mjs",
   "plugin/scripts/smarter-compact.mjs",
-  "proxy/openmem_context_hook.py",
+  "proxy/smarter_compact_hook.py",
   "proxy/config.yaml",
 ];
 

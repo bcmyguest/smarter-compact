@@ -1,4 +1,4 @@
-# LiteLLM config for the OpenMem context proxy (compose service context-proxy). See docs/context-proxy.md.
+# LiteLLM config for the Smarter Compact context proxy (compose service context-proxy). See docs/context-proxy.md.
 #
 # Claude Code: requests on /v1/messages go to Anthropic. With no ANTHROPIC_API_KEY in the proxy environment, the
 # client's own credentials (Claude subscription OAuth or API key) pass through; the client sends the LiteLLM key in
@@ -26,8 +26,8 @@ model_list:
       model: "anthropic/*"
 
 litellm_settings:
-  # Resolved relative to this file: proxy/openmem_context_hook.py
-  callbacks: openmem_context_hook.handler
+  # Resolved relative to this file: proxy/smarter_compact_hook.py
+  callbacks: smarter_compact_hook.handler
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

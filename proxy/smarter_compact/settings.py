@@ -115,7 +115,7 @@ class Settings:
     compaction_recall: bool = True
     recall_timeout_s: float = DEFAULT_RECALL_TIMEOUT_S
     hindsight_url: str = DEFAULT_HINDSIGHT_URL
-    context_dir: Path = Path.home() / ".local" / "share" / "openmem" / "context"
+    context_dir: Path = Path.home() / ".local" / "share" / "smarter-compact" / "context"
     # Session files older than this are deleted at start, at most once a day; 0 keeps them (CONTEXT_STORE_TTL_DAYS).
     ttl_days: int = DEFAULT_TTL_DAYS
     # Embedding model for the session databases' vectors; empty turns vectors off (CONTEXT_EMBEDDING_MODEL).
@@ -132,8 +132,18 @@ class Settings:
     @classmethod
     def from_env(cls, env=None):
         env = os.environ if env is None else env
-        state_dir = str(env.get("OPENMEM_STATE_DIR", "")).strip(ASCII_WHITESPACE)
-        root = Path(state_dir) if state_dir else Path.home() / ".local" / "share" / "openmem"
+        # OPENMEM_STATE_DIR is the pre-rename name of the same setting and still configures it.
+        state_dir = str(env.get("SMARTER_COMPACT_STATE_DIR") or env.get("OPENMEM_STATE_DIR") or "")
+        state_dir = state_dir.strip(ASCII_WHITESPACE)
+        if state_dir:
+            root = Path(state_dir)
+        else:
+            root = Path.home() / ".local" / "share" / "smarter-compact"
+            legacy = Path.home() / ".local" / "share" / "openmem"
+            # Same fallback as contextRoot() in the plugin: a setup that never set the variable
+            # keeps reading the store it already has rather than silently starting empty.
+            if not root.joinpath("context").exists() and legacy.joinpath("context").exists():
+                root = legacy
         families, default = _trim_overrides(env)
         return cls(
             enabled=_flag(env, "CONTEXT_PROXY_ENABLED"),

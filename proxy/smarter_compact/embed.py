@@ -37,7 +37,7 @@ def _where(exc):
 
 
 def _log(message):
-    print(f"openmem-context: {message}", file=sys.stderr, flush=True)
+    print(f"smarter-compact: {message}", file=sys.stderr, flush=True)
 
 
 def _log_error(exc):
@@ -171,7 +171,7 @@ class Embedder:
                 return
             self._queue[str(path)] = (model, url, api_key, timeout_s, max_chars)
             if self._thread is None or not self._thread.is_alive():
-                self._thread = threading.Thread(target=self._run, name="openmem-embed", daemon=True)
+                self._thread = threading.Thread(target=self._run, name="smarter-compact-embed", daemon=True)
                 self._thread.start()
             self._cond.notify()
 

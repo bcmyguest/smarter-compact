@@ -176,7 +176,7 @@ function proxy() {
     ...process.env,
     PYTHONPATH: path.join(root, "proxy"),
     LITELLM_MASTER_KEY: ensureKey(home),
-    OPENMEM_STATE_DIR: stateParent(home, process.env),
+    SMARTER_COMPACT_STATE_DIR: stateParent(home, process.env),
     CONTEXT_COMPACTION_RECALL: process.env.CONTEXT_COMPACTION_RECALL || "0",
   };
   const config = path.join(root, "proxy", "config.yaml");

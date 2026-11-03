@@ -1,6 +1,8 @@
 /**
- * Product identity for the extracted trimmer. The session-store wire format
- * (`[openmem: …]`, `smart_compact_*`, `OPENMEM_STATE_DIR`) stays the OpenMem contract.
+ * Product identity for the extracted trimmer. Everything the product writes or says carries its
+ * own name; the spellings earlier releases emitted (`[openmem: …]`, `<openmem-recall>`,
+ * `OPENMEM_STATE_DIR`, `openmem:smarter-compact`) are still READ, because sessions, command files
+ * and env set up before the rename exist in the wild. Tool names were always `smart_compact_*`.
  */
 import fs from "node:fs";
 import os from "node:os";
@@ -10,7 +12,7 @@ import { applyTrimConfigToEnv } from "./context-config.mjs";
 export const PRODUCT = "smarter-compact";
 export const PRODUCT_NAME = "Smarter Compact";
 export const DEFAULT_PORT = 4101;
-export const STATE_ENV = "OPENMEM_STATE_DIR";
+export const STATE_ENV = "SMARTER_COMPACT_STATE_DIR";
 export const ROOT_ENV = "SMARTER_COMPACT_ROOT";
 
 /** Keys in `proxy.env` applied when missing from the process environment (env wins). */
@@ -26,8 +28,9 @@ export const PROXY_ENV_CONTEXT_KEYS = [
 
 /** Parent of `context/`. The core appends `context` itself. */
 export function stateParent(home = os.homedir(), env = process.env) {
-  const set = String(env[STATE_ENV] || "").replace(/^[ \t\n\v\f\r]+|[ \t\n\v\f\r]+$/g, "");
-  return set || path.join(home, ".local", "share", PRODUCT);
+  const trim = (v) => String(v || "").replace(/^[ \t\n\v\f\r]+|[ \t\n\v\f\r]+$/g, "");
+  // OPENMEM_STATE_DIR is the pre-rename name of the same setting and still configures it.
+  return trim(env[STATE_ENV]) || trim(env.OPENMEM_STATE_DIR) || path.join(home, ".local", "share", PRODUCT);
 }
 
 function envUnset(env, key) {
@@ -37,7 +40,7 @@ function envUnset(env, key) {
 
 /** Fill process env the core already reads. Existing values win; then `proxy.env`. */
 export function ensureProductEnv(env = process.env, home = os.homedir()) {
-  if (!String(env[STATE_ENV] || "").trim()) env[STATE_ENV] = stateParent(home, env);
+  if (!String(env[STATE_ENV] || env.OPENMEM_STATE_DIR || "").trim()) env[STATE_ENV] = stateParent(home, env);
   if (env.CONTEXT_COMPACTION_RECALL === undefined) env.CONTEXT_COMPACTION_RECALL = "0";
   const file = readProxyEnv(home);
   if (envUnset(env, "CONTEXT_PROXY_PORT")) {

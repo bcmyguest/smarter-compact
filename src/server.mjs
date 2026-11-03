@@ -37,7 +37,7 @@ export async function server(input, options = {}) {
 
   return {
     "chat.headers": async (hookInput, output) => {
-      if (proxied && hookInput.sessionID) output.headers["x-openmem-session-id"] = hookInput.sessionID;
+      if (proxied && hookInput.sessionID) output.headers["x-smarter-compact-session-id"] = hookInput.sessionID;
     },
     "chat.message": async (hookInput, output) => {
       if (isSmartCompactPrompt(messageText(output))) {

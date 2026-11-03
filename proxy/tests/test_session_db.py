@@ -15,11 +15,11 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from openmem_context import Settings, process_request  # noqa: E402
-from openmem_context import embed as embed_mod  # noqa: E402
-from openmem_context import sessiondb, ttl  # noqa: E402
-from openmem_context import core  # noqa: E402
-from openmem_context.core import startup  # noqa: E402
+from smarter_compact import Settings, process_request  # noqa: E402
+from smarter_compact import embed as embed_mod  # noqa: E402
+from smarter_compact import sessiondb, ttl  # noqa: E402
+from smarter_compact import core  # noqa: E402
+from smarter_compact.core import startup  # noqa: E402
 
 SID = "db-1"
 BIG = 10_000_000
@@ -30,10 +30,13 @@ def req(msgs, sid=SID):
             "messages": copy.deepcopy(msgs), "proxy_server_request": {"headers": {"x-claude-code-session-id": sid}}}
 
 
-def history(turns):
+def history(turns, pad=0):
+    # `pad` widens each turn's payload: the contract note is ~250 tokens, so a test that means
+    # "the dropped rows outweigh the note" needs dropped rows with real content in them.
+    fill = " padding" * pad
     msgs = []
     for t in range(turns):
-        msgs.append({"role": "user", "content": [{"type": "text", "text": f"question {t}\nsecond line {t}"}]})
+        msgs.append({"role": "user", "content": [{"type": "text", "text": f"question {t}\nsecond line {t}{fill}"}]})
         msgs.append({"role": "assistant", "content": [
             {"type": "tool_use", "id": f"tu{t}", "name": "Bash", "input": {"command": f"echo {t}"}}]})
         msgs.append({"role": "user", "content": [{"type": "tool_result", "tool_use_id": f"tu{t}", "content": f"out {t}"}]})
@@ -133,7 +136,7 @@ class StoreEveryMessageTests(DbBase):
         msgs = history(1)
         msgs[2]["content"][0]["content"] = big
         out = self.run_req(msgs, compress_over_tokens=100)
-        self.assertTrue(out["messages"][2]["content"][0]["content"].startswith("[openmem: tool result compressed"))
+        self.assertTrue(out["messages"][2]["content"][0]["content"].startswith("[smarter-compact: tool result compressed"))
         text, blob = self.query("SELECT text, blob_id FROM messages WHERE kind = 'tool_result'")[0]
         self.assertEqual(text, big)
         self.assertRegex(blob, r"^[0-9a-f]{16}$")
@@ -161,8 +164,8 @@ class StoreEveryMessageTests(DbBase):
 
 class EventTests(DbBase):
     def test_trim_records_tokens_before_and_after(self):
-        # Six turns, so the dropped rows outweigh the pointer note that replaces them.
-        self.run_req(history(6), trim_at_tokens=1)
+        # Six turns with real payload, so the dropped rows outweigh the pointer note that replaces them.
+        self.run_req(history(6, pad=600), trim_at_tokens=1)
         rows = self.query("SELECT kind, version, tokens_before, tokens_after, dropped, error FROM events")
         self.assertEqual(len(rows), 1)
         kind, version, before, after, dropped, error = rows[0]
@@ -197,8 +200,8 @@ class FailOpenTests(DbBase):
         err = io.StringIO()
         with redirect_stderr(err):
             out = self.run_req(history(3), trim_at_tokens=1)
-        self.assertTrue(out["messages"][2]["content"][0]["text"].startswith("[openmem: continuing session"))
-        self.assertEqual(err.getvalue().count("openmem-context: fail-open"), 1)
+        self.assertTrue(out["messages"][2]["content"][0]["text"].startswith("[smarter-compact: continuing session"))
+        self.assertEqual(err.getvalue().count("smarter-compact: fail-open"), 1)
         self.assertNotIn("question", err.getvalue())
 
     def test_newer_schema_is_left_alone(self):
@@ -376,7 +379,7 @@ class EmbeddingTests(DbBase):
             embedder.drain()
         # 4 rows: batches of 4 and 2, then MAX_FAILURES single rows; no retry before RETRY_S.
         self.assertEqual((first_run, len(calls)), (5, 5))
-        self.assertIn("openmem-context: embedding failed OSError", err.getvalue())
+        self.assertIn("smarter-compact: embedding failed OSError", err.getvalue())
         self.assertEqual(self.query("SELECT count(*) FROM vectors")[0][0], 0)
 
     def notify_all(self, embedder, max_chars=embed_mod.DEFAULT_MAX_CHARS, runs=1):
@@ -414,8 +417,8 @@ class EmbeddingTests(DbBase):
         texts = self.query("SELECT seq, substr(text, 1, 6) FROM messages ORDER BY seq")
         self.assertEqual(calls[1][0], [texts[5][1], texts[4][1]])
         self.assertTrue(all(len(t) <= 6 for batch, _ in calls for t in batch))
-        self.assertIn("openmem-context: embedded rows=2 seconds=", log)
-        self.assertIn("openmem-context: embedding batch failed TimeoutError rows=4", log)
+        self.assertIn("smarter-compact: embedded rows=2 seconds=", log)
+        self.assertIn("smarter-compact: embedding batch failed TimeoutError rows=4", log)
 
     def test_fast_endpoint_grows_batches(self):
         self.run_req(history(10))

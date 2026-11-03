@@ -3,10 +3,11 @@
  */
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { ensureProductEnv, PRODUCT, PRODUCT_NAME } from "../plugin/lib/brand.mjs";
 import { SMART_COMPACT_BODY, isSmartCompactPrompt, registerSession, writeForceFlag } from "../plugin/lib/context-store.mjs";
 import {
-  addStandingInstruction, compactionSummary, logFailOpen, promptTokensFromOpenCode, recordPromptUsage,
+  addStandingInstruction, compactionSummary, logFailOpen, promptTokensFromOpenCode, recallToolNames, recordPromptUsage,
   recordStepUsage, trimContext, trimSettings,
 } from "../plugin/lib/context-trim.mjs";
 import { ensureContextProxyRunning } from "../plugin/lib/proxy-daemon.mjs";
@@ -19,10 +20,58 @@ const EVENT_TYPES = [
   "session.execution.interrupted", "session.execution.failed",
 ];
 
+/**
+ * One stderr line per plugin-level fact a bench run must be able to assert on.
+ * Registration and instruction-injection used to fail by silent `return`, which made
+ * a whole sweep indistinguishable from "model ignored the tool". stderr is multiplexed
+ * into the captured agent stream by the runners, so nothing extra has to be collected.
+ */
+function diag(message) {
+  try { process.stderr.write(`smarter-compact: ${message}\n`); } catch { /* never fail the session */ }
+}
+
 function remember(map, key, value) {
   map.delete(key);
   map.set(key, value);
   while (map.size > MAX_SESSIONS) map.delete(map.keys().next().value);
+}
+
+/**
+ * Best-effort self-registration of the search MCP server (OpenCode >= 2.2 `ctx.mcp.add`), so a
+ * trimmed turn can be fetched back with no user config. A rejected/absent `ctx.mcp.add` is
+ * invisible otherwise, so the reason is logged; the `mcp.servers` config entry (docs/opencode.md)
+ * is the path that must be relied on, and the bench writes it for every smart trial.
+ */
+async function registerSearchTools(ctx, { home, enabled, directory }) {
+  if (!enabled) return;
+  if (!ctx.mcp?.add || !directory) {
+    diag(`recall MCP NOT registered reason=${ctx.mcp?.add ? "no-location-directory" : "no-ctx.mcp.add"} ctx=[${Object.keys(ctx).join(",")}] mcp=[${Object.keys(ctx.mcp ?? {}).join(",")}]`);
+    return;
+  }
+  try {
+    const script = path.join(
+      path.dirname(fileURLToPath(import.meta.url)), "..", "plugin", "lib", "mcp", "server.mjs",
+    );
+    await ctx.mcp.add({
+      server: PRODUCT,
+      location: { directory },
+      config: {
+        type: "local",
+        command: ["node", script],
+        environment: {
+          HOME: home,
+          SMARTER_COMPACT_STATE_DIR:
+            process.env.SMARTER_COMPACT_STATE_DIR || path.join(home, ".local", "share", PRODUCT),
+          CONTEXT_COMPACTION_RECALL: process.env.CONTEXT_COMPACTION_RECALL || "0",
+        },
+        enabled: true,
+      },
+    });
+    diag(`recall MCP registered via ctx.mcp.add dir=${directory}`);
+  } catch (error) {
+    diag(`recall MCP registration FAILED ${error?.name || typeof error}`);
+    logFailOpen(error);
+  }
 }
 
 /**
@@ -37,6 +86,7 @@ export async function setup(ctx, options = {}) {
   const projectDir = ctx.location?.directory;
   const measured = new Map();
   const registered = new Set();
+  const reportedSystem = new Set();
 
   function register(sessionID) {
     if (!sessionID || registered.has(sessionID)) return;
@@ -76,7 +126,17 @@ export async function setup(ctx, options = {}) {
       messages = await trimContext(event, settings, { measured: (sample) => onMeasured(event.sessionID, sample) });
     } catch (error) { logFailOpen(error); }
     if (messages !== original) event.messages = messages;
-    try { addStandingInstruction(event.system, settings); } catch (error) { logFailOpen(error); }
+    try {
+      // Names come from this request: the model can only call what it was offered, and OpenCode
+      // namespaces the recall tools as `<server>.<tool>`, i.e. `smarter-compact.smart_compact_search`.
+      const pushed = addStandingInstruction(event.system, settings, recallToolNames(event.tools));
+      if (!reportedSystem.has(event.sessionID)) {
+        if (reportedSystem.size > MAX_SESSIONS) reportedSystem.clear();
+        reportedSystem.add(event.sessionID);
+        diag(`standing_instruction pushed=${pushed} system=${
+          Array.isArray(event.system) ? `array(${event.system.length})` : typeof event.system}`);
+      }
+    } catch (error) { logFailOpen(error); }
   }
 
   async function onCompaction(event) {
@@ -93,6 +153,7 @@ export async function setup(ctx, options = {}) {
   });
   await ctx.session.hook("context", onContext);
   await ctx.session.hook("compaction", onCompaction);
+  await registerSearchTools(ctx, { home, enabled: settings.enabled, directory: projectDir });
   if (ctx.command?.transform) {
     await ctx.command.transform((editor) => {
       editor.add({

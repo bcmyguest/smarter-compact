@@ -11,9 +11,9 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from openmem_context import Settings, core, process_request, process_usage  # noqa: E402
-from openmem_context.core import prompt_tokens_from_usage, response_prompt_tokens  # noqa: E402
-from openmem_context.tokens import (  # noqa: E402
+from smarter_compact import Settings, core, process_request, process_usage  # noqa: E402
+from smarter_compact.core import prompt_tokens_from_usage, response_prompt_tokens  # noqa: E402
+from smarter_compact.tokens import (  # noqa: E402
     DEFAULT_CHARS_PER_TOKEN, MAX_CHARS_PER_TOKEN, estimate_prompt_tokens, fingerprint, record_usage, request_chars,
 )
 
@@ -186,7 +186,7 @@ class CalibrationFlowTests(Base):
         # Between the fallback estimate and the calibrated one: only calibration trims.
         out = self.run_req(msgs, trim_at_tokens=fallback + 1)["messages"]
         self.assertLess(len(out), len(msgs))
-        self.assertTrue(out[-2]["content"][0]["text"].startswith("[openmem: continuing session"))
+        self.assertTrue(out[-2]["content"][0]["text"].startswith("[smarter-compact: continuing session"))
 
     def test_calibration_never_moves_an_existing_cut(self):
         msgs = history(4)

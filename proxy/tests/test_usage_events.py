@@ -9,10 +9,10 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from openmem_context import core, process_usage  # noqa: E402
-from openmem_context.adapters import AnthropicAdapter  # noqa: E402
-from openmem_context.core import response_usage_counts, usage_counts  # noqa: E402
-from openmem_context.tokens import fingerprint  # noqa: E402
+from smarter_compact import core, process_usage  # noqa: E402
+from smarter_compact.adapters import AnthropicAdapter  # noqa: E402
+from smarter_compact.core import response_usage_counts, usage_counts  # noqa: E402
+from smarter_compact.tokens import fingerprint  # noqa: E402
 from test_usage_calibration import SID, Base, history  # noqa: E402
 
 COLUMNS = ("kind", "model", "thread_root", "trimmed", "input_tokens", "cache_read_tokens", "cache_creation_tokens",
@@ -121,7 +121,7 @@ class UsageEventFlowTests(Base):
                          [("trim", None), ("usage", core.TRIM_NEW), ("usage", core.TRIM_KEPT)])
 
     def test_chat_route_has_no_breakpoint_count(self):
-        from openmem_context import process_request
+        from smarter_compact import process_request
         data = {"model": "gpt", "messages": history(2), "litellm_call_id": "c1",
                 "proxy_server_request": {"headers": {"x-claude-code-session-id": SID}}}
         process_request(data, "acompletion", self.settings())

@@ -44,7 +44,9 @@ def _first_user_text(adapter, items):
 
 def _candidates(data, headers, body):
     """Session id sources in contract order (docs/context-store.md, "Session id")."""
-    yield headers.get("x-openmem-session-id")
+    # The header was renamed with the product; a proxy or plugin from before the rename still
+    # sends the old one, and losing the session id would mean trimming into the wrong store.
+    yield headers.get("x-smarter-compact-session-id") or headers.get("x-openmem-session-id")
     yield headers.get("x-claude-code-session-id")
     for meta in (data.get("metadata"), body.get("metadata")):
         if isinstance(meta, dict):

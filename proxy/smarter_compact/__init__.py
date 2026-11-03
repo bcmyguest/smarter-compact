@@ -1,4 +1,4 @@
-"""OpenMem context proxy core: dependency-free request rewriting for LiteLLM."""
+"""Smarter Compact context proxy core: dependency-free request rewriting for LiteLLM."""
 
 from .core import process_request, process_usage, startup
 from .settings import Settings

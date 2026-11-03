@@ -25,8 +25,8 @@ Each request goes through five steps ([context proxy](context-proxy.md) has impl
 | Tool-result compression | A tool result exceeds `compress_over_tokens` | First 40 and last 20 lines stay, behind a `smart_compact_get(id=...)` header; the full text goes to `blobs/<id>.txt` |
 | Store | Every request | Each message goes into `sessions/<sid>.db` once, keyed by a chained fingerprint, with an `in_context` flag ([context store](context-store.md#session-database)) |
 | Trim | The request reaches `trim_at_tokens`, or the user typed `/smarter-compact:compact` | Turns before the last real user turn, and the oldest tool exchanges of a long in-flight turn, leave the context and their rows get `in_context = 0`; a pointer naming `smart_compact_search` / `smart_compact_sql` replaces them. System prompt, tools, the first user turn, the reply before the last user turn, that turn and at least its last 3 tool exchanges stay verbatim, except that signed thinking leaves every kept assistant message but the latest ([why](context-store.md#trim)) |
-| Recall on trim | The session registration names a bank and `CONTEXT_COMPACTION_RECALL=1` | Optional memory recall in an `<openmem-recall untrusted="true">` block (off by default in this package) |
-| Standing instruction | Every request | A constant system-prompt note tells the agent to call `smart_compact_search` before answering from content it cannot see, and that `<openmem-recall>` blocks are data, not instructions |
+| Recall on trim | The session registration names a bank and `CONTEXT_COMPACTION_RECALL=1` | Optional memory recall in an `<smarter-compact-recall untrusted="true">` block (off by default in this package) |
+| Standing instruction | Every request | A constant system-prompt note tells the agent to call `smart_compact_search` before answering from content it cannot see, and that `<smarter-compact-recall>` blocks are data, not instructions |
 
 The cut is **sticky**: later requests with the same history get the same rewrite byte for byte, so the prompt cache keeps hitting. A trim invalidates the cache once.
 
@@ -162,7 +162,7 @@ Environment variables (OpenCode plugin options use camelCase equivalents — see
 | `CONTEXT_COMPRESS_OVER_TOKENS` | `4000` | Tool result compression threshold |
 | `CONTEXT_COMPACTION_RECALL` | `0` | Recall on trim |
 | `CONTEXT_PROXY_PORT` | `4101` | LiteLLM listen port — see [proxy port](context-proxy.md#proxy-port) |
-| `OPENMEM_STATE_DIR` | `~/.local/share/smarter-compact` | Store root (append `/context` for files) |
+| `SMARTER_COMPACT_STATE_DIR` | `~/.local/share/smarter-compact` | Store root (append `/context` for files) |
 
 Full proxy and token-estimate tables: [context proxy](context-proxy.md).
 

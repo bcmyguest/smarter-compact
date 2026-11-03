@@ -3,28 +3,37 @@ import fs from "node:fs";
 import path from "node:path";
 
 /** Marker in the installed smarter-compact command body; survives command expansion. */
-export const SMART_COMPACT_MARKER = "openmem:smarter-compact";
-/** Legacy marker from the smart-compact rename; still recognized in prompts. */
-export const SMART_COMPACT_MARKER_LEGACY = "openmem:smart-compact";
+export const SMART_COMPACT_MARKER = "smarter-compact:instruction";
+/** Markers written by earlier releases; a command file installed before the rename is still recognized. */
+export const SMART_COMPACT_MARKER_LEGACIES = ["openmem:smarter-compact", "openmem:smart-compact"];
 /** Prompt that `/smarter-compact` sends in every agent (Claude Code command file, OpenCode 2 command). */
 export const SMART_COMPACT_BODY = `<!-- ${SMART_COMPACT_MARKER} -->
-OpenMem will trim this session's earlier context on the next request. Reply with one short line acknowledging this; do not summarize the conversation. After the trim, use \`smart_compact_search\` with this session's id to look up anything earlier.`;
+Smarter Compact will trim this session's earlier context on the next request. Reply with one short line acknowledging this; do not summarize the conversation. After the trim, use \`smart_compact_search\` with this session's id to look up anything earlier.`;
 /** Claude Code command file (`~/.claude/commands/smarter-compact.md`): frontmatter plus SMART_COMPACT_BODY. */
 export const SMART_COMPACT_COMMAND = `---
-description: Trim this session's context on the next request (OpenMem)
+description: Trim this session's context on the next request (Smarter Compact)
 ---
 ${SMART_COMPACT_BODY}
 `;
 const SMART_COMPACT_PREFIX = /^\s*\/(?:smarter-compact|smart-compact)(?:\s|$)/;
 const SMART_COMPACT_TAG = /<command-name>\/(?:smarter-compact|smart-compact)<\/command-name>/;
-/** ASCII whitespace only, so the hooks and the proxy trim the same characters (session ids, OPENMEM_STATE_DIR). */
+/** ASCII whitespace only, so the hooks and the proxy trim the same characters (session ids, SMARTER_COMPACT_STATE_DIR). */
 const ASCII_TRIM_RE = /^[ \t\n\v\f\r]+|[ \t\n\v\f\r]+$/g;
 const SID_UNSAFE_RE = /[^A-Za-z0-9._-]/gu;
 
-/** `$OPENMEM_STATE_DIR/context` (value trimmed), default `~/.local/share/openmem/context`. */
+/**
+ * `$SMARTER_COMPACT_STATE_DIR/context` (value trimmed). `OPENMEM_STATE_DIR` is still read for setups
+ * written before the rename, and so is the old default directory when it exists and the new one does
+ * not: silently pointing recall at an empty store would look like amnesia, not a rename.
+ */
 export function contextRoot(home, env = process.env) {
-  const state = String(env.OPENMEM_STATE_DIR || "").replace(ASCII_TRIM_RE, "") || path.join(home, ".local", "share", "openmem");
-  return path.join(state, "context");
+  const trimmed = (v) => String(v || "").replace(ASCII_TRIM_RE, "");
+  const legacy = path.join(home, ".local", "share", "openmem", "context");
+  const current = path.join(home, ".local", "share", "smarter-compact", "context");
+  const state = trimmed(env.SMARTER_COMPACT_STATE_DIR) || trimmed(env.OPENMEM_STATE_DIR);
+  if (state) return path.join(state, "context");
+  if (!fs.existsSync(current) && fs.existsSync(legacy)) return legacy;
+  return current;
 }
 
 /**
@@ -83,6 +92,6 @@ export function isSmartCompactPrompt(prompt) {
     SMART_COMPACT_PREFIX.test(text) ||
     SMART_COMPACT_TAG.test(text) ||
     text.includes(SMART_COMPACT_MARKER) ||
-    text.includes(SMART_COMPACT_MARKER_LEGACY)
+    SMART_COMPACT_MARKER_LEGACIES.some((marker) => text.includes(marker))
   );
 }

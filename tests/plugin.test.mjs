@@ -23,7 +23,7 @@ test("session start returns the standing note", () => {
   const result = spawnSync(process.execPath, [HOOK], {
     input: JSON.stringify({ hook_event_name: "SessionStart", session_id: "s1", cwd: home }),
     encoding: "utf8",
-    env: { ...process.env, HOME: home, OPENMEM_STATE_DIR: state },
+    env: { ...process.env, HOME: home, SMARTER_COMPACT_STATE_DIR: state },
   });
   assert.equal(result.status, 0, result.stderr);
   const out = JSON.parse(result.stdout);
@@ -38,10 +38,10 @@ test("copilot host does not write force flag on compact prompt", () => {
     input: JSON.stringify({
       hook_event_name: "UserPromptSubmit",
       session_id: "s-copilot",
-      prompt: "<!-- openmem:smarter-compact --> trim",
+      prompt: "<!-- smarter-compact:instruction --> trim",
     }),
     encoding: "utf8",
-    env: { ...process.env, HOME: home, OPENMEM_STATE_DIR: state, SMARTER_COMPACT_AUTO_PROXY: "0" },
+    env: { ...process.env, HOME: home, SMARTER_COMPACT_STATE_DIR: state, SMARTER_COMPACT_AUTO_PROXY: "0" },
   });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(fs.existsSync(path.join(state, "context", "sessions", "s-copilot.force")), false);
@@ -53,7 +53,7 @@ test("copilot session start explains MCP-only integration", () => {
   const result = spawnSync(process.execPath, [HOOK, "--host", "copilot"], {
     input: JSON.stringify({ hook_event_name: "SessionStart", session_id: "s3", cwd: home }),
     encoding: "utf8",
-    env: { ...process.env, HOME: home, OPENMEM_STATE_DIR: state, SMARTER_COMPACT_AUTO_PROXY: "0" },
+    env: { ...process.env, HOME: home, SMARTER_COMPACT_STATE_DIR: state, SMARTER_COMPACT_AUTO_PROXY: "0" },
   });
   assert.equal(result.status, 0, result.stderr);
   const out = JSON.parse(result.stdout);
@@ -67,10 +67,10 @@ test("compact prompt writes the force flag", () => {
     input: JSON.stringify({
       hook_event_name: "UserPromptSubmit",
       session_id: "s2",
-      prompt: "<!-- openmem:smarter-compact --> trim",
+      prompt: "<!-- smarter-compact:instruction --> trim",
     }),
     encoding: "utf8",
-    env: { ...process.env, HOME: home, OPENMEM_STATE_DIR: state },
+    env: { ...process.env, HOME: home, SMARTER_COMPACT_STATE_DIR: state },
   });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(fs.existsSync(path.join(state, "context", "sessions", "s2.force")), true);
@@ -156,7 +156,7 @@ test("status runs against an empty store", () => {
   const home = tmpHome();
   const result = spawnSync(process.execPath, [CLI, "status"], {
     encoding: "utf8",
-    env: { ...process.env, HOME: home, OPENMEM_STATE_DIR: path.join(home, "state") },
+    env: { ...process.env, HOME: home, SMARTER_COMPACT_STATE_DIR: path.join(home, "state") },
   });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /trims: 0/);

@@ -1,26 +1,34 @@
 # OpenCode
 
-Install the npm package with `opencode plugin`. The package default export provides `setup` (OpenCode 2 context hook) and `server` (OpenCode 1 headers and `/compact`).
+The package default export provides `setup` (OpenCode 2 context hook and MCP self-registration) and `server` (OpenCode 1 headers and `/compact`).
 
 ## Install
 
+OpenCode 2 (`opencode` >= 2.2):
+
 ```sh
-opencode plugin smarter-compact        # this project: .opencode/opencode.json
-opencode plugin -g smarter-compact     # global: ~/.config/opencode/opencode.json(c)
+opencode plugin add smarter-compact            # npm package (recommended)
+opencode plugin add <user>/smarter-compact     # Git shorthand
+opencode plugin list                            # installed package plugins
 ```
 
-From a clone before publish:
+Both write `"plugins": ["<spec>"]` to the global config and install the package under the OpenCode npm cache.
 
-```sh
-opencode plugin "$PWD"                  # marketplace root with .claude-plugin/marketplace.json, or
-opencode plugin ./index.mjs             # when your OpenCode build accepts a file path
+From a local clone, `plugin add` accepts only npm/Git specs; point the config at the checkout instead:
+
+```jsonc
+{ "plugins": ["/absolute/path/to/smarter-compact"] }
 ```
 
 Keep the clone in place; OpenCode resolves the package from it.
 
 ## OpenCode 2
 
-Add the plugin to server config only. Options are the same keys as `CONTEXT_*` env vars (camelCase in JSON):
+The plugin registers its context hooks by itself, and *attempts* to register its search MCP
+tools the same way (`ctx.mcp.add`, OpenCode >= 2.2). That attempt can end without a connected
+server — the call is accepted and nothing connects — so **write the `mcp` entry below as well**;
+it is the configuration to rely on, and registering twice is harmless. Options are the same keys
+as `CONTEXT_*` env vars (camelCase in JSON):
 
 ```jsonc
 // opencode.json
@@ -43,7 +51,30 @@ OpenCode 2 trims inside the plugin. You do not run `smarter-compact enable openc
 Commands:
 
 - `/compact` — trim on the next request (registered by the plugin).
-- MCP tools `smart_compact_search`, `smart_compact_sql`, `smart_compact_get`, `context_status` — register the plugin MCP entry or run `plugin/scripts/smarter-compact-mcp` from a clone.
+- MCP tools `smart_compact_search`, `smart_compact_sql`, `smart_compact_get`, `context_status` (needs `node` >= 24 on `PATH`). Configure them explicitly — the plugin's own `ctx.mcp.add` is best effort:
+
+```jsonc
+// opencode.json — same store the plugin trims into, so $SMARTER_COMPACT_STATE_DIR must match
+{
+  "mcp": {
+    "servers": {
+      "smarter-compact": {
+        "type": "local",
+        "command": ["node", "/path/to/smarter-compact/plugin/lib/mcp/server.mjs"],
+        "environment": { "SMARTER_COMPACT_STATE_DIR": "/var/lib/smarter-compact" },
+        "enabled": true
+      }
+    }
+  }
+}
+```
+
+Verify rather than assume: the plugin prints one `smarter-compact: recall MCP registered` (or
+`NOT registered reason=…`) line to stderr at startup, and every answered call appends a line to
+`$SMARTER_COMPACT_STATE_DIR/context/tool-calls.jsonl`. In clients that expose MCP tools through a code-mode
+runner, the calls appear as `tools.smarter-compact.smart_compact_search(...)` inside that runner's
+input (OpenCode namespaces MCP tools as `<server>.<tool>`),
+**not** as a tool name of its own — counting tool names alone under-reads recall to zero.
 
 ## OpenCode 1
 
@@ -61,7 +92,7 @@ Plugin options in `opencode.json`:
 { "plugin": [["smarter-compact", { "trimAtTokens": 125000 }]] }
 ```
 
-The `server` hook sends `x-openmem-session-id` when your Anthropic `baseURL` is the local proxy, registers the session, and honours `/compact`.
+The `server` hook sends `x-smarter-compact-session-id` when your Anthropic `baseURL` is the local proxy, registers the session, and honours `/compact`.
 
 ## Options
 
@@ -75,7 +106,7 @@ The `server` hook sends `x-openmem-session-id` when your Anthropic `baseURL` is 
 | `charsPerToken` | `CONTEXT_CHARS_PER_TOKEN` | 2.5 |
 | `compactionMaxChars` | `CONTEXT_COMPACTION_MAX_CHARS` | 12000 |
 | `compactionRecall` | `CONTEXT_COMPACTION_RECALL` | off in Smarter Compact |
-| `stateDir` | `OPENMEM_STATE_DIR` | `~/.local/share/smarter-compact` |
+| `stateDir` | `SMARTER_COMPACT_STATE_DIR` | `~/.local/share/smarter-compact` |
 | `proxyPort` | `CONTEXT_PROXY_PORT` | 4101 (also read from `~/.config/smarter-compact/proxy.env`) |
 
 Store layout: [context-store.md](context-store.md).

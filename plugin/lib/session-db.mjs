@@ -1,6 +1,6 @@
 /**
  * Per-session SQLite store `sessions/<sid>.db` (docs/context-store.md, "Session database"): the JS side of
- * proxy/openmem_context/sessiondb.py, ttl.py and embed.py. The schema and row rules must match the Python
+ * proxy/smarter_compact/sessiondb.py, ttl.py and embed.py. The schema and row rules must match the Python
  * byte for byte (scripts/tests/test_context_parity.mjs).
  *
  * node:sqlite is loaded on first use, so modules that import this one (hooks among them) never load it
@@ -252,7 +252,7 @@ export function dropSession(file) {
   entry?.close();
 }
 
-/** Hours of events `openmem context status` and the context_status MCP tool summarize by default. */
+/** Hours of events `smarter-compact context status` and the context_status MCP tool summarize by default. */
 export const EVENT_WINDOW_HOURS = 24;
 const LAST_ERRORS = 5;
 // events.trimmed of a usage row whose request made a new cut (core.TRIM_NEW, context-trim.mjs TRIM_NEW).
@@ -423,7 +423,7 @@ export function summarizeBlobs(blobsDir, { hours = EVENT_WINDOW_HOURS, now = Dat
 
 /**
  * Full context-stats payload: events (+ message inventory), MCP tool calls, and compressed blobs.
- * `root` is `$OPENMEM_STATE_DIR/context`.
+ * `root` is `$SMARTER_COMPACT_STATE_DIR/context`.
  */
 export function summarizeContextStats(root, opts = {}) {
   const events = summarizeEvents(path.join(root, "sessions"), opts);
@@ -597,7 +597,7 @@ export function embeddingBatchSize(url, model) {
   return embedBatch.get(`${url}\u0000${model}`)?.batch ?? EMBED_START_BATCH;
 }
 
-const stderrLog = (message) => process.stderr.write(`openmem-context: ${message}\n`);
+const stderrLog = (message) => process.stderr.write(`smarter-compact: ${message}\n`);
 
 /**
  * Embed a session's new rows in the background: at most one run per database at a time, retried no sooner

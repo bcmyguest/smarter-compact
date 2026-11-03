@@ -9,11 +9,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from openmem_context import Settings, core, process_request, process_usage  # noqa: E402
-from openmem_context.adapters import (  # noqa: E402
+from smarter_compact import Settings, core, process_request, process_usage  # noqa: E402
+from smarter_compact.adapters import (  # noqa: E402
     CODEX_RESPONSES_ROUTE, ResponsesAdapter, UnsupportedCallType, adapter_for,
 )
-from openmem_context.core import STANDING_INSTRUCTION  # noqa: E402
+from smarter_compact.core import STANDING_INSTRUCTION  # noqa: E402
 
 SID = "codex-thread-1"
 BIG = "tool output line\n" * 400
@@ -76,7 +76,7 @@ class PassThroughRequestTests(unittest.TestCase):
         self.assertTrue(out["instructions"].startswith("You are Codex."))
         self.assertIn(STANDING_INSTRUCTION, out["instructions"])
         output = out["input"][3]["output"]
-        self.assertTrue(output.startswith("[openmem: tool result compressed"), output[:80])
+        self.assertTrue(output.startswith("[smarter-compact: tool result compressed"), output[:80])
         self.assertEqual(out["input"][:3], codex_body()["input"][:3])
 
     def test_call_id_stays_out_of_the_forwarded_body(self):

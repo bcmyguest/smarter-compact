@@ -1,0 +1,55 @@
+# The context proxy (docs/context-proxy.md) run from THIS repo: the pinned LiteLLM image with ./proxy mounted at
+# /app/proxy, so the code that rewrites requests is the code in this checkout. Nothing else here belongs to
+# Smarter Compact — this is one service, started on the same host port and reading the same session store as the
+# deprecated openmem `context-proxy` compose service, so existing agent configs (Claude Code ANTHROPIC_BASE_URL,
+# Codex base_url) keep working untouched.
+#
+#   HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose up -d context-proxy   # or put them in ./.env
+#   docker compose logs -f context-proxy
+#   docker compose down
+#
+# Why the dev image: v1.109.0-dev.1 is the only LiteLLM release with PR #41522, the ChatGPT/Codex subscription
+# pass-through (/backend-api/codex/{endpoint}) that routes Codex here. Move to the first stable release that
+# contains #41522 when one exists.
+services:
+  context-proxy:
+    image: ghcr.io/berriai/litellm:v1.109.0-dev.1
+    container_name: smarter-compact-context-proxy
+    restart: unless-stopped
+    command: ["--config", "/app/proxy/config.yaml", "--port", "4000"]
+    # LiteLLM imports the hook from /app/proxy, and the rewrite code lives there: editing proxy/smarter_compact/
+    # here changes the running proxy after `docker compose restart context-proxy`.
+    volumes:
+      - ./proxy:/app/proxy:ro
+      # The session store the recall MCP server reads. Same host path as before, so a switch of code source never
+      # orphans a session a running agent can still recall.
+      - ${HOME}/.local/share/openmem/context:/state/context
+    # Run as the host user: the store stays host-owned (docs/context-store.md).
+    user: "${HOST_UID:?set HOST_UID=$(id -u)}:${HOST_GID:?set HOST_GID=$(id -g)}"
+    ports:
+      # 4100 is what ~/.claude/settings.json and ~/.codex/config.toml already point at; CONTEXT_PROXY_PORT=4101
+      # matches the CLI default (docs/context-proxy.md) if you would rather move the agents and re-enable them.
+      - "127.0.0.1:${CONTEXT_PROXY_PORT:-4100}:4000"
+    # LITELLM_MASTER_KEY only — the key the agents send in x-litellm-api-key. Mode 600, never in this repo.
+    env_file: ${CONTEXT_PROXY_ENV_FILE:-${HOME}/.config/smarter-compact/proxy.env}
+    environment:
+      HOME: /tmp
+      PYTHONDONTWRITEBYTECODE: "1"
+      SMARTER_COMPACT_STATE_DIR: /state
+      CONTEXT_PROXY_ENABLED: ${CONTEXT_PROXY_ENABLED:-1}
+      # Empty CONTEXT_TRIM_AT_TOKENS lets the proxy choose per model (built-in haiku=95000, fallback 125000);
+      # export it to force one threshold for every model.
+      CONTEXT_TRIM_AT_TOKENS: ${CONTEXT_TRIM_AT_TOKENS:-}
+      CONTEXT_TRIM_TO_FRACTION: ${CONTEXT_TRIM_TO_FRACTION:-0.3}
+      CONTEXT_COMPRESS_OVER_TOKENS: ${CONTEXT_COMPRESS_OVER_TOKENS:-4000}
+      CONTEXT_COMPACTION_MAX_CHARS: ${CONTEXT_COMPACTION_MAX_CHARS:-12000}
+      CONTEXT_COMPACTION_RECALL: ${CONTEXT_COMPACTION_RECALL:-1}
+      CONTEXT_STANDING_INSTRUCTION: ${CONTEXT_STANDING_INSTRUCTION:-1}
+      CONTEXT_CHARS_PER_TOKEN: ${CONTEXT_CHARS_PER_TOKEN:-2.5}
+      CONTEXT_STORE_TTL_DAYS: ${CONTEXT_STORE_TTL_DAYS:-30}
+      CONTEXT_EMBEDDING_URL: ${CONTEXT_EMBEDDING_URL:-http://host.docker.internal:11434/v1}
+      CONTEXT_EMBEDDING_MODEL: ${CONTEXT_EMBEDDING_MODEL:-}
+      CONTEXT_EMBEDDING_TIMEOUT_S: ${CONTEXT_EMBEDDING_TIMEOUT_S:-30}
+      CONTEXT_EMBEDDING_MAX_CHARS: ${CONTEXT_EMBEDDING_MAX_CHARS:-4000}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

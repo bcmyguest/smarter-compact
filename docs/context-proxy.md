@@ -10,7 +10,7 @@ For Claude Code, OpenCode 1, and Codex, **Smarter Compact** runs a local **LiteL
 
 The cut is sticky for prompt-cache stability. **OpenCode 2** applies the same rules in-process (`plugin/lib/context-trim.mjs`); it does not send traffic through this proxy.
 
-Code: `proxy/openmem_context/`, `proxy/openmem_context_hook.py`, `proxy/config.yaml`. Tests: `python3 -m unittest discover -s proxy/tests`.
+Code: `proxy/smarter_compact/`, `proxy/smarter_compact_hook.py`, `proxy/config.yaml`. Tests: `python3 -m unittest discover -s proxy/tests`.
 
 You need **LiteLLM v1.109.0-dev.1** (or newer with PR #41522) on `PATH` as `litellm` for Codex ChatGPT pass-through.
 
@@ -50,7 +50,7 @@ Auto-start is off when `SMARTER_COMPACT_AUTO_PROXY=0`. Logs: `~/.config/smarter-
 | `CONTEXT_COMPACTION_RECALL` | `0` in this package | `1` enables recall on trim |
 | `CONTEXT_STANDING_INSTRUCTION` | `1` | `0` omits standing search note |
 | `CONTEXT_PROXY_PORT` | `4101` | LiteLLM `--port` (see above) |
-| `OPENMEM_STATE_DIR` | `~/.local/share/smarter-compact` | Store parent; files under `context/` |
+| `SMARTER_COMPACT_STATE_DIR` | `~/.local/share/smarter-compact` | Store parent; files under `context/` |
 | `CONTEXT_STORE_TTL_DAYS` | `30` | Idle session cleanup at proxy start |
 | `CONTEXT_EMBEDDING_MODEL` | empty | Hybrid search embeddings (optional) |
 
@@ -101,6 +101,17 @@ http_headers = { "x-litellm-api-key" = "Bearer <LITELLM_MASTER_KEY>" }
 ```
 
 `smarter-compact enable codex` writes this block and keeps ChatGPT login via `requires_openai_auth`.
+
+## Run it in Docker (from this repo)
+
+`compose.yaml` at the repo root runs the same proxy without installing LiteLLM: it starts the pinned LiteLLM image with `./proxy` mounted at `/app/proxy`, so **the requests are rewritten by the code in this checkout** — `docker compose restart context-proxy` is the deploy step.
+
+```sh
+HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose up -d context-proxy   # or put both in ./.env
+docker compose logs -f context-proxy
+```
+
+It needs `LITELLM_MASTER_KEY` in `~/.config/smarter-compact/proxy.env` (mode 600; `CONTEXT_PROXY_ENV_FILE` overrides the path), listens on `127.0.0.1:${CONTEXT_PROXY_PORT:-4100}`, and writes the session store to `~/.local/share/smarter-compact/context` — falling back to the deprecated openmem service's `~/.local/share/openmem/context` when only that exists, so switching which repo serves it changes no agent config and orphans no session a running agent can still recall. Set `CONTEXT_PROXY_PORT=4101` to move onto the CLI default instead.
 
 ## Limits
 

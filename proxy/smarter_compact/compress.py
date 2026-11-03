@@ -9,7 +9,7 @@ HEAD_LINES = 40
 TAIL_LINES = 20
 HEAD_CHARS = 4000
 TAIL_CHARS = 2000
-MARKER_PREFIX = "[openmem: tool result compressed,"
+MARKER_PREFIX = "[smarter-compact: tool result compressed,"
 _ID_RE = re.compile(r'smart_compact_get\(id="([0-9a-f]{16})"\)')
 
 

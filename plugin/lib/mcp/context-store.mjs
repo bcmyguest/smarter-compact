@@ -61,7 +61,7 @@ export const CONTEXT_STORE_MCP_TOOLS = [
     title: "Search this session's stored context",
     description:
       "Search every stored message of this session, including messages trimmed from your context, and return matching "
-      + "rows with an excerpt. Use it when an [openmem: continuing session …] pointer says earlier messages were trimmed; "
+      + "rows with an excerpt. Use it when an [smarter-compact: continuing session …] pointer says earlier messages were trimmed; "
       + "pass that session_id (without one it searches recent sessions in this git root). Pass exactly one of query "
       + "(full-text words) or pattern (regex). Roles default to user and tool. total_matches counts rows; line_matches "
       + "is an exact count of matching lines across the whole session; use it for 'how many' questions, or smart_compact_sql "
@@ -77,7 +77,7 @@ export const CONTEXT_STORE_MCP_TOOLS = [
         },
         ignore_case: { type: "boolean", description: "Match pattern case-insensitively (default false)" },
         context: { type: "number", description: `Neighbouring rows of the same conversation to return before and after each hit, 0-${CONTEXT_MAX} (default 0)` },
-        session_id: { type: "string", description: "Session id from the [openmem: continuing session …] pointer" },
+        session_id: { type: "string", description: "Session id from the [smarter-compact: continuing session …] pointer" },
         limit: { type: "number", description: `Max rows (default ${DEFAULT_LIMIT})` },
         role: {
           description: 'Roles to search: "user", "assistant", "tool", a list of them, or "all" (default ["user", "tool"])',
@@ -98,7 +98,7 @@ export const CONTEXT_STORE_MCP_TOOLS = [
     title: "Read a compressed tool result",
     description:
       "Return the full text of a tool result the context proxy compressed, by the 16-hex id from "
-      + '[openmem: tool result compressed … smart_compact_get(id="<id>")] or a smart_compact_search blob_ids entry. '
+      + '[smarter-compact: tool result compressed … smart_compact_get(id="<id>")] or a smart_compact_search blob_ids entry. '
       + `Output is capped at ${BLOB_MAX_CHARS} characters; pass offset (next_offset) to page.`,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
@@ -130,7 +130,7 @@ export const CONTEXT_STORE_MCP_TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        session_id: { type: "string", description: "Session id from the [openmem: continuing session …] pointer" },
+        session_id: { type: "string", description: "Session id from the [smarter-compact: continuing session …] pointer" },
         sql: { type: "string", description: `One SELECT or WITH statement, at most ${SQL_MAX_CHARS} characters` },
       },
       required: ["session_id", "sql"],
@@ -159,7 +159,7 @@ export const CONTEXT_STORE_MCP_TOOLS = [
 
 export const CONTEXT_STORE_TOOL_NAMES = new Set(CONTEXT_STORE_MCP_TOOLS.map((t) => t.name));
 
-/** `$OPENMEM_STATE_DIR/context` (trimmed), read at call time; same resolver as the hooks. */
+/** `$SMARTER_COMPACT_STATE_DIR/context` (trimmed), read at call time; same resolver as the hooks. */
 export function contextRoot(env = process.env) {
   return hookContextRoot(env.HOME || os.homedir(), env);
 }
@@ -200,7 +200,7 @@ export async function startContextStore(env = process.env, opts = {}) {
     const settings = await contextStoreSettings(env, opts);
     return maybeSweepContextStore(contextRoot(env), settings.ttlDays, opts.now);
   } catch (err) {
-    process.stderr.write(`openmem-mcp: context store cleanup failed: ${err instanceof Error ? err.message : err}\n`);
+    process.stderr.write(`smarter-compact-mcp: context store cleanup failed: ${err instanceof Error ? err.message : err}\n`);
     return [];
   }
 }
@@ -657,7 +657,7 @@ function contextStatusTool(args, env) {
   const hours = given(args.hours) ? Number(args.hours) : EVENT_WINDOW_HOURS;
   if (!Number.isFinite(hours) || hours < 1 || hours > STATUS_MAX_HOURS) throw new Error(`hours must be 1-${STATUS_MAX_HOURS}`);
   let checkout = null;
-  try { checkout = proxyCodeVersion(path.join(PKG_ROOT, "proxy", "openmem_context")); } catch { /* installed runtime has no proxy/ */ }
+  try { checkout = proxyCodeVersion(path.join(PKG_ROOT, "proxy", "smarter_compact")); } catch { /* installed runtime has no proxy/ */ }
   const events = summarizeEvents(path.join(contextRoot(env), "sessions"), { hours });
   const running = events.latest.proxy || null;
   return {
@@ -681,7 +681,7 @@ export async function callContextStoreTool(name, args = {}, opts = {}) {
   else if (name === "smart_compact_sql") result = runSql(args, env);
   else if (name === "context_status") return contextStatusTool(args, env);
   else throw new Error(`unknown tool: ${name}`);
-  // Telemetry for `openmem context stats`; never affects the tool result.
+  // Telemetry for `smarter-compact context stats`; never affects the tool result.
   if (name === "smart_compact_search") {
     recordToolCall(contextRoot(env), { tool: name, hits: result.total_matches ?? result.results?.length ?? 0,
       sessions: result.sessions_searched?.length ?? 0, mode: result.mode });
