@@ -1,7 +1,7 @@
 {
   "version": 1,
   "hooks": {
-    "sessionStart": [{ "command": "\"${CURSOR_PLUGIN_ROOT}/scripts/shelf-hook\" --host cursor" }],
-    "beforeSubmitPrompt": [{ "command": "\"${CURSOR_PLUGIN_ROOT}/scripts/shelf-hook\" --host cursor" }]
+    "sessionStart": [{ "command": "\"${CURSOR_PLUGIN_ROOT}/scripts/smart-compact-hook\" --host cursor" }],
+    "beforeSubmitPrompt": [{ "command": "\"${CURSOR_PLUGIN_ROOT}/scripts/smart-compact-hook\" --host cursor" }]
   }
 }

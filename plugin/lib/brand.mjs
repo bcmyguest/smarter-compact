@@ -5,11 +5,11 @@
 import os from "node:os";
 import path from "node:path";
 
-export const PRODUCT = "shelf";
-export const PRODUCT_NAME = "Shelf";
+export const PRODUCT = "smart-compact";
+export const PRODUCT_NAME = "Smart Compact";
 export const DEFAULT_PORT = 4101;
 export const STATE_ENV = "OPENMEM_STATE_DIR";
-export const ROOT_ENV = "SHELF_ROOT";
+export const ROOT_ENV = "SMART_COMPACT_ROOT";
 
 /** Parent of `context/`. The core appends `context` itself. */
 export function stateParent(home = os.homedir(), env = process.env) {

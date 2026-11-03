@@ -1,6 +1,6 @@
 #!/bin/sh
 # MCP entry. Resolves the plugin root from this file so a copied plugin still starts.
 ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
-export OPENMEM_STATE_DIR="${OPENMEM_STATE_DIR:-$HOME/.local/share/shelf}"
+export OPENMEM_STATE_DIR="${OPENMEM_STATE_DIR:-$HOME/.local/share/smart-compact}"
 export CONTEXT_COMPACTION_RECALL="${CONTEXT_COMPACTION_RECALL:-0}"
 exec node "$ROOT/lib/mcp/server.mjs"

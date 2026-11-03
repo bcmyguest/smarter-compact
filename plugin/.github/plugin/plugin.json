@@ -1,16 +1,16 @@
 {
-  "name": "shelf",
-  "version": "0.1.0",
+  "name": "smart-compact",
+  "version": "0.2.0",
   "description": "Trim coding-agent context without a summary. Older turns stay in a local store and come back through smart_compact_search, smart_compact_sql, and smart_compact_get.",
   "author": { "name": "B Guest" },
-  "repository": "https://github.com/bcmyguest/shelf",
+  "repository": "https://github.com/bcmyguest/smart-compact",
   "license": "Apache-2.0",
-  "keywords": ["context", "tokens", "trim", "coding-agents"],
+  "keywords": ["context", "tokens", "trim", "coding-agents", "smart-compaction"],
   "commands": "./slash-commands/",
   "hooks": "hooks/copilot-hooks.json",
   "mcpServers": {
-    "shelf": {
-      "command": "${PLUGIN_ROOT}/scripts/shelf-mcp"
+    "smart-compact": {
+      "command": "${PLUGIN_ROOT}/scripts/smart-compact-mcp"
     }
   }
 }

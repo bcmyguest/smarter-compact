@@ -1,6 +1,6 @@
 # Context store contract
 
-This file is the OpenMem context-store contract, extracted with the trimmer. In this repository the Python package is `proxy/openmem_context` and the JavaScript port is `plugin/lib/`. `shelf` sets `OPENMEM_STATE_DIR` to `~/.local/share/shelf` when it is unset, so the store below that variable is `~/.local/share/shelf/context`. The wire text (`[openmem: …]`, `smart_compact_*`, `<openmem-recall>`) is unchanged.
+This file is the OpenMem context-store contract, extracted with the trimmer. In this repository the Python package is `proxy/openmem_context` and the JavaScript port is `plugin/lib/`. `smart-compact` sets `OPENMEM_STATE_DIR` to `~/.local/share/smart-compact` when it is unset, so the store below that variable is `~/.local/share/smart-compact/context`. The wire text (`[openmem: …]`, `smart_compact_*`, `<openmem-recall>`) is unchanged.
 
 The context proxy, the OpenCode plugin (which trims in-process), and the `smart_compact_*` MCP tools exchange state through local files. Below, "proxy" means whichever of the two trims a session. This page is the contract between them; change it before changing any side.
 

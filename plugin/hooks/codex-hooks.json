@@ -1,6 +1,6 @@
 {
   "hooks": {
-    "SessionStart": [{ "hooks": [{ "type": "command", "command": "\"${PLUGIN_ROOT:-$CLAUDE_PLUGIN_ROOT}/scripts/shelf-hook\" --host codex", "timeout": 10 }] }],
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "\"${PLUGIN_ROOT:-$CLAUDE_PLUGIN_ROOT}/scripts/shelf-hook\" --host codex", "timeout": 10 }] }]
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "\"${PLUGIN_ROOT:-$CLAUDE_PLUGIN_ROOT}/scripts/smart-compact-hook\" --host codex", "timeout": 10 }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "\"${PLUGIN_ROOT:-$CLAUDE_PLUGIN_ROOT}/scripts/smart-compact-hook\" --host codex", "timeout": 10 }] }]
   }
 }

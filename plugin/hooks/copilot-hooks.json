@@ -1,7 +1,7 @@
 {
-  "description": "Shelf on the GitHub Copilot CLI.",
+  "description": "Smart Compact on the GitHub Copilot CLI.",
   "hooks": {
-    "SessionStart": [{ "hooks": [{ "type": "command", "command": "\"${PLUGIN_ROOT}/scripts/shelf-hook\" --host copilot", "timeout": 10 }] }],
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "\"${PLUGIN_ROOT}/scripts/shelf-hook\" --host copilot", "timeout": 10 }] }]
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "\"${PLUGIN_ROOT}/scripts/smart-compact-hook\" --host copilot", "timeout": 10 }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "\"${PLUGIN_ROOT}/scripts/smart-compact-hook\" --host copilot", "timeout": 10 }] }]
   }
 }

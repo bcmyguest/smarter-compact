@@ -8,11 +8,11 @@ import { fileURLToPath } from "node:url";
 import { configureAgent } from "../plugin/lib/enable.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const HOOK = path.join(ROOT, "plugin/scripts/shelf-hook.mjs");
-const CLI = path.join(ROOT, "plugin/scripts/shelf.mjs");
+const HOOK = path.join(ROOT, "plugin/scripts/smart-compact-hook.mjs");
+const CLI = path.join(ROOT, "plugin/scripts/smart-compact.mjs");
 
 function tmpHome() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "shelf-"));
+  return fs.mkdtempSync(path.join(os.tmpdir(), "smart-compact-"));
 }
 
 test("session start returns the standing note", () => {
@@ -70,14 +70,14 @@ test("enable codex writes a provider and keeps a foreign model_provider for rest
   assert.equal(on.ok, true, on.message);
   const text = fs.readFileSync(path.join(home, ".codex", "config.toml"), "utf8");
   assert.match(text, /model = "gpt"/);
-  assert.match(text, /model_provider = "shelf"/);
-  assert.match(text, /\[model_providers\.shelf\]/);
+  assert.match(text, /model_provider = "smart-compact"/);
+  assert.match(text, /\[model_providers\.smart-compact\]/);
   assert.match(text, /127\.0\.0\.1:4101\/backend-api\/codex/);
   const off = configureAgent(home, "codex", { enabled: false, port: 4101 });
   assert.equal(off.ok, true, off.message);
   const restored = fs.readFileSync(path.join(home, ".codex", "config.toml"), "utf8");
   assert.match(restored, /model_provider = "openai"/);
-  assert.doesNotMatch(restored, /model_providers\.shelf/);
+  assert.doesNotMatch(restored, /model_providers\.smart-compact/);
 });
 
 test("opencode 2 is not given a proxy base URL", () => {
@@ -85,7 +85,7 @@ test("opencode 2 is not given a proxy base URL", () => {
   const result = configureAgent(home, "opencode", { enabled: true, port: 4101, major: 2 });
   assert.equal(result.ok, false);
   assert.match(result.message, /OpenCode 2/);
-  assert.match(result.message, /opencode plugin opencode-shelf/);
+  assert.match(result.message, /opencode plugin smart-compact/);
   assert.equal(fs.existsSync(path.join(home, ".config", "opencode", "opencode.json")), false);
 });
 

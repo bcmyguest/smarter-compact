@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * shelf status | compact | enable | disable | proxy
+ * smart-compact status | compact | enable | disable | proxy
  */
 import { spawn } from "node:child_process";
 import fs from "node:fs";

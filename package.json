@@ -1,41 +1,41 @@
 {
-  "name": "opencode-shelf",
-  "version": "0.1.1",
-  "description": "OpenCode plugin: trim context without a summary; older turns stay in a local store the agent can search.",
+  "name": "smart-compact",
+  "version": "0.2.0",
+  "description": "Smart compaction for coding agents: trim context without a summary; older turns stay in a local store the agent can search.",
   "license": "Apache-2.0",
   "type": "module",
   "author": "B Guest",
-  "homepage": "https://github.com/bcmyguest/shelf#readme",
+  "homepage": "https://github.com/bcmyguest/smart-compact#readme",
   "bugs": {
-    "url": "https://github.com/bcmyguest/shelf/issues"
+    "url": "https://github.com/bcmyguest/smart-compact/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/bcmyguest/shelf.git"
+    "url": "git+https://github.com/bcmyguest/smart-compact.git"
   },
   "keywords": [
     "opencode",
     "opencode-plugin",
     "context-management",
     "smart-compaction",
-    "shelf"
+    "smart-compact"
   ],
   "main": "./index.mjs",
   "exports": {
     ".": "./index.mjs"
   },
   "bin": {
-    "shelf": "plugin/scripts/shelf.mjs"
+    "smart-compact": "plugin/scripts/smart-compact.mjs"
   },
   "files": [
     "index.mjs",
     "src/**/*.mjs",
     "plugin/lib/**/*.mjs",
-    "plugin/scripts/shelf",
-    "plugin/scripts/shelf.mjs",
-    "plugin/scripts/shelf-hook",
-    "plugin/scripts/shelf-hook.mjs",
-    "plugin/scripts/shelf-mcp",
+    "plugin/scripts/smart-compact",
+    "plugin/scripts/smart-compact.mjs",
+    "plugin/scripts/smart-compact-hook",
+    "plugin/scripts/smart-compact-hook.mjs",
+    "plugin/scripts/smart-compact-mcp",
     "plugin/lib/mcp/**/*.mjs",
     "proxy/openmem_context/**/*.py",
     "proxy/openmem_context_hook.py",
@@ -54,7 +54,7 @@
   },
   "pi": {
     "extensions": [
-      "./plugin/pi/shelf.js"
+      "./plugin/pi/smart-compact.js"
     ]
   },
   "scripts": {

@@ -5,8 +5,8 @@ Install matches [opencode-clm](https://github.com/bcmyguest/opencode-clm): one n
 ## Install
 
 ```sh
-opencode plugin opencode-shelf        # this project: .opencode/opencode.json
-opencode plugin -g opencode-shelf     # global: ~/.config/opencode/opencode.json(c)
+opencode plugin smart-compact        # this project: .opencode/opencode.json
+opencode plugin -g smart-compact     # global: ~/.config/opencode/opencode.json(c)
 ```
 
 From a clone before publish:
@@ -27,7 +27,7 @@ Add the plugin to server config only. Options are the same keys as `CONTEXT_*` e
 {
   "plugins": [
     {
-      "package": "opencode-shelf",
+      "package": "smart-compact",
       "options": {
         "trimAtTokens": 125000,
         "compressOverTokens": 4000,
@@ -38,26 +38,26 @@ Add the plugin to server config only. Options are the same keys as `CONTEXT_*` e
 }
 ```
 
-OpenCode 2 trims inside the plugin. You do not run `shelf enable opencode` or point `provider.anthropic.options.baseURL` at the proxy.
+OpenCode 2 trims inside the plugin. You do not run `smart-compact enable opencode` or point `provider.anthropic.options.baseURL` at the proxy.
 
 Commands:
 
 - `/compact` — trim on the next request (registered by the plugin).
-- MCP tools `smart_compact_search`, `smart_compact_sql`, `smart_compact_get`, `context_status` — register the plugin MCP entry or run `plugin/scripts/shelf-mcp` from a clone.
+- MCP tools `smart_compact_search`, `smart_compact_sql`, `smart_compact_get`, `context_status` — register the plugin MCP entry or run `plugin/scripts/smart-compact-mcp` from a clone.
 
 ## OpenCode 1
 
 OpenCode 1 has no context hook, so trimming goes through the LiteLLM proxy:
 
 ```sh
-./plugin/scripts/shelf enable opencode
-./plugin/scripts/shelf proxy
+./plugin/scripts/smart-compact enable opencode
+./plugin/scripts/smart-compact proxy
 ```
 
 Plugin options in `opencode.json`:
 
 ```jsonc
-{ "plugin": [["opencode-shelf", { "trimAtTokens": 125000 }]] }
+{ "plugin": [["smart-compact", { "trimAtTokens": 125000 }]] }
 ```
 
 The `server` hook sends `x-openmem-session-id` when your Anthropic `baseURL` is the local proxy, registers the session, and honours `/compact`.
@@ -73,7 +73,7 @@ The `server` hook sends `x-openmem-session-id` when your Anthropic `baseURL` is 
 | `compressOverTokens` | `CONTEXT_COMPRESS_OVER_TOKENS` | 4000 |
 | `charsPerToken` | `CONTEXT_CHARS_PER_TOKEN` | 2.5 |
 | `compactionMaxChars` | `CONTEXT_COMPACTION_MAX_CHARS` | 12000 |
-| `compactionRecall` | `CONTEXT_COMPACTION_RECALL` | off in Shelf |
-| `stateDir` | `OPENMEM_STATE_DIR` | `~/.local/share/shelf` |
+| `compactionRecall` | `CONTEXT_COMPACTION_RECALL` | off in Smart Compact |
+| `stateDir` | `OPENMEM_STATE_DIR` | `~/.local/share/smart-compact` |
 
 Store layout: [context-store.md](context-store.md).
