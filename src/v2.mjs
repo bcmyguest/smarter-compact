@@ -9,6 +9,7 @@ import {
   addStandingInstruction, compactionSummary, logFailOpen, promptTokensFromOpenCode, recordPromptUsage,
   recordStepUsage, trimContext, trimSettings,
 } from "../plugin/lib/context-trim.mjs";
+import { ensureContextProxyRunning } from "../plugin/lib/proxy-daemon.mjs";
 import { envFromPluginOptions } from "./options.mjs";
 
 const MAX_SESSIONS = 128;
@@ -31,6 +32,7 @@ function remember(map, key, value) {
 export async function setup(ctx, options = {}) {
   ensureProductEnv();
   const home = process.env.HOME || os.homedir();
+  await ensureContextProxyRunning({ home, env: process.env, importMetaUrl: import.meta.url, waitMs: 8000 });
   const settings = trimSettings(envFromPluginOptions(options), home);
   const projectDir = ctx.location?.directory;
   const measured = new Map();

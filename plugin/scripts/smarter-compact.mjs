@@ -7,9 +7,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DEFAULT_PORT, ensureProductEnv, PRODUCT, PRODUCT_NAME, ROOT_ENV, stateParent } from "../lib/brand.mjs";
+import { ensureProductEnv, PRODUCT, PRODUCT_NAME, ROOT_ENV, resolveProxyPort, stateParent } from "../lib/brand.mjs";
 import { contextRoot, writeForceFlag } from "../lib/context-store.mjs";
 import { AGENTS, configureAgent, ensureKey } from "../lib/enable.mjs";
+import { ensureContextProxyRunning, packageRoot } from "../lib/proxy-daemon.mjs";
 import { summarizeEvents } from "../lib/session-db.mjs";
 
 ensureProductEnv();
@@ -17,13 +18,7 @@ ensureProductEnv();
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 function repoRoot() {
-  const candidate = path.resolve(HERE, "../..");
-  if (fs.existsSync(path.join(candidate, "proxy", "openmem_context_hook.py"))) return candidate;
-  for (const key of [ROOT_ENV, "SMART_COMPACT_ROOT"]) {
-    const fromEnv = process.env[key];
-    if (fromEnv && fs.existsSync(path.join(fromEnv, "proxy", "openmem_context_hook.py"))) return fromEnv;
-  }
-  return null;
+  return packageRoot(import.meta.url);
 }
 
 function usage() {
@@ -62,30 +57,44 @@ function compact(argv) {
   console.log(file);
 }
 
-function enable(argv, enabled) {
+async function enable(argv, enabled) {
   const agent = argv[0];
   if (!AGENTS.includes(agent)) {
     console.error(usage());
     process.exit(2);
   }
-  const result = configureAgent(os.homedir(), agent, { enabled, port: Number(process.env.CONTEXT_PROXY_PORT) || DEFAULT_PORT });
+  const home = os.homedir();
+  const port = resolveProxyPort(home, process.env);
+  const result = configureAgent(home, agent, { enabled, port });
+  if (!result.ok) {
+    console.log(result.message);
+    process.exit(1);
+  }
+  if (enabled) {
+    const proxy = await ensureContextProxyRunning({ importMetaUrl: import.meta.url, waitMs: 12_000 });
+    if (!proxy.ok) {
+      console.log(result.message);
+      console.error(`${PRODUCT}: proxy did not start (${proxy.status}${proxy.reason ? `: ${proxy.reason}` : ""}${proxy.log ? `; see ${proxy.log}` : ""})`);
+      process.exit(1);
+    }
+    if (proxy.status === "started") console.error(`${PRODUCT}: proxy listening on http://127.0.0.1:${port}`);
+  }
   console.log(result.message);
-  process.exit(result.ok ? 0 : 1);
+  process.exit(0);
 }
 
 function proxy() {
   const root = repoRoot();
   if (!root) {
-    console.error(`${PRODUCT} proxy runs from a clone of the repository. Leave the clone in place, or set ${ROOT_ENV}.`);
+    console.error(`${PRODUCT} proxy runs from the installed package or a clone. Set ${ROOT_ENV} if the proxy files moved.`);
     process.exit(1);
   }
   const home = os.homedir();
-  const key = ensureKey(home);
-  const port = String(Number(process.env.CONTEXT_PROXY_PORT) || DEFAULT_PORT);
+  const port = String(resolveProxyPort(os.homedir(), process.env));
   const env = {
     ...process.env,
     PYTHONPATH: path.join(root, "proxy"),
-    LITELLM_MASTER_KEY: key,
+    LITELLM_MASTER_KEY: ensureKey(home),
     OPENMEM_STATE_DIR: stateParent(home, process.env),
     CONTEXT_COMPACTION_RECALL: process.env.CONTEXT_COMPACTION_RECALL || "0",
   };
@@ -103,8 +112,8 @@ function proxy() {
 const [cmd, ...rest] = process.argv.slice(2);
 if (cmd === "status" || !cmd) status();
 else if (cmd === "compact") compact(rest);
-else if (cmd === "enable") enable(rest, true);
-else if (cmd === "disable") enable(rest, false);
+else if (cmd === "enable") enable(rest, true).catch((err) => { console.error(err?.message || err); process.exit(1); });
+else if (cmd === "disable") enable(rest, false).catch((err) => { console.error(err?.message || err); process.exit(1); });
 else if (cmd === "proxy") proxy();
 else {
   console.error(usage());

@@ -42,8 +42,14 @@
     "proxy/openmem_context/**/*.py",
     "proxy/openmem_context_hook.py",
     "proxy/config.yaml",
+    "docs/_config.yml",
+    "docs/index.md",
+    "docs/context-management.md",
+    "docs/context-proxy.md",
     "docs/context-store.md",
     "docs/opencode.md",
+    "docs/media/smart-compaction.gif",
+    "docs/media/smart-compaction-dark.gif",
     "LICENSE",
     "README.md"
   ],
@@ -60,7 +66,7 @@
     ]
   },
   "scripts": {
-    "test": "node --test tests/plugin.test.mjs tests/opencode-export.test.mjs",
+    "test": "node --test tests/plugin.test.mjs tests/opencode-export.test.mjs tests/proxy-daemon.test.mjs",
     "pack:check": "node scripts/check-pack.mjs"
   }
 }

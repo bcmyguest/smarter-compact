@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import plugin, { PLUGIN_ID, server, setup } from "../index.mjs";
 
-test("default export matches opencode-clm shape", () => {
+test("default export exposes id, setup, and server", () => {
   assert.equal(plugin.id, PLUGIN_ID);
   assert.equal(plugin.id, "smarter-compact");
   assert.equal(typeof plugin.setup, "function");

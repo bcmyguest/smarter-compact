@@ -1,6 +1,6 @@
 # OpenCode
 
-Install matches [opencode-clm](https://github.com/bcmyguest/opencode-clm): one npm package, `opencode plugin`, one default export with `server` (OpenCode 1) and `setup` (OpenCode 2).
+Install the npm package with `opencode plugin`. The package default export provides `setup` (OpenCode 2 context hook) and `server` (OpenCode 1 headers and `/compact`).
 
 ## Install
 
@@ -50,9 +50,10 @@ Commands:
 OpenCode 1 has no context hook, so trimming goes through the LiteLLM proxy:
 
 ```sh
-./plugin/scripts/smarter-compact enable opencode
-./plugin/scripts/smarter-compact proxy
+./plugin/scripts/sc enable opencode
 ```
+
+The plugin starts the proxy in the background when needed (`CONTEXT_PROXY_PORT`, default 4101).
 
 Plugin options in `opencode.json`:
 
@@ -75,5 +76,6 @@ The `server` hook sends `x-openmem-session-id` when your Anthropic `baseURL` is 
 | `compactionMaxChars` | `CONTEXT_COMPACTION_MAX_CHARS` | 12000 |
 | `compactionRecall` | `CONTEXT_COMPACTION_RECALL` | off in Smarter Compact |
 | `stateDir` | `OPENMEM_STATE_DIR` | `~/.local/share/smarter-compact` |
+| `proxyPort` | `CONTEXT_PROXY_PORT` | 4101 (also read from `~/.config/smarter-compact/proxy.env`) |
 
 Store layout: [context-store.md](context-store.md).

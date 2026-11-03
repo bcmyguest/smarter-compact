@@ -5,6 +5,7 @@
  */
 import { ensureProductEnv, PRODUCT, PRODUCT_NAME } from "../lib/brand.mjs";
 import { isSmartCompactPrompt, registerSession, writeForceFlag } from "../lib/context-store.mjs";
+import { ensureContextProxyRunning } from "../lib/proxy-daemon.mjs";
 
 ensureProductEnv();
 
@@ -51,6 +52,9 @@ try {
   const sid = sessionId(msg);
   const name = eventName(msg);
   const cwd = typeof msg.cwd === "string" ? msg.cwd : process.cwd();
+  if (name.includes("sessionstart") || name === "startup") {
+    await ensureContextProxyRunning({ home, env: process.env, importMetaUrl: import.meta.url, waitMs: 8000 });
+  }
   if (sid && (name.includes("sessionstart") || name === "startup" || name === "")) {
     try { registerSession({ home, env: process.env, sessionId: sid, agent: String(msg.host || "agent"), cwd }); } catch { /* best effort */ }
   }

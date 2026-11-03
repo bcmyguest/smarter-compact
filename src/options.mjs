@@ -19,5 +19,6 @@ export function envFromPluginOptions(options = {}, base = process.env) {
   flag("CONTEXT_COMPACTION_RECALL", options.compactionRecall);
   set("CONTEXT_RECALL_TIMEOUT_S", options.recallTimeoutS);
   set("OPENMEM_STATE_DIR", options.stateDir);
+  set("CONTEXT_PROXY_PORT", options.proxyPort);
   return env;
 }

@@ -5,7 +5,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { configDir, DEFAULT_PORT, PRODUCT, PRODUCT_NAME } from "./brand.mjs";
+import { configDir, DEFAULT_PORT, PRODUCT, PRODUCT_NAME, resolveProxyPort } from "./brand.mjs";
 import { readJson, upsertEnvFile, writeJson } from "./file-io.mjs";
 import { mergeOpencodeConfig, opencodeConfigPath, opencodeMajorVersion, parseJsonc } from "./opencode-config.mjs";
 import { removeSpans, tomlSpansUnder, tomlStatements } from "./toml-edit.mjs";
@@ -18,6 +18,25 @@ const LOOPBACK = (port) => new RegExp(`^http://127\\.0\\.0\\.1:${port}(?:/v1)?$`
 const CODEX_LOOPBACK = (port) => new RegExp(`^http://127\\.0\\.0\\.1:${port}/backend-api/codex$`);
 
 export const AGENTS = ["claude", "codex", "opencode"];
+
+/** Agents whose config still points at this package's loopback LiteLLM proxy. */
+export function agentsPointedAtProxy(home, port = resolveProxyPort(home)) {
+  const out = [];
+  try {
+    const env = readJson(claudeSettingsPath(home)).env || {};
+    if (LOOPBACK(port).test(String(env.ANTHROPIC_BASE_URL || ""))) out.push("claude");
+  } catch { /* unreadable */ }
+  try {
+    const file = opencodeConfigPath(home);
+    const options = fs.existsSync(file) ? parseJsonc(fs.readFileSync(file, "utf8"))?.provider?.anthropic?.options : undefined;
+    if (LOOPBACK(port).test(String(options?.baseURL || ""))) out.push("opencode");
+  } catch { /* unreadable */ }
+  try {
+    const text = fs.existsSync(codexConfigPath(home)) ? fs.readFileSync(codexConfigPath(home), "utf8") : "";
+    if (codexPointed(text, port)) out.push("codex");
+  } catch { /* unreadable */ }
+  return out;
+}
 
 export function proxyEnvPath(home) {
   return path.join(configDir(home), "proxy.env");
@@ -239,7 +258,7 @@ function wireOpencode(home, { enabled, port, key }) {
  * @param {{ enabled: boolean, port?: number, major?: number }} opts
  * @returns {{ ok: boolean, message: string }}
  */
-export function configureAgent(home, agent, { enabled, port = DEFAULT_PORT, major } = {}) {
+export function configureAgent(home, agent, { enabled, port = resolveProxyPort(home), major } = {}) {
   if (!AGENTS.includes(agent)) return { ok: false, message: `unknown agent ${agent}` };
   const opencodeMajor = agent === "opencode" ? (major ?? opencodeMajorVersion()) : 1;
   if (agent === "opencode" && opencodeMajor >= 2 && enabled) {
@@ -249,6 +268,9 @@ export function configureAgent(home, agent, { enabled, port = DEFAULT_PORT, majo
     };
   }
   const key = enabled ? ensureKey(home) : "";
+  if (enabled) {
+    upsertEnvFile(proxyEnvPath(home), { CONTEXT_PROXY_PORT: String(port) }, { mode: SECRET_MODE });
+  }
   const wire = { claude: wireClaude, codex: wireCodex, opencode: wireOpencode }[agent];
   const done = wire(home, { enabled, port, key });
   if (done && typeof done === "object") return done;
