@@ -820,6 +820,20 @@ class ThinkingStripTests(Base):
         self.assertEqual(json.dumps(again), json.dumps(first))
         self.assert_no_stale_thinking(again, msgs)
 
+    def test_cut_on_last_user_turn_keeps_prefix_stable_across_later_steps(self):
+        # Claude Code shape: the trim lands on the final user turn, so strip is the reply before the cut.
+        def step(k):
+            return [{"role": "assistant", "content": [{"type": "thinking", "thinking": f"s{k}", "signature": f"S{k}"},
+                                                      {"type": "tool_use", "id": f"x{k}", "name": "Bash", "input": {}}]},
+                    {"role": "user", "content": [{"type": "tool_result", "tool_use_id": f"x{k}", "content": f"r{k}"}]}]
+        msgs = anth_history(3) + [{"role": "assistant", "content": [
+            {"type": "thinking", "thinking": "r", "signature": "SR"}, {"type": "text", "text": "reply"}]},
+            {"role": "user", "content": "now this"}]
+        self.run_req(anth_request(copy.deepcopy(msgs)), trim_at_tokens=1)
+        one = self.run_req(anth_request(copy.deepcopy(msgs + step(1))))["messages"]
+        two = self.run_req(anth_request(copy.deepcopy(msgs + step(1) + step(2))))["messages"]
+        self.assertEqual(json.dumps(two[:len(one)]), json.dumps(one))
+
     def test_message_left_empty_is_dropped_and_pairs_stay(self):
         msgs = [{"role": "user", "content": "task"},
                 {"role": "assistant", "content": [{"type": "thinking", "thinking": "a", "signature": "S0"},
@@ -1050,6 +1064,26 @@ class StandingInstructionTests(Base):
         # Not a namespace, a different tool: must not be mistaken for recall.
         self.assertEqual(recall_tool_names([{"name": "xsmart_compact_search"}])["offered"], [])
 
+    def test_deferred_tools_are_named_and_loaded_through_tool_search(self):
+        # Claude Code defers MCP tools behind ToolSearch, so the request offers neither recall tool; the TB2.1 15k
+        # probe called bare smart_compact_search and got "No such tool available". Assert the outgoing body.
+        data = anth_request(anth_history(3), sid="sess-deferred")
+        data["tools"] = [{"name": "Bash"}, {"name": "ToolSearch"}]
+        out = self.run_req(data, trim_at_tokens=1, standing_instruction=True)
+        users = [str(m.get("content")) for m in out["messages"] if m.get("role") == "user"]
+        pointer = next((c for c in users if "[smarter-compact: continuing session" in c), None)
+        self.assertIsNotNone(pointer)
+        load = 'ToolSearch with query "select:mcp__smarter-compact__smart_compact_search,mcp__smarter-compact__smart_compact_sql"'
+        self.assertIn(f"load them first by calling {load}", pointer)
+        self.assertIn("call mcp__smarter-compact__smart_compact_search(", pointer)
+        self.assertNotIn("call smart_compact_search(", pointer)
+        system = json.dumps(out.get("system"))
+        self.assertIn("call mcp__smarter-compact__smart_compact_search (use", system)
+        self.assertIn(load.replace('"', '\\"'), system)
+        # An offered tool wins over deferral: nothing to load.
+        names = recall_tool_names([{"name": "ToolSearch"}, {"name": "mcp__x__smart_compact_search"}])
+        self.assertEqual((names["search"], names["load"]), ("mcp__x__smart_compact_search", ""))
+
     def test_anthropic_first_request_appends_one_block(self):
         msgs = anth_history(2)
         out = self.on(anth_request(copy.deepcopy(msgs)))
@@ -1137,6 +1171,27 @@ class StandingInstructionTests(Base):
         first = self.on(copy.deepcopy(data), trim_at_tokens=1)["messages"][2]["content"][0]["text"]
         again = self.run_req(copy.deepcopy(data), trim_at_tokens=1)["messages"][2]["content"][0]["text"]
         self.assertEqual(first, again)
+
+
+class SideRequestCutTests(Base):
+    """A side request (prompt suggestion, away recap) shares the thread root and may trim on its own last message."""
+
+    def trims(self):
+        conn = sqlite3.connect(self.ctx / "sessions" / f"{SID}.db")
+        try:
+            return conn.execute("SELECT count(*) FROM events WHERE kind = 'trim'").fetchone()[0]
+        finally:
+            conn.close()
+
+    def test_main_request_reuses_cut_a_side_request_placed(self):
+        msgs = anth_history(4)
+        side = self.run_req(anth_request(copy.deepcopy(msgs + [{"role": "user", "content": "[SUGGESTION MODE]"}])),
+                            trim_at_tokens=1)["messages"]
+        main = self.run_req(anth_request(copy.deepcopy(msgs + [{"role": "user", "content": "check probe"}])),
+                            trim_at_tokens=1)["messages"]
+        self.assertEqual(self.trims(), 1)
+        self.assertEqual(json.dumps(main[:-1]), json.dumps(side[:-1]))
+        self.assertEqual(main[-1]["content"][0], side[-1]["content"][0])
 
 
 if __name__ == "__main__":
