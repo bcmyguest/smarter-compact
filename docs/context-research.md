@@ -58,7 +58,7 @@ Long agent sessions outgrow the context window. Agents handle this in one of thr
 | Semantic search through the memory provider | Being measured in run C (s3c-semantic-nudged, s3d-recall). |
 | Hybrid (vector) ranking in the session store | Unmeasured: in run D's d-hybrid the agent never ran a hybrid search. |
 | Trim depth, `CONTEXT_TRIM_TO_FRACTION` (default 0.53, about 50K of Haiku's 95K threshold; was 0.3) | Make-doom trims cut about 100K to 22–31K and the agent reread files it had just read. On [Terminal-Bench 2.1](#terminal-bench-21-trim-shape-arms-2026-11-05) the arm passed 7/8 at the lowest cost per pass; one trial per task, so not separable from the other arms. |
-| Prose strip, `CONTEXT_STRIP_PROSE` (default on; `0` off) | [Complexity Trap](https://arxiv.org/html/2508.21433v3) and [transparent-compact](https://arxiv.org/abs/2610.20116v1). [Terminal-Bench 2.1](#terminal-bench-21-trim-shape-arms-2026-11-05): 6/8. |
+| Prose strip, `CONTEXT_STRIP_PROSE` (default on; `0` off) | [transparent-compact](https://arxiv.org/abs/2610.20116v1). Not observation masking: [Complexity Trap](https://arxiv.org/html/2508.21433v3) keeps each action and replaces only its output with a placeholder, while prose strip removes the tool call and its result with no marker in place; the paper does not test that. Efficacy under review. [Terminal-Bench 2.1](#terminal-bench-21-trim-shape-arms-2026-11-05): 6/8. |
 | Progress note, `CONTEXT_PROGRESS_NOTE` (default on; `0` off) | [Compact-Bench](https://arxiv.org/abs/2610.31710). [Terminal-Bench 2.1](#terminal-bench-21-trim-shape-arms-2026-11-05): 6/8; the note never decided a trial (see there). |
 
 ## Benchmark method
