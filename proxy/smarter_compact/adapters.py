@@ -185,6 +185,39 @@ class AnthropicAdapter:
             return item
         return {**item, "content": content} if content else None
 
+    def without_tool_calls(self, item, ids):
+        """The message without its tool_use and tool_result blocks whose id is in ids: the same object when it has
+        none, None when nothing is left. Server tool blocks stay (their results live in the same message)."""
+        content = item.get("content")
+        if not isinstance(content, list):
+            return item
+        kept = [b for b in content if not (isinstance(b, dict) and (
+            (b.get("type") == "tool_use" and b.get("id") in ids)
+            or (b.get("type") == "tool_result" and b.get("tool_use_id") in ids)))]
+        if len(kept) == len(content):
+            return item
+        return {**item, "content": kept} if kept else None
+
+    def same_role(self, a, b):
+        return a.get("role") == b.get("role")
+
+    def merged(self, a, b):
+        """One message holding a's blocks then b's (same role)."""
+        def blocks(item):
+            content = item.get("content")
+            return [{"type": "text", "text": content}] if isinstance(content, str) else list(content or ())
+        return {**a, "content": blocks(a) + blocks(b)}
+
+    def tool_calls(self, item):
+        """(id, name, input) of each client tool_use block, in order."""
+        return [(b.get("id"), b.get("name"), b.get("input") if isinstance(b.get("input"), dict) else {})
+                for b in self._blocks(item) or () if isinstance(b, dict) and b.get("type") == "tool_use"]
+
+    def tool_results(self, item):
+        """{tool_use_id: (is_error, text)} of the message's tool_result blocks."""
+        return {b.get("tool_use_id"): (bool(b.get("is_error")), _plain_text(b.get("content", ""), ("text",)))
+                for b in self._blocks(item) or () if isinstance(b, dict) and b.get("type") == "tool_result"}
+
     def tool_names(self, items):
         names = {}
         for item in items:

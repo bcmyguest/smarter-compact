@@ -48,6 +48,22 @@ _RECALL_TOOL_RE = re.compile(r"(?:^|[^a-z0-9])(smart_compact_search|smart_compac
 # them by their mcp__<server>__<tool> names first, or the bare name it is told to call fails "No such tool".
 TOOL_SEARCH = "ToolSearch"
 CLAUDE_CODE_PREFIX = "mcp__smarter-compact__"
+# CONTEXT_PROGRESS_NOTE: the note's mechanical progress section, built from the trimmed tool calls.
+PROGRESS_NOTE_MAX_CHARS = 2000
+PROGRESS_MAX_FILES = 20
+PROGRESS_MAX_COMMANDS = 5
+PROGRESS_COMMAND_MAX_CHARS = 200
+# Tool name -> input keys naming the file it writes (Claude Code's file tools).
+EDIT_TOOL_PATHS = {"Write": ("file_path",), "Edit": ("file_path",), "MultiEdit": ("file_path",),
+                   "NotebookEdit": ("notebook_path", "file_path")}
+SHELL_TOOLS = ("Bash",)
+# A shell command that builds or tests: a word of it starts one of these.
+_BUILD_RE = re.compile(
+    r"(?:^|[\s;&|(/])(?:py\.?test|tox|nox|make|cmake|ctest|ninja|cargo (?:build|test|check)|go (?:build|test|vet)"
+    r"|(?:npm|yarn|pnpm)(?: run)? (?:test|build)|node --test|npx (?:jest|vitest|tsc)|jest|vitest|tsc|mvn|gradlew?"
+    r"|javac|gcc|g\+\+|clang|rustc|dotnet (?:build|test)|rspec|rake|python[0-9.]* -m (?:pytest|unittest|build))"
+    r"(?=\s|$|;)")
+_EXIT_RE = re.compile(r"\bexit(?:ed with)?(?: code| status)?:? (-?\d+)", re.IGNORECASE)
 
 
 def recall_tool_names(tools):
@@ -296,14 +312,15 @@ def choose_gap(adapter, items, cut, after, first, fits):
     return best
 
 
-def render(adapter, items, cut, note, first=None, gap=None, strip=None):
+def render(adapter, items, cut, note, first=None, gap=None, strip=None, prose=False):
     """The kept items (kept_indices) in order, the cut turn carrying the note, with signed reasoning stripped from
-    kept assistant items before `strip` (default: the latest assistant run; see strip_reasoning)."""
+    kept assistant items before `strip` (default: the latest assistant run; see strip_reasoning), and with prose
+    their tool call/result pairs too (prose_ids)."""
     if cut is None:
         return items
     keep = kept_indices(adapter, items, cut, gap, first)
     run = latest_run_start(adapter, items)
-    return strip_reasoning(adapter, items, keep, run if strip is None else min(strip, run), cut, note)
+    return strip_reasoning(adapter, items, keep, run if strip is None else min(strip, run), cut, note, prose)
 
 
 def latest_run_start(adapter, items):
@@ -316,7 +333,7 @@ def latest_run_start(adapter, items):
     return last
 
 
-def strip_reasoning(adapter, items, keep, bound, cut, note):
+def strip_reasoning(adapter, items, keep, bound, cut, note, prose=False):
     """The kept items, the cut turn carrying the note, with signed reasoning removed from assistant items before
     `bound`.
 
@@ -325,19 +342,54 @@ def strip_reasoning(adapter, items, keep, bound, cut, note):
     moment, which goes out unchanged, as the API requires; reasoning produced after the trim was generated on the
     trimmed view and stays. The stripped set is fixed until the next trim, so the prefix stays byte-identical for
     the cache. A message left empty is dropped (adapter.without_reasoning).
+
+    With prose, the prose_ids pairs go too and adjacent stripped items of one role merge into one message.
     """
+    ids = prose_ids(adapter, items, keep, bound, cut) if prose else set()
     out = []
+    mergeable = False
     for j, x in enumerate(items):
         if j not in keep:
             continue
+        region = False
         if j == cut:
             x = adapter.prepend_note(x, note)
-        elif j < bound and adapter.is_assistant(x):
-            x = adapter.without_reasoning(x)
-            if x is None:
-                continue
+        elif j < bound:
+            if adapter.is_assistant(x):
+                x = adapter.without_reasoning(x)
+                if x is None:
+                    continue
+            if ids and not adapter.is_pinned(x):
+                x = adapter.without_tool_calls(x, ids)
+                if x is None:
+                    continue
+                region = True
+                if mergeable and adapter.same_role(out[-1], x):
+                    out[-1] = adapter.merged(out[-1], x)
+                    continue
         out.append(x)
+        mergeable = region
     return out
+
+
+def _prose_region(adapter, items, keep, bound, cut):
+    """Indices prose stripping may touch: kept, unpinned, before bound, not the cut, and not the last such item
+    (the message right before the latest run keeps its results, so no older assistant text merges into that run)."""
+    kept = [j for j in range(len(items)) if j in keep]
+    # A mid-conversation system message must follow a user message, so the item before one is never stripped.
+    before_system = {a for a, b in zip(kept, kept[1:]) if items[b].get("role") == "system"}
+    region = [j for j in kept if j < bound and j != cut and j not in before_system and not adapter.is_pinned(items[j])]
+    return region[:-1]
+
+
+def prose_ids(adapter, items, keep, bound, cut):
+    """Tool call ids whose tool_use and tool_result both sit in the prose region; empty when the adapter cannot strip."""
+    if not hasattr(adapter, "without_tool_calls"):
+        return set()
+    region = _prose_region(adapter, items, keep, bound, cut)
+    calls = {c[0] for j in region for c in adapter.tool_calls(items[j])}
+    results = set().union(*(adapter.result_ids(items[j]) for j in region))
+    return (calls & results) - {None}
 
 
 def _locate(items, idx, want, lo=0):
@@ -389,6 +441,69 @@ def _build_note(adapter, items, cut, sid, dropped, store, settings, http, names=
         except Exception as exc:
             _log_error(exc)
     return "\n".join(parts)
+
+
+def _with_progress(adapter, items, cut, gap, first, settings, note):
+    """note plus the progress section for the items this trim drops or prose-strips; note alone when empty."""
+    if not hasattr(adapter, "tool_calls"):
+        return note
+    keep = kept_indices(adapter, items, cut, gap, first)
+    sources = {j for j in range(len(items)) if j not in keep}
+    if settings.strip_prose:
+        sources.update(_prose_region(adapter, items, keep, latest_run_start(adapter, items), cut))
+    text = progress_text(adapter, items, sorted(sources))
+    return f"{note}\n{text}" if text else note
+
+
+def progress_text(adapter, items, indices):
+    """Files written or edited and the last build/test commands (with pass/fail when known) among the tool calls
+    in items[indices]; "" when there are none. Mechanical, so one trim always renders the same bytes."""
+    results = {}
+    for x in items:
+        results.update(adapter.tool_results(x))
+    files, commands = {}, []
+    for j in indices:
+        for call_id, name, args in adapter.tool_calls(items[j]):
+            for key in EDIT_TOOL_PATHS.get(name, ()):
+                if isinstance(args.get(key), str) and args[key]:
+                    files.pop(args[key], None)
+                    files[args[key]] = True
+                    break
+            command = args.get("command") if name in SHELL_TOOLS else None
+            if isinstance(command, str) and _BUILD_RE.search(command):
+                commands.append((" ".join(command.split())[:PROGRESS_COMMAND_MAX_CHARS], results.get(call_id)))
+    if not files and not commands:
+        return ""
+    lines = ["Progress before this trim (from the removed tool calls):"]
+    if files:
+        lines.append("Files written or edited (latest last): " + ", ".join(list(files)[-PROGRESS_MAX_FILES:]))
+    if commands:
+        lines.append("Last build/test commands (latest last):")
+        lines += [f"- `{c}` -> {_command_status(r)}" for c, r in commands[-PROGRESS_MAX_COMMANDS:]]
+    return "\n".join(lines)[:PROGRESS_NOTE_MAX_CHARS]
+
+
+def _command_status(result):
+    """"exit N" from the result text, else failed/ok by is_error; "no result" when none was sent."""
+    if result is None:
+        return "no result"
+    is_error, text = result
+    found = _EXIT_RE.search(text or "")
+    if found:
+        return f"exit {found.group(1)}"
+    return "failed" if is_error else "ok"
+
+
+def _prose_sizes(adapter, items, cut, sizes):
+    """Shrink sizes (request_chars per item) to what prose stripping leaves of each item before the latest run."""
+    keep = set(range(len(items)))
+    bound = latest_run_start(adapter, items)
+    ids = prose_ids(adapter, items, keep, bound, cut)
+    if not ids:
+        return
+    for j in _prose_region(adapter, items, keep, bound, cut):
+        x = adapter.without_tool_calls(items[j], ids)
+        sizes[j] = request_chars(x) if x is not None else 0
 
 
 def stored_rows(adapter, original, items, names, cut, first, gap=None):
@@ -491,7 +606,7 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, http,
                 if thread.get("strip_fp"):
                     # From 0: a trim on the last user turn records strip as the reply before the cut.
                     strip = _locate(items, thread.get("strip"), thread["strip_fp"])
-        view = render(adapter, items, cut, note, first, gap, strip)
+        view = render(adapter, items, cut, note, first, gap, strip, settings.strip_prose)
         force = store.force_requested(sid)
         ratio = settings.chars_per_token if settings.chars_per_token > 0 else DEFAULT_CHARS_PER_TOKEN
         base_chars = request_chars(*context)
@@ -504,6 +619,8 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, http,
             new_gap = None
             if new_cut is not None:
                 sizes = [request_chars(x) for x in items]
+                if settings.strip_prose:
+                    _prose_sizes(adapter, items, new_cut, sizes)
                 target = trim_at * settings.trim_to_fraction
 
                 def fits(g):
@@ -518,6 +635,8 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, http,
             if dropped and (new_cut, new_gap) != (cut, gap):
                 note = _build_note(adapter, items, new_cut, sid, dropped, store, settings, http,
                                  recall_tool_names(request_tool_names(data)))
+                if settings.progress_note:
+                    note = _with_progress(adapter, items, new_cut, new_gap, first, settings, note)
                 threads.pop(root, None)
                 threads[root] = {"cut": new_cut, "cut_fp": fingerprint(items[new_cut]), "note": note,
                                  "format": adapter.name, "updated": _utc_now()}
@@ -533,7 +652,7 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, http,
                 store.save_trim(sid, state)
                 if force:
                     store.clear_force(sid)
-                view = render(adapter, items, new_cut, note, first, new_gap, strip)
+                view = render(adapter, items, new_cut, note, first, new_gap, strip, settings.strip_prose)
                 cut, gap = new_cut, new_gap
                 after = estimate_prompt_tokens(base_chars + request_chars(view), state.get("usage"), root, ratio)
                 trim = {"tokens_before": tokens, "tokens_after": after, "dropped": dropped}

@@ -64,9 +64,9 @@ def _positive_int(env, name, default):
     return value if value > 0 else default
 
 
-def _flag(env, name):
-    """True unless the variable is 0, false, no or off."""
-    return str(env.get(name, "1")).strip().lower() not in ("0", "false", "no", "off")
+def _flag(env, name, default="1"):
+    """True unless the variable is 0, false, no or off (or unset with a default of "0")."""
+    return str(env.get(name, default) or default).strip().lower() not in ("0", "false", "no", "off")
 
 
 def _trim_overrides(env):
@@ -107,6 +107,10 @@ class Settings:
     trim_at_by_model: bool = False
     # A trim lands under this fraction of trim_at_tokens, 0 < x < 1 (CONTEXT_TRIM_TO_FRACTION).
     trim_to_fraction: float = DEFAULT_TRIM_TO_FRACTION
+    # Kept items before the strip bound lose their tool_use/tool_result pairs, text stays (CONTEXT_STRIP_PROSE=1).
+    strip_prose: bool = False
+    # Each new trim appends a mechanical progress note (edited files, build/test runs) (CONTEXT_PROGRESS_NOTE=1).
+    progress_note: bool = False
     compress_over_tokens: int = DEFAULT_COMPRESS_OVER_TOKENS
     # Characters per token for the trim estimate until the session reports usage (CONTEXT_CHARS_PER_TOKEN).
     chars_per_token: float = DEFAULT_CHARS_PER_TOKEN
@@ -151,6 +155,8 @@ class Settings:
             trim_at_tokens=_int(env, "CONTEXT_TRIM_AT_TOKENS", DEFAULT_TRIM_AT_TOKENS),
             trim_at_by_model=_int(env, "CONTEXT_TRIM_AT_TOKENS", None) is None,
             trim_to_fraction=_fraction(env, "CONTEXT_TRIM_TO_FRACTION", DEFAULT_TRIM_TO_FRACTION),
+            strip_prose=_flag(env, "CONTEXT_STRIP_PROSE", "0"),
+            progress_note=_flag(env, "CONTEXT_PROGRESS_NOTE", "0"),
             compress_over_tokens=_int(env, "CONTEXT_COMPRESS_OVER_TOKENS", DEFAULT_COMPRESS_OVER_TOKENS),
             chars_per_token=_positive_float(env, "CONTEXT_CHARS_PER_TOKEN", DEFAULT_CHARS_PER_TOKEN),
             compaction_max_chars=_int(env, "CONTEXT_COMPACTION_MAX_CHARS", DEFAULT_COMPACTION_MAX_CHARS),
