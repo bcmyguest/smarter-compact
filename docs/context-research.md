@@ -206,9 +206,9 @@ The cache fix halves the mean cost, from $0.218 to $0.108, and every trial score
 
 ## Run E: held-out seed-matched comparison
 
-Run E used Haiku 5.5, Claude Code strict mode, the same proxy build, and seeds 45–47 for each arm. The primary arms were `e-none` (no compaction), `e-native` (Claude Code default), and `e-smart` (Smarter Compact SQLite search, 95k Haiku threshold, search-tools pointer and cache-stable trim). Tasks were kv R4000 and log L1600/L6400/L12800. Keep-everything has only seeds 45–46 at L12800. `e-native-153k` is a sensitivity arm and is excluded from the primary chart. The default native arm recorded no compactions, so these trials compare smart compaction chiefly with two keep-everything variants. Raw rows are in [openmem `bench/results-E/summary.json`](https://github.com/bcmyguest/openmem/blob/main/bench/results-E/summary.json); the [published chart](context-management.md#benchmarks) is on this site.
+Run E used Haiku 5.5, Claude Code strict mode, the same proxy build, and seeds 45–47 for each arm. The primary arms were `e-none` (no compaction), `e-native` (Claude Code default), and `e-smart` (Smarter Compact SQLite search, 95k Haiku threshold, search-tools pointer and cache-stable trim). Tasks were kv R4000 and log L1600/L6400/L12800. Keep-everything has only seeds 45–46 at L12800. `e-native-153k` is a sensitivity arm and is excluded from the primary chart. `e-native` never compacted: 0 compactions in 12 trials, peak prompt 764,310 tokens at L12800, below Claude Code's default Haiku 5.5 auto-compact point of [about 967K](https://code.claude.com/docs/en/model-config). It is a second keep-everything arm, labelled "default native (never compacted)" below. Raw rows are in [openmem `bench/results-E/summary.json`](https://github.com/bcmyguest/openmem/blob/main/bench/results-E/summary.json); the [published chart](context-management.md#benchmarks) is on this site.
 
-The paired log-score advantage was +0.469 against keep-everything (95% bootstrap interval 0.339–0.578, eight pairs) and +0.495 against default native (0.384–0.593, nine pairs). Kv R4000 scored 1.0 in all arms. Smart/none cost ratios were 0.130 [0.128, 0.132] at kv R4000, 0.811 [0.102, 1.528] at log L1600, 0.109 [0.107, 0.111] at L6400, and 0.062 [0.062, 0.063] at L12800. The L1600 interval crosses 1. The [evidence plan](https://github.com/bcmyguest/openmem/blob/main/docs/evidence-plan.md#completed-seed-paired-comparisons) gives each size's score and wall-time interval and explains the bootstrap method.
+The paired log-score advantage was +0.469 against keep-everything (95% bootstrap interval 0.339–0.578, eight pairs) and +0.495 against default native, which never compacted (0.384–0.593, nine pairs). Kv R4000 scored 1.0 in all arms. Smart/none cost ratios were 0.130 [0.128, 0.132] at kv R4000, 0.811 [0.102, 1.528] at log L1600, 0.109 [0.107, 0.111] at L6400, and 0.062 [0.062, 0.063] at L12800. The L1600 interval crosses 1. The [evidence plan](https://github.com/bcmyguest/openmem/blob/main/docs/evidence-plan.md#completed-seed-paired-comparisons) gives each size's score and wall-time interval and explains the bootstrap method.
 
 ### Deviations from the pre-registration
 
@@ -218,6 +218,19 @@ The [evidence plan as committed before run E](https://github.com/bcmyguest/openm
 - The plan specified 10,000 bootstrap resamples; the reported intervals use 20,000.
 
 The +0.469 [0.339, 0.578] interval resamples the 8 log-triage pairs as if independent, but all 8 come from one task family at three sizes. A task-clustered bootstrap resamples the three sizes (L1600, L6400, L12800) with replacement, then seed pairs within each drawn size (20,000 resamples, RNG seed 0). It gives +0.469 [0.329, 0.639] against keep-everything and +0.495 [0.352, 0.648] against default native. With three clusters this interval is coarse. Both intervals reproduce in openmem with `cd bench && python3 ci.py results-E/summary.json --metric reward_lenient --pool log-triage` (add `--ref e-native` for the native comparison).
+
+### Sensitivity arm: native compaction at a 153K window (`e-native-153k`)
+
+`e-native-153k` set `CLAUDE_CODE_AUTO_COMPACT_WINDOW=153000`, which made Claude Code compact near 120K tokens (logged pre-compaction sizes 119,447–132,191). It ran the same 12 tasks and seeds; no trial was excluded. Rows are in the same `summary.json`.
+
+| Task, size | Score (smart / native-153k / default native / keep) | List-price cost per trial (smart / native-153k) | Native compactions per trial | Peak prompt (smart / native-153k) |
+|---|---|---|---|---|
+| kv R4000 | 1.000 / 0.042 / 1.000 / 1.000 | $0.14 / $0.39 | 4.0 | 93,156 / 119,677 |
+| log L1600 | 1.000 / 0.333 / 0.583 / 0.569 | $0.36 / $0.29 | 1.0 | 94,489 / 121,891 |
+| log L6400 | 0.875 / 0.028 / 0.458 / 0.486 | $0.20 / $0.36 | 3.0 | 95,771 / 122,939 |
+| log L12800 | 1.000 / 0.028 / 0.347 / 0.354 | $0.38 / $1.04 | 8.3 | 95,403 / 122,856 |
+
+Three seeds per cell, except keep-everything at L12800 (two). Across nine log pairs smart minus native-153k was +0.829 (pairs bootstrap [0.676, 0.958]; task-clustered [0.625, 0.981]); native-153k minus keep-everything was −0.349 over eight pairs ([−0.510, −0.182]). Reproduce with `python3 ci.py results-E/summary.json --metric reward_lenient --pool log-triage --ref e-native-153k`.
 
 Sonnet 5 has two paired log L6400 seeds in [`bench/results-S/summary.json`](https://github.com/bcmyguest/openmem/blob/main/bench/results-S/summary.json). Smart minus none score was +0.0625 [0.0417, 0.0833]; its cost ratio was 0.401 [0.361, 0.441]. The two smart trials cost $7.86 at list price against $19.85 for none. This supports the direction on that one task, with too few seeds for broad model claims.
 

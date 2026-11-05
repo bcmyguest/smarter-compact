@@ -22,7 +22,7 @@ The agent searches the store with `smart_compact_search`, `smart_compact_sql`, a
 <p align="center">
 <picture>
 <source media="(prefers-color-scheme: dark)" srcset="docs/media/contextbench-quality-log-dark.png" />
-<img src="docs/media/contextbench-quality-log.png" alt="ContextBench log-triage: smart compaction at 1.00 on L12800 overall vs 0.35 for native and keep-everything; lookup and count panels" width="480" />
+<img src="docs/media/contextbench-quality-log.png" alt="ContextBench log-triage: smart compaction at 1.00 on L12800 overall vs 0.35 for native (never compacted) and keep-everything; lookup and count panels" width="480" />
 </picture>
 </p>
 

@@ -52,7 +52,7 @@ Source: [ContextBench](https://github.com/RulinShao/ContextBench) synthetic task
 
 ### Time
 
-This comparison recorded no native compactions. Its default native arm therefore behaved as a keep-everything baseline at these sizes. The saved usage log cannot identify which request paid for a new trim, so it does not support a trim-latency estimate.
+This comparison recorded no native compactions: peak prompts reached 764,310 tokens, below Claude Code's ~967K default auto-compact point for Haiku 5.5. Its default native arm is therefore a second keep-everything arm. A sensitivity arm that forced native compaction near 120K scored 0.028–0.333 on log tasks ([results](context-research.md#sensitivity-arm-native-compaction-at-a-153k-window-e-native-153k)). The saved usage log cannot identify which request paid for a new trim, so it does not support a trim-latency estimate.
 
 <p align="center">
 <picture>
@@ -96,7 +96,7 @@ Source: [ContextBench](https://github.com/RulinShao/ContextBench) synthetic task
 
 ### What this shows
 
-Across eight seed-matched log trials, smart compaction's mean score exceeded keep-everything by **0.469** (95% bootstrap interval 0.339–0.578; 0.329–0.639 when the bootstrap resamples the three task sizes; [deviations from the pre-registration](context-research.md#deviations-from-the-pre-registration)). Across nine pairs it exceeded default native by **0.495** (0.384–0.593; task-clustered 0.352–0.648). All three arms scored 1.0 on kv R4000. Smart compaction cost less on every paired kv-store R4000 trial and every log-triage L6400 and L12800 trial. The L1600 cost interval includes no saving, and its wall-time interval includes a slowdown over 20%. These small synthetic samples do not establish the same effect for coding sessions.
+Across eight seed-matched log trials, smart compaction's mean score exceeded keep-everything by **0.469** (95% bootstrap interval 0.339–0.578; 0.329–0.639 when the bootstrap resamples the three task sizes; [deviations from the pre-registration](context-research.md#deviations-from-the-pre-registration)). Across nine pairs it exceeded default native, which never compacted in these trials, by **0.495** (0.384–0.593; task-clustered 0.352–0.648). All three arms scored 1.0 on kv R4000. Smart compaction cost less on every paired kv-store R4000 trial and every log-triage L6400 and L12800 trial. The L1600 cost interval includes no saving, and its wall-time interval includes a slowdown over 20%. These small synthetic samples do not establish the same effect for coding sessions.
 
 On Sonnet 5 log L6400, two seed-matched pairs favored smart compaction by 0.0625 score (0.0417–0.0833) and cost 0.401 times keep-everything (0.361–0.441). [Exclusions, price basis, and pending work](https://github.com/bcmyguest/openmem/blob/main/docs/evidence-plan.md#completed-seed-paired-comparisons).
 
