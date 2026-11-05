@@ -210,6 +210,15 @@ Run E used Haiku 5.5, Claude Code strict mode, the same proxy build, and seeds 4
 
 The paired log-score advantage was +0.469 against keep-everything (95% bootstrap interval 0.339–0.578, eight pairs) and +0.495 against default native (0.384–0.593, nine pairs). Kv R4000 scored 1.0 in all arms. Smart/none cost ratios were 0.130 [0.128, 0.132] at kv R4000, 0.811 [0.102, 1.528] at log L1600, 0.109 [0.107, 0.111] at L6400, and 0.062 [0.062, 0.063] at L12800. The L1600 interval crosses 1. The [evidence plan](https://github.com/bcmyguest/openmem/blob/main/docs/evidence-plan.md#completed-seed-paired-comparisons) gives each size's score and wall-time interval and explains the bootstrap method.
 
+### Deviations from the pre-registration
+
+The [evidence plan as committed before run E](https://github.com/bcmyguest/openmem/blob/dbdf5ce24122bc203fec4b5eb2e497e8f59a3237/docs/evidence-plan.md) (openmem dbdf5ce, 2026-10-30 18:52 EDT; the first run E trial in `results-E` started 19:11) differs from the reported analysis in two ways:
+
+- H1 named kv R4000, log L6400 and log L12800. The headline pools log L1600, L6400 and L12800: it adds L1600 and drops R4000, where every arm scored 1.0.
+- The plan specified 10,000 bootstrap resamples; the reported intervals use 20,000.
+
+The +0.469 [0.339, 0.578] interval resamples the 8 log-triage pairs as if independent, but all 8 come from one task family at three sizes. A task-clustered bootstrap resamples the three sizes (L1600, L6400, L12800) with replacement, then seed pairs within each drawn size (20,000 resamples, RNG seed 0). It gives +0.469 [0.329, 0.639] against keep-everything and +0.495 [0.352, 0.648] against default native. With three clusters this interval is coarse. Both intervals reproduce in openmem with `cd bench && python3 ci.py results-E/summary.json --metric reward_lenient --pool log-triage` (add `--ref e-native` for the native comparison).
+
 Sonnet 5 has two paired log L6400 seeds in [`bench/results-S/summary.json`](https://github.com/bcmyguest/openmem/blob/main/bench/results-S/summary.json). Smart minus none score was +0.0625 [0.0417, 0.0833]; its cost ratio was 0.401 [0.361, 0.441]. The two smart trials cost $7.86 at list price against $19.85 for none. This supports the direction on that one task, with too few seeds for broad model claims.
 
 The coding-task replay used Haiku 4.5. Its `step2c` brief required changing strings pinned by existing exact-string tests while forbidding assertion edits; all four `step2c` trials therefore report `tests_rc=1`. Two of four smart-arm replays searched the session store once. This does not diagnose the earlier hour-long subagents, whose transcripts were not scored for scratchpad behavior. The decision-consistency trial set remains partial. Scratchpad read-path work is outside `main`, so no scratchpad benefit is claimed here.
