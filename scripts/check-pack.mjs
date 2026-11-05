@@ -15,13 +15,24 @@ const REQUIRED = [
   "plugin/scripts/smarter-compact.mjs",
   "proxy/smarter_compact_hook.py",
   "proxy/config.yaml",
+  // Plugin manifest chain that `smarter-compact plugins add` and Pi load from the installed package.
+  ".claude-plugin/marketplace.json",
+  "plugin/.claude-plugin/plugin.json",
+  "plugin/.codex-plugin/plugin.json",
+  "plugin/.mcp.json",
+  "plugin/hooks/hooks.json",
+  "plugin/hooks/codex-hooks.json",
+  "plugin/slash-commands/compact.md",
+  "plugin/slash-commands/status.md",
+  "plugin/codex-skills/compact/SKILL.md",
+  "plugin/codex-skills/status/SKILL.md",
+  "plugin/pi/smarter-compact.js",
 ];
 
 const FORBIDDEN = [
   [/(^|\/)\.env$/, ".env"],
   [/(^|\/)\.git(\/|$)/, ".git"],
   [/(^|\/)\.github(\/|$)/, ".github"],
-  [/(^|\/)\.claude-plugin(\/|$)/, ".claude-plugin"],
   [/(^|\/)\.cursor-plugin(\/|$)/, ".cursor-plugin"],
   [/(^|\/)tests(\/|$)/, "tests/"],
   [/\/home\/[^/\s]+/, "home path"],
