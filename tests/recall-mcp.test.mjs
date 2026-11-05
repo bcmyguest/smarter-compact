@@ -6,7 +6,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { callContextStoreTool } from "../plugin/lib/mcp/context-store.mjs";
-import { openSession } from "../plugin/lib/session-db.mjs";
+import { rotateLog } from "../plugin/lib/log-rotate.mjs";
+import { openSession, recordToolCall, summarizeToolCalls, TOOL_CALLS_LOG } from "../plugin/lib/session-db.mjs";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const server = path.join(repo, "plugin", "lib", "mcp", "server.mjs");
@@ -198,4 +199,27 @@ test("sql: a wrong id among several sessions fails the same way search does", as
     () => callContextStoreTool("smart_compact_sql", { session_id: "ses_nope", sql: "SELECT 1" }, s.opts),
     /this workspace has 2/,
   );
+});
+
+test("rotateLog moves a full log to .1 and leaves a small one", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sc-rotate-"));
+  const file = path.join(dir, "x.log");
+  fs.writeFileSync(file, "12345");
+  rotateLog(file, 10);
+  assert.equal(fs.readFileSync(file, "utf8"), "12345");
+  rotateLog(file, 5);
+  assert.equal(fs.existsSync(file), false);
+  assert.equal(fs.readFileSync(`${file}.1`, "utf8"), "12345");
+  rotateLog(path.join(dir, "missing.log"), 1);
+});
+
+test("summarizeToolCalls counts the rotated generation too", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sc-calls-"));
+  recordToolCall(dir, { tool: "smart_compact_search", hits: 2 });
+  fs.renameSync(path.join(dir, TOOL_CALLS_LOG), path.join(dir, `${TOOL_CALLS_LOG}.1`));
+  recordToolCall(dir, { tool: "smart_compact_get", chars: 7 });
+  const s = summarizeToolCalls(dir);
+  assert.equal(s.searches, 1);
+  assert.equal(s.searchHits, 2);
+  assert.equal(s.gets, 1);
 });

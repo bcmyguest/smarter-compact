@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { configDir, ensureProductEnv, PRODUCT_NAME, resolveProxyPort, ROOT_ENV, stateParent } from "./brand.mjs";
 import { contextRoot } from "./context-store.mjs";
 import { agentsPointedAtProxy, ensureKey } from "./enable.mjs";
+import { rotateLog } from "./log-rotate.mjs";
 
 const PROBE_TIMEOUT_MS = 1500;
 const DEFAULT_WAIT_MS = 12_000;
@@ -195,12 +196,13 @@ async function refreshStale({ home, env, port, importMetaUrl, fetch, exec, waitM
   return { status: "stale", warning: `${where} runs ${running}, installed is ${installed}; restart it to load the new code.` };
 }
 
-/** Start LiteLLM detached; logs append to `~/.config/smarter-compact/proxy.log`. */
+/** Start LiteLLM detached; logs append to `~/.config/smarter-compact/proxy.log`, rotated to `.1` at 5 MB on each start. */
 export function spawnContextProxyDaemon(home, importMetaUrl, env = process.env) {
   const root = packageRoot(importMetaUrl);
   if (!root) return { ok: false, reason: "no-package-root" };
   const port = String(resolveProxyPort(home, env));
   fs.mkdirSync(configDir(home), { recursive: true, mode: 0o700 });
+  rotateLog(proxyLogPath(home));
   const logFd = fs.openSync(proxyLogPath(home), "a");
   const config = path.join(root, "proxy", "config.yaml");
   let child;

@@ -9,6 +9,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { rotateLog } from "./log-rotate.mjs";
 
 export const SCHEMA_VERSION = 3;
 /** Version 1, executed in order on an empty database. Same strings as SCHEMA in sessiondb.py. */
@@ -285,7 +286,7 @@ function addUsage(u, r, layouts) {
   group.cacheCreationTokens += r.cache_creation_tokens;
 }
 
-/** Append-only MCP tool telemetry under the context root (smart_compact_search / sql / get). */
+/** Append-only MCP tool telemetry under the context root (smart_compact_search / sql / get); rotated to `.1` at 5 MB. */
 export const TOOL_CALLS_LOG = "tool-calls.jsonl";
 const TOP_SESSIONS = 5;
 
@@ -370,7 +371,9 @@ export function recordToolCall(contextDir, entry) {
   try {
     fs.mkdirSync(contextDir, { recursive: true, mode: 0o700 });
     const line = `${JSON.stringify({ at: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"), ...entry })}\n`;
-    fs.appendFileSync(path.join(contextDir, TOOL_CALLS_LOG), line, { mode: 0o600 });
+    const file = path.join(contextDir, TOOL_CALLS_LOG);
+    rotateLog(file);
+    fs.appendFileSync(file, line, { mode: 0o600 });
   } catch { /* leave stats incomplete rather than fail the tool */ }
 }
 
@@ -381,8 +384,10 @@ export function recordToolCall(contextDir, entry) {
 export function summarizeToolCalls(contextDir, { hours = EVENT_WINDOW_HOURS, now = Date.now() } = {}) {
   const out = { searches: 0, sql: 0, gets: 0, searchHits: 0, sqlRows: 0, getChars: 0, unreadable: 0 };
   const sinceMs = now - hours * 3_600_000;
-  let text;
-  try { text = fs.readFileSync(path.join(contextDir, TOOL_CALLS_LOG), "utf8"); } catch { return out; }
+  let text = "";
+  for (const name of [`${TOOL_CALLS_LOG}.1`, TOOL_CALLS_LOG]) {
+    try { text += fs.readFileSync(path.join(contextDir, name), "utf8"); } catch { /* generation absent */ }
+  }
   for (const line of text.split("\n")) {
     if (!line.trim()) continue;
     let row;

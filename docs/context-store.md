@@ -17,7 +17,7 @@ Root: `$SMARTER_COMPACT_STATE_DIR/context`, default `~/.local/share/smarter-comp
 | `sessions/<sid>.trim.json` | proxy | proxy | Proxy-private trim state (cut point, fingerprints, reported-usage samples for the token estimate, see [context-proxy.md](context-proxy.md#token-estimate)). Other components must not depend on its shape. |
 | `sessions/<sid>.db` (+ `-wal`, `-shm`) | proxy | MCP `smart_compact_search`, `smart_compact_sql`, shell `sqlite3` | [Session database](#session-database): every message of the session, in or out of context. The only store of record for message content. |
 | `blobs/<id>.txt` | proxy | MCP `smart_compact_get` | Full text of a compressed tool result, served back in 12,000-char pages. `id` = first 16 hex chars of SHA-256 of the UTF-8 content. |
-| `tool-calls.jsonl` | MCP `smart_compact_*` tools | `smarter-compact context stats` | One JSON line per search / sql / get call (`at`, `tool`, hit/row/char counts). Best-effort telemetry; not part of the session rewrite contract. |
+| `tool-calls.jsonl` | MCP `smart_compact_*` tools | `smarter-compact context stats` | One JSON line per search / sql / get call (`at`, `tool`, hit/row/char counts). Best-effort telemetry; not part of the session rewrite contract. Moves to `tool-calls.jsonl.1` at 5 MB, replacing the previous generation; stats read both. |
 | `.ttl-stamp` | proxy, MCP server | proxy, MCP server | Empty; its mtime records the last [retention](#retention) sweep |
 
 Earlier releases wrote `sessions/<sid>.log.jsonl` handoff logs. Nothing writes or reads them now and they are not migrated; the retention sweep deletes them with their session.
@@ -235,6 +235,12 @@ For Ollama: `ollama pull nomic-embed-text`, then `embedding_model = "nomic-embed
 ## Retention
 
 `[context_store] ttl_days` (env `CONTEXT_STORE_TTL_DAYS`, default 30; `0` keeps everything). At start, the proxy (on a daemon thread) and the MCP server sweep `sessions/`, at most once a day: when `.ttl-stamp` is older than 24 h or missing, they touch it and delete every session whose newest file is older than the TTL. A session's files are grouped by suffix (`.db`, `.db-wal`, `.db-shm`, `.json`, `.trim.json`, `.force`, `.log.jsonl`); dot files and other names are left alone. After session cleanup, the same pass deletes orphaned `blobs/<id>.txt` files that no remaining `messages.blob_id` references (blobs are content-addressed and shared across sessions). If any remaining session database cannot be opened, the blob pass is skipped for that run. A writer that finds its cached database deleted or replaced reopens it on the next request.
+
+**Contents.** The store holds tool output verbatim, unredacted, as Claude Code's own `~/.claude/projects/*.jsonl` transcripts do; redaction would break exact recall of values such as keys. `sessions/` and `blobs/` are mode 700, session files mode 600.
+
+**Purge one session now.** Delete its files: `rm sessions/<sid>.*` under the context root. Its blobs stay in `blobs/` until the next daily sweep finds them unreferenced; to remove them at once, delete `.ttl-stamp` and start the MCP server or proxy.
+
+**Logs.** `~/.config/smarter-compact/proxy.log` (plugin-started proxy) moves to `proxy.log.1` at 5 MB, checked each time the plugin starts the proxy; a proxy that stays up keeps appending until its next start. `tool-calls.jsonl` rotates the same way on write.
 
 ## Proxy-inserted text
 

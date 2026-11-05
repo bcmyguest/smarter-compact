@@ -35,7 +35,7 @@ Or add `CONTEXT_PROXY_PORT=4200` to `proxy.env`, then run `smarter-compact enabl
 
 OpenCode 2 plugin JSON: `"proxyPort": 4200` (maps to `CONTEXT_PROXY_PORT` for settings and auto-start).
 
-Auto-start is off when `SMARTER_COMPACT_AUTO_PROXY=0`. Logs: `~/.config/smarter-compact/proxy.log`.
+Auto-start is off when `SMARTER_COMPACT_AUTO_PROXY=0`. Logs: `~/.config/smarter-compact/proxy.log`, rotated to `proxy.log.1` at 5 MB on each start.
 
 ## Configuration
 
