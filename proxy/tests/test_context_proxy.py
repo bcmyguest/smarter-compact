@@ -1024,6 +1024,8 @@ class StandingInstructionTests(Base):
                          'You MUST call smart_compact_search(session_id="s1", query=... or pattern=...) before '
                          'answering anything that depends on them, and never answer "not found", "never '
                          'received" or "no search tool" without calling it. '
+                         'Dropped user turns may hold instructions or corrections that still apply: search them '
+                         '(smart_compact_search with role="user") before changing course. '
                          'To recover a file you read earlier, search for the text you need instead of reading it again, and re-read only the lines you still lack (offset/limit). '
                          'Every message of this session is '
                          'stored and '
