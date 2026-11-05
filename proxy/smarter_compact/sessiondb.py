@@ -72,9 +72,10 @@ def blob_ref(text):
 def chain(rows):
     """Give each row its fingerprint and thread, in order, in place; returns rows.
 
-    A row's fingerprint hashes the previous row's fingerprint with the row's own role, kind, name and text, so it
-    names the row and its position in the conversation: a resent history yields the same keys, and the same text
-    said twice yields two rows. thread is the fingerprint of the conversation's first row.
+    A row's fingerprint hashes the previous row's fingerprint with the row's own role, kind, name and text: a unique
+    name for the row and its position. thread is the fingerprint of the conversation's first row. Dedup does not
+    use the fingerprint but SessionDB's (thread, content, occurrence) key, so an edited earlier message does not
+    re-key the rows after it.
     """
     prev = ""
     for row in rows:
@@ -138,14 +139,29 @@ def _identity(path):
     return st.st_dev, st.st_ino
 
 
+def content_key(row):
+    """Hash of a row's role, kind, name and text: what dedup compares, with the thread and occurrence."""
+    return fingerprint({"role": row["role"], "kind": row["kind"], "name": row["name"], "text": row["text"]})
+
+
 class SessionDB:
-    """One session's database plus an in-memory index of its rows (fingerprint -> [seq, in_context])."""
+    """One session's database plus an in-memory index of its rows.
+
+    Dedup key: (thread, content_key, n), n being how many earlier rows of the same thread carry the same content.
+    In a request n counts in message order; over stored rows it counts in seq order (docs/context-store.md).
+    """
 
     def __init__(self, path):
         self.path = Path(path)
         self.conn = connect(self.path)
         self.identity = _identity(self.path)
-        self.known = {}
+        self._reset()
+
+    def _reset(self):
+        self.index = {}  # (thread, content_key, n) -> seq
+        self.counts = {}  # (thread, content_key) -> stored rows with that content
+        self.flags = {}  # seq -> in_context
+        self.last_seq = 0
         self.data_version = None
 
     def close(self):
@@ -154,33 +170,60 @@ class SessionDB:
         except sqlite3.Error:
             pass
 
+    def _add(self, seq, thread, ck):
+        n = self.counts.get((thread, ck), 0)
+        self.counts[(thread, ck)] = n + 1
+        self.index.setdefault((thread, ck, n), seq)
+
     def _refresh(self):
-        """Reload the index when another connection committed since the last look."""
+        """Index rows another connection appended and reload in_context flags, when it committed since the last look."""
         version = self.conn.execute("PRAGMA data_version").fetchone()[0]
-        if version != self.data_version:
-            self.known = {fp: [seq, flag] for fp, seq, flag in
-                          self.conn.execute("SELECT fingerprint, seq, in_context FROM messages")}
-            self.data_version = version
+        if version == self.data_version:
+            return
+        for seq, thread, role, kind, name, text in self.conn.execute(
+                "SELECT seq, thread, role, kind, name, text FROM messages WHERE seq > ? ORDER BY seq", (self.last_seq,)):
+            self._add(seq, thread, content_key({"role": role, "kind": kind, "name": name, "text": text}))
+            self.last_seq = seq
+        self.flags.clear()
+        self.flags.update(self.conn.execute("SELECT seq, in_context FROM messages"))
+        self.data_version = version
+
+    def _keys(self, rows):
+        """Dedup key of each row of one request, in order."""
+        seen = {}
+        keys = []
+        for r in rows:
+            ck = content_key(r)
+            n = seen.get((r["thread"], ck), 0)
+            seen[(r["thread"], ck)] = n + 1
+            keys.append((r["thread"], ck, n))
+        return keys
 
     def sync(self, rows, cut_row, ts):
         """Store chained rows and their in_context flags; returns the number of new rows.
 
         rows: dicts with fingerprint, thread, role, kind, name, text, blob_id and keep (in context after this
-        request). cut_row: index into rows of the first row of the cut turn, or None. Rows already stored are left
-        alone except for in_context: a row that leaves context records trimmed_at_seq (the cut row's seq, NULL
-        without one) and trimmed_at; a row that returns clears both.
+        request). cut_row: index into rows of the first row of the cut turn, or None. A row whose dedup key is
+        already stored is left alone except for in_context: a row that leaves context records trimmed_at_seq (the
+        cut row's seq, NULL without one) and trimmed_at; a row that returns clears both.
         """
         self._refresh()
-        known = self.known
-        fresh = [r for r in rows if r["fingerprint"] not in known]
-        changes = [r for r in rows if r["fingerprint"] in known and known[r["fingerprint"]][1] != int(r["keep"])]
+        keys = self._keys(rows)
+        index, flags = self.index, self.flags
+        fresh = [i for i, k in enumerate(keys) if k not in index]
+        changes = [k for r, k in zip(rows, keys) if k in index and flags.get(index[k]) != int(r["keep"])]
         if not fresh and not changes:
             return 0
         conn = self.conn
         conn.execute("BEGIN IMMEDIATE")
         try:
+            # Another writer may have committed since the look above; with the lock held, index its rows first.
+            self._refresh()
+            fresh = [i for i, k in enumerate(keys) if k not in index]
             added = 0
-            for r in fresh:
+            seqs = [index.get(k) for k in keys]
+            for i in fresh:
+                r = rows[i]
                 cur = conn.execute(
                     "INSERT INTO messages (fingerprint, thread, role, kind, name, text, blob_id, created_at) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (fingerprint) DO NOTHING",
@@ -189,36 +232,40 @@ class SessionDB:
                     seq = cur.lastrowid
                     conn.executemany("INSERT INTO lines (message_seq, line_no, role, text) VALUES (?, ?, ?, ?)",
                                      [(seq, n, r["role"], line) for n, line in enumerate(r["text"].split("\n"), 1)])
-                    known[r["fingerprint"]] = [seq, 1]
+                    self._add(seq, r["thread"], keys[i][1])
+                    index.setdefault(keys[i], seq)
+                    self.last_seq = seq
+                    flags[seq] = 1
                     added += 1
                 else:
+                    # Same chained fingerprint, stored at another occurrence index: reuse that row.
                     seq, flag = conn.execute("SELECT seq, in_context FROM messages WHERE fingerprint = ?",
                                              (r["fingerprint"],)).fetchone()
-                    known[r["fingerprint"]] = [seq, flag]
-            cut_seq = known[rows[cut_row]["fingerprint"]][0] if cut_row is not None else None
-            for r in rows:
-                entry = known[r["fingerprint"]]
+                    index.setdefault(keys[i], seq)
+                    flags[seq] = flag
+                seqs[i] = seq
+            cut_seq = seqs[cut_row] if cut_row is not None else None
+            for r, seq in zip(rows, seqs):
                 want = int(r["keep"])
-                if entry[1] == want:
+                if flags.get(seq) == want:
                     continue
                 if want:
                     conn.execute("UPDATE messages SET in_context = 1, trimmed_at_seq = NULL, trimmed_at = NULL "
-                                 "WHERE seq = ?", (entry[0],))
+                                 "WHERE seq = ?", (seq,))
                 else:
                     conn.execute("UPDATE messages SET in_context = 0, trimmed_at_seq = ?, trimmed_at = ? "
-                                 "WHERE seq = ?", (cut_seq, ts, entry[0]))
-                entry[1] = want
+                                 "WHERE seq = ?", (cut_seq, ts, seq))
+                flags[seq] = want
             conn.execute("COMMIT")
         except BaseException:
             try:
                 conn.execute("ROLLBACK")
             except sqlite3.Error:
                 pass
-            self.data_version = None
+            self._reset()
             raise
         self.data_version = conn.execute("PRAGMA data_version").fetchone()[0]
         return added
-
 
     def add_event(self, kind, at, version, **fields):
         """Append one events row; fields are the other EVENT_COLUMNS (location, error, tokens_before, ...)."""

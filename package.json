@@ -72,7 +72,7 @@
     ]
   },
   "scripts": {
-    "test": "node --test tests/plugin.test.mjs tests/opencode-export.test.mjs tests/proxy-daemon.test.mjs tests/context-config.test.mjs tests/recall-mcp.test.mjs tests/context-trim.test.mjs",
+    "test": "node --test tests/plugin.test.mjs tests/opencode-export.test.mjs tests/proxy-daemon.test.mjs tests/context-config.test.mjs tests/recall-mcp.test.mjs tests/context-trim.test.mjs tests/session-db.test.mjs",
     "pack:check": "node scripts/check-pack.mjs"
   },
   "dependencies": {

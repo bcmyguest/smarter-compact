@@ -91,6 +91,34 @@ class StoreEveryMessageTests(DbBase):
         self.run_req([{"role": "user", "content": "subagent task"}])
         self.assertEqual(self.query("SELECT count(DISTINCT thread) FROM messages")[0][0], 2)
 
+    def test_edited_old_message_reinserts_only_that_message(self):
+        msgs = history(3)
+        self.run_req(msgs)
+        self.assertEqual(self.query("SELECT count(*) FROM messages")[0][0], 12)
+        edited = copy.deepcopy(msgs)
+        edited[4]["content"][0]["text"] = "question 1 reworded"
+        self.run_req(edited)
+        self.assertEqual(self.query("SELECT text FROM messages WHERE seq > 12"), [("question 1 reworded",)])
+        # A cold index, rebuilt from the stored rows, keys the same way.
+        sessiondb.drop_session(self.path())
+        edited[8]["content"][0]["text"] = "question 2 reworded"
+        self.run_req(edited)
+        self.assertEqual(self.query("SELECT text FROM messages WHERE seq > 13"), [("question 2 reworded",)])
+        self.assertEqual(self.query("SELECT count(*) FROM messages WHERE text = 'out 2'")[0][0], 1)
+
+    def test_repeated_identical_messages_are_both_stored(self):
+        msgs = history(2)
+        for m in (msgs[2], msgs[6]):
+            m["content"][0]["content"] = "same"
+        self.run_req(msgs)
+        self.assertEqual(self.query("SELECT count(*) FROM messages WHERE text = 'same'")[0][0], 2)
+        edited = copy.deepcopy(msgs)
+        edited[4]["content"][0]["text"] = "question 1 reworded"
+        edited.append({"role": "user", "content": [{"type": "tool_result", "tool_use_id": "tu1", "content": "same"}]})
+        self.run_req(edited)
+        self.assertEqual(self.query("SELECT count(*) FROM messages WHERE text = 'same'")[0][0], 3)
+        self.assertEqual(self.query("SELECT count(*) FROM messages WHERE text = 'ok'")[0][0], 2)
+
     def test_lines_fts_schema_and_wal(self):
         self.run_req(history(1))
         self.assertEqual(self.query("PRAGMA user_version")[0][0], sessiondb.SCHEMA_VERSION)

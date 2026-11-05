@@ -88,8 +88,9 @@ function rowFingerprint(prev, row) {
 
 /**
  * Give each row its fingerprint and thread, in order, in place (sessiondb.chain). A row's fingerprint hashes
- * the previous row's fingerprint with its own role, kind, name and text: a resent history yields the same
- * keys, and the same text said twice yields two rows. thread is the first row's fingerprint.
+ * the previous row's fingerprint with its own role, kind, name and text: a unique name for the row and its
+ * position. thread is the first row's fingerprint. Dedup uses SessionDB's (thread, content, occurrence) key
+ * instead, so an edited earlier message does not re-key the rows after it.
  */
 export function chain(rows) {
   let prev = "";
@@ -149,13 +150,32 @@ function identity(file) {
   } catch { return null; }
 }
 
-/** One session's database plus an index of its rows (fingerprint -> [seq, in_context]). */
+/** Hash of a row's role, kind, name and text (sessiondb.content_key): what dedup compares, with thread and occurrence. */
+export function contentKey(row) {
+  const blob = JSON.stringify({ kind: row.kind, name: row.name ?? null, role: row.role, text: row.text });
+  return crypto.createHash("sha256").update(blob, "utf8").digest("hex").slice(0, 32);
+}
+
+const dedupKey = (thread, ck, n) => JSON.stringify([thread, ck, n]);
+
+/**
+ * One session's database plus an in-memory index of its rows (sessiondb.SessionDB). Dedup key: (thread,
+ * contentKey, n), n being how many earlier rows of the same thread carry the same content; in a request n
+ * counts in message order, over stored rows in seq order (docs/context-store.md).
+ */
 export class SessionDB {
   constructor(file) {
     this.file = file;
     this.db = connect(file);
     this.identity = identity(file);
-    this.known = new Map();
+    this.reset();
+  }
+
+  reset() {
+    this.index = new Map(); // dedupKey -> seq
+    this.counts = new Map(); // [thread, contentKey] -> stored rows with that content
+    this.flags = new Map(); // seq -> in_context
+    this.lastSeq = 0;
     this.dataVersion = null;
   }
 
@@ -163,12 +183,38 @@ export class SessionDB {
     try { this.db.close(); } catch { /* already closed */ }
   }
 
+  add(seq, thread, ck) {
+    const at = JSON.stringify([thread, ck]);
+    const n = this.counts.get(at) ?? 0;
+    this.counts.set(at, n + 1);
+    const key = dedupKey(thread, ck, n);
+    if (!this.index.has(key)) this.index.set(key, seq);
+  }
+
+  /** Index rows another connection appended and reload in_context flags, when it committed since the last look. */
   refresh() {
     const version = this.db.prepare("PRAGMA data_version").get().data_version;
     if (version === this.dataVersion) return;
-    this.known = new Map(this.db.prepare("SELECT fingerprint, seq, in_context FROM messages").all()
-      .map((r) => [r.fingerprint, [r.seq, r.in_context]]));
+    for (const r of this.db.prepare("SELECT seq, thread, role, kind, name, text FROM messages WHERE seq > ? ORDER BY seq")
+      .all(this.lastSeq)) {
+      this.add(r.seq, r.thread, contentKey(r));
+      this.lastSeq = r.seq;
+    }
+    this.flags.clear();
+    for (const r of this.db.prepare("SELECT seq, in_context FROM messages").all()) this.flags.set(r.seq, r.in_context);
     this.dataVersion = version;
+  }
+
+  /** Dedup key of each row of one request, in order. */
+  keys(rows) {
+    const seen = new Map();
+    return rows.map((r) => {
+      const ck = contentKey(r);
+      const at = JSON.stringify([r.thread, ck]);
+      const n = seen.get(at) ?? 0;
+      seen.set(at, n + 1);
+      return { ck, key: dedupKey(r.thread, ck, n) };
+    });
   }
 
   /**
@@ -177,45 +223,56 @@ export class SessionDB {
    */
   sync(rows, cutRow, ts) {
     this.refresh();
-    const { known, db } = this;
-    const fresh = rows.filter((r) => !known.has(r.fingerprint));
-    const changes = rows.some((r) => known.has(r.fingerprint) && known.get(r.fingerprint)[1] !== (r.keep ? 1 : 0));
-    if (!fresh.length && !changes) return 0;
+    const keys = this.keys(rows);
+    const { index, flags, db } = this;
+    const fresh = keys.some(({ key }) => !index.has(key));
+    const changes = rows.some((r, i) => index.has(keys[i].key) && flags.get(index.get(keys[i].key)) !== (r.keep ? 1 : 0));
+    if (!fresh && !changes) return 0;
     db.exec("BEGIN IMMEDIATE");
     try {
+      // Another writer may have committed since the look above; with the lock held, index its rows first.
+      this.refresh();
       let added = 0;
       const insert = db.prepare("INSERT INTO messages (fingerprint, thread, role, kind, name, text, blob_id, created_at) "
         + "VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (fingerprint) DO NOTHING");
       const insertLine = db.prepare("INSERT INTO lines (message_seq, line_no, role, text) VALUES (?, ?, ?, ?)");
-      for (const r of fresh) {
+      const seqs = keys.map(({ key }) => index.get(key));
+      rows.forEach((r, i) => {
+        if (seqs[i] !== undefined) return;
         const res = insert.run(r.fingerprint, r.thread, r.role, r.kind, r.name ?? null, r.text, r.blob_id ?? null, ts);
+        let seq;
         if (res.changes === 1) {
-          const seq = Number(res.lastInsertRowid);
-          r.text.split("\n").forEach((line, i) => insertLine.run(seq, i + 1, r.role, line));
-          known.set(r.fingerprint, [seq, 1]);
+          seq = Number(res.lastInsertRowid);
+          r.text.split("\n").forEach((line, k) => insertLine.run(seq, k + 1, r.role, line));
+          this.add(seq, r.thread, keys[i].ck);
+          this.lastSeq = seq;
+          flags.set(seq, 1);
           added++;
         } else {
+          // Same chained fingerprint, stored at another occurrence index: reuse that row.
           const row = db.prepare("SELECT seq, in_context FROM messages WHERE fingerprint = ?").get(r.fingerprint);
-          known.set(r.fingerprint, [row.seq, row.in_context]);
+          seq = row.seq;
+          flags.set(seq, row.in_context);
         }
-      }
-      const cutSeq = cutRow === null || cutRow === undefined ? null : known.get(rows[cutRow].fingerprint)[0];
+        if (!index.has(keys[i].key)) index.set(keys[i].key, seq);
+        seqs[i] = seq;
+      });
+      const cutSeq = cutRow === null || cutRow === undefined ? null : seqs[cutRow];
       const back = db.prepare("UPDATE messages SET in_context = 1, trimmed_at_seq = NULL, trimmed_at = NULL WHERE seq = ?");
       const out = db.prepare("UPDATE messages SET in_context = 0, trimmed_at_seq = ?, trimmed_at = ? WHERE seq = ?");
-      for (const r of rows) {
-        const entry = known.get(r.fingerprint);
+      rows.forEach((r, i) => {
         const want = r.keep ? 1 : 0;
-        if (entry[1] === want) continue;
-        if (want) back.run(entry[0]);
-        else out.run(cutSeq, ts, entry[0]);
-        entry[1] = want;
-      }
+        if (flags.get(seqs[i]) === want) return;
+        if (want) back.run(seqs[i]);
+        else out.run(cutSeq, ts, seqs[i]);
+        flags.set(seqs[i], want);
+      });
       db.exec("COMMIT");
       this.dataVersion = db.prepare("PRAGMA data_version").get().data_version;
       return added;
     } catch (error) {
       try { db.exec("ROLLBACK"); } catch { /* no transaction */ }
-      this.dataVersion = null;
+      this.reset();
       throw error;
     }
   }
