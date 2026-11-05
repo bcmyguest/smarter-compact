@@ -1,0 +1,48 @@
+{
+ "job_name": "tb21-haiku-claude",
+ "jobs_dir": "/tmp/opencode/tb21-jobs",
+ "n_attempts": 1,
+ "n_concurrent": 2,
+ "environment": {
+  "type": "docker",
+  "mounts": [
+   {
+    "type": "bind",
+    "source": "/home/brandonguest/smarter-compact",
+    "target": "/opt/smarter-compact"
+   },
+   {
+    "type": "bind",
+    "source": "/home/brandonguest/.claude/.credentials.json",
+    "target": "/opt/claude-creds/.credentials.json"
+   }
+  ]
+ },
+ "agents": [
+  {
+   "name": null,
+   "model_name": "anthropic/claude-haiku-4-5",
+   "import_path": "sc_agent_claude:ScClaudeBaseline",
+   "env": {},
+   "kwargs": {}
+  },
+  {
+   "name": null,
+   "model_name": "anthropic/claude-haiku-4-5",
+   "import_path": "sc_agent_claude:ScClaudeSmarterCompact",
+   "env": {
+    "CONTEXT_TRIM_AT_TOKENS": "95000"
+   },
+   "kwargs": {}
+  }
+ ],
+ "datasets": [
+  {
+   "path": "/tmp/opencode/tb21/terminal-bench-2-1",
+   "task_names": [
+    "chess-best-move",
+    "count-dataset-tokens"
+   ]
+  }
+ ]
+}

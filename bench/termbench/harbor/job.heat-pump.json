@@ -1,0 +1,127 @@
+{
+  "jobs_dir": "/tmp/opencode/tb4-jobs",
+  "n_attempts": 1,
+  "environment": {
+    "type": "docker",
+    "mounts": [
+      {
+        "type": "bind",
+        "source": "/home/brandonguest/smarter-compact",
+        "target": "/opt/smarter-compact"
+      },
+      {
+        "type": "bind",
+        "source": "/home/brandonguest/.opencode/bin",
+        "target": "/opt/opencode-dist"
+      }
+    ]
+  },
+  "agents": [
+    {
+      "name": null,
+      "model_name": "local/Qwen/Qwen3.8-Flash-Next-FP8",
+      "skip_model_parsing": true,
+      "env": {
+        "CONTEXT_TRIM_AT_TOKENS": "95000",
+        "SMARTER_COMPACT_STATE_DIR": "/logs/agent/smarter-compact"
+      },
+      "kwargs": {
+        "opencode_config": {
+          "permission": {
+            "websearch": "deny"
+          },
+          "compaction": {
+            "auto": true,
+            "reserved": 16384
+          },
+          "provider": {
+            "local": {
+              "npm": "@ai-sdk/openai-compatible",
+              "name": "local",
+              "options": {
+                "baseURL": "http://172.17.0.1:8800/v1",
+                "apiKey": "sk-6lvZNca1m4qr2rRd9rG8ug"
+              },
+              "models": {
+                "Qwen/Qwen3.8-Flash-Next-FP8": {
+                  "limit": {
+                    "context": 200000,
+                    "output": 16384
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "import_path": "sc_agent:ScOpencodeBaseline"
+    },
+    {
+      "name": null,
+      "model_name": "local/Qwen/Qwen3.8-Flash-Next-FP8",
+      "skip_model_parsing": true,
+      "env": {
+        "CONTEXT_TRIM_AT_TOKENS": "95000",
+        "SMARTER_COMPACT_STATE_DIR": "/logs/agent/smarter-compact"
+      },
+      "kwargs": {
+        "opencode_config": {
+          "permission": {
+            "websearch": "deny"
+          },
+          "compaction": {
+            "auto": true,
+            "reserved": 16384
+          },
+          "provider": {
+            "local": {
+              "npm": "@ai-sdk/openai-compatible",
+              "name": "local",
+              "options": {
+                "baseURL": "http://172.17.0.1:8800/v1",
+                "apiKey": "sk-6lvZNca1m4qr2rRd9rG8ug"
+              },
+              "models": {
+                "Qwen/Qwen3.8-Flash-Next-FP8": {
+                  "limit": {
+                    "context": 200000,
+                    "output": 16384
+                  }
+                }
+              }
+            }
+          },
+          "plugins": [
+            "/opt/smarter-compact"
+          ],
+          "mcp": {
+            "servers": {
+              "smarter-compact": {
+                "type": "local",
+                "command": [
+                  "node",
+                  "/opt/smarter-compact/plugin/lib/mcp/server.mjs"
+                ],
+                "environment": {
+                  "SMARTER_COMPACT_STATE_DIR": "/logs/agent/smarter-compact",
+                  "CONTEXT_TRIM_AT_TOKENS": "95000"
+                },
+                "enabled": true,
+                "codemode": false
+              }
+            }
+          }
+        }
+      },
+      "import_path": "sc_agent:ScOpencodeSmarterCompact"
+    }
+  ],
+  "datasets": [
+    {
+      "path": "/tmp/opencode/tb4ds/ds/terminal-bench",
+      "task_names": [
+        "heat-pump-warranty"
+      ]
+    }
+  ]
+}

@@ -15,3 +15,8 @@ bench/swebench/results/
 
 bench/mlruns/
 bench/swebench/proxyenv/
+
+bench/termbench/.venv/
+bench/termbench/results/
+bench/termbench/tb/
+bench/swebench/.playwright-mcp/
