@@ -184,12 +184,12 @@ class ProgressNoteTests(Base):
 
 
 class ExperimentSettingsTests(unittest.TestCase):
-    def test_env_flags_default_on(self):
+    def test_env_flag_defaults(self):
         s = Settings.from_env({})
-        self.assertEqual((s.strip_prose, s.progress_note), (True, True))
-        self.assertEqual((Settings().strip_prose, Settings().progress_note), (True, True))
-        s = Settings.from_env({"CONTEXT_STRIP_PROSE": "0", "CONTEXT_PROGRESS_NOTE": "off"})
-        self.assertEqual((s.strip_prose, s.progress_note), (False, False))
+        self.assertEqual((s.strip_prose, s.progress_note), (False, True))
+        self.assertEqual((Settings().strip_prose, Settings().progress_note), (False, True))
+        s = Settings.from_env({"CONTEXT_STRIP_PROSE": "1", "CONTEXT_PROGRESS_NOTE": "off"})
+        self.assertEqual((s.strip_prose, s.progress_note), (True, False))
         self.assertTrue(Settings.from_env({"CONTEXT_STANDING_INSTRUCTION": ""}).standing_instruction)
 
 

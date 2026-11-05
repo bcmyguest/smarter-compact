@@ -44,7 +44,7 @@ services:
       # Empty CONTEXT_TRIM_AT_TOKENS lets the proxy choose per model (built-in haiku=95000, fallback 125000);
       # export it to force one threshold for every model.
       CONTEXT_TRIM_AT_TOKENS: ${CONTEXT_TRIM_AT_TOKENS:-}
-      # Empty lets settings.py pick the trim depth (0.53) and turn prose strip and the progress note on.
+      # Empty lets settings.py pick the trim depth (0.53) and the progress note on; prose strip stays off.
       CONTEXT_TRIM_TO_FRACTION: ${CONTEXT_TRIM_TO_FRACTION:-}
       CONTEXT_STRIP_PROSE: ${CONTEXT_STRIP_PROSE:-}
       CONTEXT_PROGRESS_NOTE: ${CONTEXT_PROGRESS_NOTE:-}

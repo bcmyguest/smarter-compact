@@ -159,7 +159,7 @@ Environment variables (OpenCode plugin options use camelCase equivalents — see
 | --- | --- | --- |
 | `CONTEXT_TRIM_AT_TOKENS` | unset → per-model table | When unset, thresholds come from `config.toml` `[context_proxy.trim_at]` (built-in `haiku` 95k, `default` 125k). When set, one value for all models. `smarter-compact context set …` edits the table. |
 | `CONTEXT_TRIM_TO_FRACTION` | `0.53` | In-turn tool exchanges kept under this fraction of threshold |
-| `CONTEXT_STRIP_PROSE` | `1` | Strip tool calls from kept turns, keep their text; `0` off ([research](context-research.md#terminal-bench-21-trim-shape-arms-2026-11-05)) |
+| `CONTEXT_STRIP_PROSE` | `0` | Strip tool calls from kept turns, keep their text; `1` on, under review ([research](context-research.md#terminal-bench-21-trim-shape-arms-2026-11-05)) |
 | `CONTEXT_PROGRESS_NOTE` | `1` | Add a mechanical progress note to the trim pointer; `0` off ([research](context-research.md#terminal-bench-21-trim-shape-arms-2026-11-05)) |
 | `CONTEXT_COMPRESS_OVER_TOKENS` | `4000` | Tool result compression threshold |
 | `CONTEXT_COMPACTION_RECALL` | `0` | Recall on trim |
