@@ -2,6 +2,7 @@
 
 import copy
 import json
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -11,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_context_proxy import BIG, Base, anth_history, anth_request  # noqa: E402
 
 from smarter_compact import Settings  # noqa: E402
+from smarter_compact.adapters import AnthropicAdapter  # noqa: E402
 
 # Step k of the in-flight turn: (tool name, input, result text, is_error).
 STEPS = [
@@ -37,6 +39,21 @@ def in_flight_turn():
         {"type": "tool_use", "id": "sL", "name": "Bash", "input": {"command": "ls"}}]})
     msgs.append({"role": "user", "content": [{"type": "tool_result", "tool_use_id": "sL", "content": "ok"}]})
     return msgs
+
+
+def blocks(m):
+    c = m["content"]
+    return [{"type": "text", "text": c}] if isinstance(c, str) else c
+
+
+def absent(msgs, view):
+    """Messages of msgs none of whose non-thinking blocks reach the view."""
+    sent = [b for m in view for b in blocks(m)]
+    return sum(not any(b in sent for b in blocks(m) if b.get("type") != "thinking") for m in msgs)
+
+
+def pointer_count(view):
+    return int(re.search(r"; (\d+) earlier messages are NOT", view[2]["content"][0]["text"]).group(1))
 
 
 def ids_in(view, kind, key):
@@ -100,6 +117,39 @@ class ProseStripTests(Base):
                        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "sM", "content": "/"}]}]
         second = self.run_req(anth_request(copy.deepcopy(more)), trim_at_tokens=BIG, strip_prose=True)["messages"]
         self.assertEqual(json.dumps(second[:len(first)]), json.dumps(first))
+
+
+    def view_rows(self, msgs, view):
+        """(kind, text) of every non-thinking row the view carries, the note left out."""
+        a = AnthropicAdapter()
+        names = a.tool_names(msgs)
+        return sorted((r[1], r[3]) for m in view for r in a.rows(m, names)
+                      if r[1] != "thinking" and not r[3].startswith("[smarter-compact:"))
+
+    def stored_in_context(self):
+        return sorted((r["kind"], r["text"]) for r in self.db_rows(where="in_context = 1 AND kind != 'thinking'"))
+
+    def test_in_context_matches_view_after_strip(self):
+        msgs = in_flight_turn()
+        view = self.run_req(anth_request(copy.deepcopy(msgs)), trim_at_tokens=1, strip_prose=True)["messages"]
+        self.assertEqual(self.stored_in_context(), self.view_rows(msgs, view))
+        trimmed = [r["text"] for r in self.db_rows(where="in_context = 0 AND kind = 'tool_use'")]
+        self.assertIn("make build", " ".join(trimmed))
+        # A later untrimmed request keeps the same flags for the same rows.
+        more = msgs + [{"role": "assistant", "content": [{"type": "text", "text": "done"}]}]
+        view = self.run_req(anth_request(copy.deepcopy(more)), trim_at_tokens=BIG, strip_prose=True)["messages"]
+        self.assertEqual(self.stored_in_context(), self.view_rows(more, view))
+
+    def test_pointer_counts_messages_absent_from_view(self):
+        msgs = in_flight_turn()
+        view = self.run_req(anth_request(copy.deepcopy(msgs)), trim_at_tokens=1, strip_prose=True)["messages"]
+        self.assertEqual(pointer_count(view), absent(msgs, view))
+        off = self.run_req(anth_request(copy.deepcopy(msgs), sid="other"), trim_at_tokens=1)["messages"]
+        self.assertGreater(pointer_count(view), pointer_count(off))
+        # The note's bytes stay put on the next request.
+        more = msgs + [{"role": "assistant", "content": [{"type": "text", "text": "done"}]}]
+        again = self.run_req(anth_request(copy.deepcopy(more)), trim_at_tokens=BIG, strip_prose=True)["messages"]
+        self.assertEqual(json.dumps(again[2]), json.dumps(view[2]))
 
 
 class ProgressNoteTests(Base):

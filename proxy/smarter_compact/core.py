@@ -313,15 +313,17 @@ def choose_gap(adapter, items, cut, after, first, fits):
     return best
 
 
-def render(adapter, items, cut, note, first=None, gap=None, strip=None, prose=False):
+def render(adapter, items, cut, note, first=None, gap=None, strip=None, prose=False, shown=None):
     """The kept items (kept_indices) in order, the cut turn carrying the note, with signed reasoning stripped from
     kept assistant items before `strip` (default: the latest assistant run; see strip_reasoning), and with prose
-    their tool call/result pairs too (prose_ids)."""
+    their tool call/result pairs too (prose_ids). shown, when given, gets the strip_reasoning index map."""
     if cut is None:
+        if shown is not None:
+            shown.update(enumerate(items))
         return items
     keep = kept_indices(adapter, items, cut, gap, first)
     run = latest_run_start(adapter, items)
-    return strip_reasoning(adapter, items, keep, run if strip is None else min(strip, run), cut, note, prose)
+    return strip_reasoning(adapter, items, keep, run if strip is None else min(strip, run), cut, note, prose, shown)
 
 
 def latest_run_start(adapter, items):
@@ -334,7 +336,7 @@ def latest_run_start(adapter, items):
     return last
 
 
-def strip_reasoning(adapter, items, keep, bound, cut, note, prose=False):
+def strip_reasoning(adapter, items, keep, bound, cut, note, prose=False, shown=None):
     """The kept items, the cut turn carrying the note, with signed reasoning removed from assistant items before
     `bound`.
 
@@ -345,6 +347,8 @@ def strip_reasoning(adapter, items, keep, bound, cut, note, prose=False):
     the cache. A message left empty is dropped (adapter.without_reasoning).
 
     With prose, the prose_ids pairs go too and adjacent stripped items of one role merge into one message.
+
+    shown, when given, maps the index of every item that reaches the view to its stripped form (no note, unmerged).
     """
     ids = prose_ids(adapter, items, keep, bound, cut) if prose else set()
     out = []
@@ -353,9 +357,7 @@ def strip_reasoning(adapter, items, keep, bound, cut, note, prose=False):
         if j not in keep:
             continue
         region = False
-        if j == cut:
-            x = adapter.prepend_note(x, note)
-        elif j < bound:
+        if j != cut and j < bound:
             if adapter.is_assistant(x):
                 x = adapter.without_reasoning(x)
                 if x is None:
@@ -365,9 +367,13 @@ def strip_reasoning(adapter, items, keep, bound, cut, note, prose=False):
                 if x is None:
                     continue
                 region = True
-                if mergeable and adapter.same_role(out[-1], x):
-                    out[-1] = adapter.merged(out[-1], x)
-                    continue
+        if shown is not None:
+            shown[j] = x
+        if j == cut:
+            x = adapter.prepend_note(x, note)
+        elif region and mergeable and adapter.same_role(out[-1], x):
+            out[-1] = adapter.merged(out[-1], x)
+            continue
         out.append(x)
         mergeable = region
     return out
@@ -507,16 +513,17 @@ def _prose_sizes(adapter, items, cut, sizes):
         sizes[j] = request_chars(x) if x is not None else 0
 
 
-def stored_rows(adapter, original, items, names, cut, first, gap=None):
+def stored_rows(adapter, original, items, names, cut, view):
     """Database rows for every non-pinned message of the request, chained (sessiondb.chain).
 
     Text comes from the original messages, so a compressed tool result is stored in full with its blob_id. keep
-    is False for messages the view drops (kept_indices). Returns (rows, cut_row), cut_row being the index of the
-    cut turn's first row or None.
+    is False for rows the view does not carry: view maps each index that reaches the model to its stripped form
+    (render's shown), so a dropped or emptied message and a prose-stripped tool block get False. A thinking block
+    stripped from a message the view keeps stays True (_rows_kept).
+    Returns (rows, cut_row), cut_row being the index of the cut turn's first row or None.
     """
     rows = []
     cut_row = None
-    kept = kept_indices(adapter, items, cut, gap, first)
     for j, item in enumerate(original):
         if adapter.is_pinned(item):
             continue
@@ -524,19 +531,36 @@ def stored_rows(adapter, original, items, names, cut, first, gap=None):
         shown = base if items[j] is item else adapter.rows(items[j], names)
         if j == cut and base:
             cut_row = len(rows)
-        keep = j in kept
+        keep = _rows_kept(adapter, shown, view.get(j), items[j], names)
         for k, (role, kind, name, text) in enumerate(base):
             blob = sessiondb.blob_ref(shown[k][3]) if shown is not base and k < len(shown) else None
-            rows.append({"role": role, "kind": kind, "name": name, "text": text, "blob_id": blob, "keep": keep})
+            rows.append({"role": role, "kind": kind, "name": name, "text": text, "blob_id": blob,
+                         "keep": k < len(keep) and keep[k]})
     return (sessiondb.chain(rows) if rows else rows), cut_row
 
 
-def _store_messages(store, sid, adapter, original, items, cut, gap, first, settings):
+def _rows_kept(adapter, shown, sent, item, names):
+    """Per row of item (shown = its rows), whether sent, the form the view carries (None: absent), still has it;
+    thinking rows of a sent message count as kept, so only dropping a message or its tool blocks clears the flag."""
+    if sent is item:
+        return [True] * len(shown)
+    if sent is None:
+        return [False] * len(shown)
+    left = adapter.rows(sent, names)
+    out, p = [], 0
+    for row in shown:
+        hit = p < len(left) and left[p] == row
+        out.append(hit or row[1] == "thinking")
+        p += hit
+    return out
+
+
+def _store_messages(store, sid, adapter, original, items, cut, view, settings):
     """Write the request's messages to sessions/<sid>.db. Never raises: a database error is logged and the
     request goes on."""
     path = store.db_path(sid)
     try:
-        rows, cut_row = stored_rows(adapter, original, items, adapter.tool_names(items), cut, first, gap)
+        rows, cut_row = stored_rows(adapter, original, items, adapter.tool_names(items), cut, view)
         if not rows:
             return
         store.ensure_sessions()
@@ -607,7 +631,8 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, http,
                 if thread.get("strip_fp"):
                     # From 0: a trim on the last user turn records strip as the reply before the cut.
                     strip = _locate(items, thread.get("strip"), thread["strip_fp"])
-        view = render(adapter, items, cut, note, first, gap, strip, settings.strip_prose)
+        shown = {}
+        view = render(adapter, items, cut, note, first, gap, strip, settings.strip_prose, shown)
         force = store.force_requested(sid)
         ratio = settings.chars_per_token if settings.chars_per_token > 0 else DEFAULT_CHARS_PER_TOKEN
         base_chars = request_chars(*context)
@@ -634,6 +659,10 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, http,
                     new_gap = gap
             dropped = len(_droppable(adapter, items, new_cut, new_gap, first)) if new_cut is not None else 0
             if dropped and (new_cut, new_gap) != (cut, gap):
+                new_strip, new_shown = latest_run_start(adapter, items), {}
+                render(adapter, items, new_cut, "", first, new_gap, new_strip, settings.strip_prose, new_shown)
+                # The pointer counts every message absent from the view: dropped, or emptied by the strip.
+                dropped = len(items) - len(new_shown)
                 note = _build_note(adapter, items, new_cut, sid, dropped, store, settings, http,
                                  recall_tool_names(request_tool_names(data)))
                 if settings.progress_note:
@@ -645,7 +674,7 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, http,
                     threads[root]["prev_fp"] = fingerprint(items[new_cut - 1])
                 if new_gap is not None:
                     threads[root].update(gap=new_gap, gap_fp=fingerprint(items[new_gap]))
-                strip = latest_run_start(adapter, items)
+                strip = new_strip
                 if strip < len(items):
                     threads[root].update(strip=strip, strip_fp=fingerprint(items[strip]))
                 while len(threads) > MAX_THREADS:
@@ -653,7 +682,8 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, http,
                 store.save_trim(sid, state)
                 if force:
                     store.clear_force(sid)
-                view = render(adapter, items, new_cut, note, first, new_gap, strip, settings.strip_prose)
+                shown = {}
+                view = render(adapter, items, new_cut, note, first, new_gap, strip, settings.strip_prose, shown)
                 cut, gap = new_cut, new_gap
                 after = estimate_prompt_tokens(base_chars + request_chars(view), state.get("usage"), root, ratio)
                 trim = {"tokens_before": tokens, "tokens_after": after, "dropped": dropped}
@@ -661,7 +691,7 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, http,
                 store.save_trim(sid, state)
         elif thread and cut is None:
             store.save_trim(sid, state)
-        _store_messages(store, sid, adapter, original, items, cut, gap, first, settings)
+        _store_messages(store, sid, adapter, original, items, cut, shown, settings)
         if trim:
             _record_event(store, sid, "trim", **trim)
     request["trimmed"] = TRIM_NEW if trim else TRIM_KEPT if cut is not None else TRIM_NONE

@@ -69,7 +69,7 @@ A trimmed view drops **signed reasoning** from every kept assistant message befo
 
 A message left with no content is dropped; it held only reasoning, so no tool call/result pair is split. Reasoning produced after the trim was generated on the trimmed view and stays, so the rendered prefix is byte-identical from one request to the next until the next trim moves `strip`. (Stripping each former latest message as newer ones arrived changed the prefix on every turn that thought and re-wrote the trimmed history to the prompt cache.) Untrimmed requests keep every block.
 
-A trim keeps the pinned first turn's and the reply's rows `in_context = 1`, and the pointer's `<n>` counts only dropped messages. No trim happens, and the request passes unchanged, when nothing would drop. An OpenCode 2 compaction drops every message, the first turn included, so it marks all of the request's rows `in_context = 0`.
+A trim keeps the pinned first turn's and the reply's rows `in_context = 1`. `in_context` follows what the model receives: a message absent from the view (dropped, or emptied by reasoning or prose stripping) gets `0` on every row, a message that survives keeps `1` except for the tool_use / tool_result rows prose stripping removed from it, and a stripped thinking row of a surviving message stays `1`. The pointer's `<n>` counts every message absent from the view. No trim happens, and the request passes unchanged, when nothing would drop. An OpenCode 2 compaction drops every message, the first turn included, so it marks all of the request's rows `in_context = 0`.
 
 ## Session database
 
@@ -113,7 +113,7 @@ ALTER TABLE events ADD COLUMN model TEXT;              -- then, in order: thread
 | `messages.name` | Tool name for `tool_use` / `tool_result`, else `NULL` |
 | `messages.text` | Plain text; tool inputs as compact JSON; a compressed tool result in full, as the request carried it |
 | `messages.blob_id` | Blob id of a tool result the view shows compressed (`smart_compact_get`), else `NULL` |
-| `messages.in_context` | `1` while the latest request that carried the row also sends it to the model; `0` once a trim or compaction dropped it |
+| `messages.in_context` | `1` while the latest request that carried the row also sends it to the model; `0` once a trim, prose strip or compaction removed it ([trim](#trim)) |
 | `messages.trimmed_at_seq` | `seq` of the first row of the cut turn that dropped the row; `NULL` while in context and after a compaction (no cut turn) |
 | `messages.trimmed_at` | When the row left context; `NULL` while in context |
 | `messages.created_at` | When the row was stored. Timestamps are ISO 8601 UTC without fractions (`2026-10-29T17:00:00Z`) |
@@ -143,7 +143,7 @@ The writer appends one `events` row per trim and per fail-open it can attribute 
 | `version` | The writer: `proxy:<12 hex>`, the first 12 hex of SHA-256 over `proxy/smarter_compact/*.py` (each file's name, NUL, bytes, NUL, sorted by name; `core.code_hash`, `proxyCodeVersion`), or `opencode:<package version>` for the OpenCode 2 plugin. Status compares the newest `proxy:` value with the checkout's hash to spot a proxy running old code |
 | `location`, `error` | Fail-open only: `<file>:<line>` (JS adds `:<column>`) and the exception type. Never message content |
 | `tokens_before`, `tokens_after` | Trim only: the writer's calibrated estimate ([token estimate](context-proxy.md#token-estimate)) of the request before and after the cut, not provider-billed counts |
-| `dropped` | Trim only: messages the cut removed from context |
+| `dropped` | Trim only: messages absent from the trimmed view (the pointer's `<n>`) |
 | `model` | Usage only: the request's model (proxy: the `model` string sent to LiteLLM; OpenCode: `<providerID>/<modelID>`) |
 | `thread_root` | Usage only: fingerprint of the request's first row, as in `messages.thread` |
 | `trimmed` | Usage only: `0` the request went up whole, `1` it carried an earlier cut, `2` it made a new cut (the request a `trim` row describes) |
