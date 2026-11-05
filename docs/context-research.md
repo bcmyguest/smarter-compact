@@ -239,6 +239,15 @@ Confound to state in any result: chaining lets the `none` arm recall an earlier 
 
 Claude Code on `claude-haiku-5-5` through Harbor ([`bench/termbench/harbor`](../bench/termbench/harbor)), smarter-compact trimming at 95K, Claude Code's own auto-compact window at 195K. Four arms, one trial each on eight long Terminal-Bench 2.1 tasks; each arm is a `sc_agent_claude` class whose env sets the knobs. The first job (`tb21-h55-arms`) lost 24 of 32 trials to an expired OAuth token; those 24 were rerun as `tb21-h55-arms-r3`. Baseline columns are the same tasks from `tb21-h55-rerun`, default settings.
 
+<p align="center">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="media/termbench-arms-dark.png" />
+<img src="media/termbench-arms.png" alt="Terminal-Bench 2.1: tasks passed of 8 and cost per pass for trim to 50K, combined, prose only, progress note, default smart and native" width="720" />
+</picture>
+</p>
+
+Chart: [`plot_arms.py`](../bench/termbench/harbor/plot_arms.py) from [`tb21-h55-arms.json`](../bench/termbench/harbor/tb21-h55-arms.json).
+
 | Task | Progress note | Trim to 50K | Combined | Prose only | Default smart | Native |
 |---|---|---|---|---|---|---|
 | adaptive-rejection-sampler | 1 | 1 | 1 | 1 | 1 | 1 |

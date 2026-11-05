@@ -1,0 +1,12 @@
+{
+  "source": "Terminal-Bench 2.1, 8 long tasks, Claude Code on claude-haiku-5-5 via Harbor; jobs tb21-h55-arms, tb21-h55-arms-r3 (arms) and tb21-h55-rerun (default, native); cost is Claude Code's total_cost_usd as recorded by Harbor",
+  "tasks": 8,
+  "settings": [
+    {"name": "Trim to 50K", "passed": 7, "cost_usd": 0.553},
+    {"name": "Combined", "passed": 7, "cost_usd": 0.646},
+    {"name": "Prose only", "passed": 6, "cost_usd": 0.557},
+    {"name": "Progress note", "passed": 6, "cost_usd": 0.655},
+    {"name": "Default smart", "passed": 6, "cost_usd": 0.599},
+    {"name": "Native", "passed": 6, "cost_usd": 2.097}
+  ]
+}
