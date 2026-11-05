@@ -1,0 +1,24 @@
+# Probe proxy for the constraint probe (README.md): the repo's compose.yaml service with the code source, state dir
+# and port taken from PROBE_* variables, so two arms run side by side without touching the live proxy on 4100.
+services:
+  probe-proxy:
+    image: ghcr.io/berriai/litellm:v1.109.0-dev.1
+    command: ["--config", "/app/proxy/config.yaml", "--port", "4000"]
+    volumes:
+      - ${PROBE_SRC:?checkout whose proxy/ to run}/proxy:/app/proxy:ro
+      - ${PROBE_SRC}/package.json:/app/package.json:ro
+      - ${PROBE_STATE:?host state dir}:/state
+    user: "${HOST_UID:?}:${HOST_GID:?}"
+    ports:
+      - "127.0.0.1:${PROBE_PORT:?}:4000"
+    env_file: ${CONTEXT_PROXY_ENV_FILE:-${HOME}/.config/smarter-compact/proxy.env}
+    environment:
+      HOME: /tmp
+      PYTHONDONTWRITEBYTECODE: "1"
+      SMARTER_COMPACT_STATE_DIR: /state
+      CONTEXT_PROXY_PORT: ${PROBE_PORT}
+      CONTEXT_PROXY_ENABLED: "1"
+      CONTEXT_TRIM_AT_TOKENS: ${CONTEXT_TRIM_AT_TOKENS:-20000}
+      CONTEXT_EMBEDDING_URL: http://host.docker.internal:11434/v1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
