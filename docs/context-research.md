@@ -278,6 +278,23 @@ Chart: [`plot_arms.py`](../bench/termbench/harbor/plot_arms.py) from [`tb21-h55-
 
 Testing the note needs sessions that trim many times (a lower threshold or longer tasks) and repeat attempts on the tasks that split. Raw rows: `/tmp/opencode/tb21-h55-usage.jsonl` (local, not committed).
 
+## Prose strip versus observation masking (2026-11-05)
+
+Offline replay of the trim-shape arms' session databases (no model calls). Each trimmed request was rebuilt from its stored rows and `prose_ids` run on it, with every message counted as kept (an upper bound on what could be stripped). The trials ran proxy code `cb74353`.
+
+| What | Result |
+| --- | --- |
+| Tool pairs prose strip removed | **0** in all 31 trims (prose, combined, progress, trim-to-50K, default) |
+| Why | Claude Code sends a `system` message after each tool result (`<total_tokens>…`, `# Environment update`), 7 to 65 per trimmed request; `_prose_region` never strips the item before a system message, so no result is eligible |
+| Pairs `CONTEXT_MASK_OBSERVATIONS` would mask on the same requests (current code) | 2 to 63 per trim; 10 on prose-only make-mips-interpreter |
+| Tokens saved by strip versus cut | all of each trim's drop came from the cut (for example 95,946 to 55,689 on prose-only make-mips-interpreter) |
+| Cut-dropped tool calls the agent ran again later (same Bash command or Read path) | 2 of 341 across all arms |
+| make-mips-interpreter failures (prose only, progress note) | not caused by stripping: nothing was stripped, and progress note has no strip. Both trimmed once while exploring, wrote the interpreter afterwards with its own steps in context, and missed the image check (0.762, 0.760 against 0.95) |
+
+So the prose-only and combined arms measured the cut, not prose strip, on Claude Code. One trial per cell; the data cannot rank the strip shapes. Masking replaces only result text, so roles and message order stay as they are and it skips the before-system rule.
+
+**Bench plan (not run).** Claude Code on `claude-haiku-5-5`, trim depth 0.53, three arms: no strip (`ScClaudeNoStrip`, `CONTEXT_STRIP_PROSE=0`), prose strip (`ScClaudeProse`), masking (`ScClaudeMask`, `CONTEXT_MASK_OBSERVATIONS=1`); each class forwards its knob through `ARM_ENV_KEYS` in `sc_agent_claude.py`. On Claude Code the prose arm equals no strip until the before-system rule changes, so it is a check, not a contrast. Set `SC_TRIM_AT=60000` so sessions trim three or more times. Tasks: make-doom-for-mips, schemelike-metacircular-eval, path-tracing-reverse (each trimmed two or three times at 95K), make-mips-interpreter (split across arms), path-tracing. Five trials per cell: 5 tasks × 3 arms × 5 = 75 trials. At the arms' $0.553 to $0.655 per 8 trials (about $0.07 to $0.08 each, make-doom timeouts excluded), that is about $6 to $8; ten trials per cell, about $12 to $16. Pass rate at this n separates only large effects; the primary measures are per trim: pairs masked or stripped, later repeats of a masked call, recall tool calls, and tokens per trial.
+
 ## Limitations
 
 - The primary run E uses Haiku 5.5 and two or three seeds per cell. Sonnet has two paired seeds on one task. Earlier run B baselines have one or two seeds per cell.

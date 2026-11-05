@@ -399,12 +399,13 @@ def strip_reasoning(adapter, items, keep, bound, cut, note, prose=False, shown=N
     return out
 
 
-def _prose_region(adapter, items, keep, bound, cut):
-    """Indices prose stripping may touch: kept, unpinned, before bound, not the cut, and not the last such item
-    (the message right before the latest run keeps its results, so no older assistant text merges into that run)."""
+def _prose_region(adapter, items, keep, bound, cut, mode=True):
+    """Indices prose stripping (or masking) may touch: kept, unpinned, before bound, not the cut, and not the last
+    such item (the message right before the latest run keeps its results, so no older assistant text merges into
+    that run)."""
     kept = [j for j in range(len(items)) if j in keep]
-    # A mid-conversation system message must follow a user message, so the item before one is never stripped.
-    before_system = {a for a, b in zip(kept, kept[1:]) if items[b].get("role") == "system"}
+    # A mid-conversation system message must follow a user message, so stripping skips the item before one.
+    before_system = set() if mode == "mask" else {a for a, b in zip(kept, kept[1:]) if items[b].get("role") == "system"}
     region = [j for j in kept if j < bound and j != cut and j not in before_system and not adapter.is_pinned(items[j])]
     return region[:-1]
 
@@ -414,7 +415,7 @@ def prose_ids(adapter, items, keep, bound, cut, mode=True):
     (or, mode "mask", mask)."""
     if not hasattr(adapter, "masked_results" if mode == "mask" else "without_tool_calls"):
         return set()
-    region = _prose_region(adapter, items, keep, bound, cut)
+    region = _prose_region(adapter, items, keep, bound, cut, mode)
     calls = {c[0] for j in region for c in adapter.tool_calls(items[j])}
     results = set().union(*(adapter.result_ids(items[j]) for j in region))
     return (calls & results) - {None}
@@ -483,7 +484,7 @@ def _with_progress(adapter, items, cut, gap, first, settings, note):
     keep = kept_indices(adapter, items, cut, gap, first)
     sources = {j for j in range(len(items)) if j not in keep}
     if region_mode(settings):
-        sources.update(_prose_region(adapter, items, keep, latest_run_start(adapter, items), cut))
+        sources.update(_prose_region(adapter, items, keep, latest_run_start(adapter, items), cut, region_mode(settings)))
     text = progress_text(adapter, items, sorted(sources))
     return f"{note}\n{text}" if text else note
 
@@ -535,7 +536,7 @@ def _prose_sizes(adapter, items, cut, sizes, mode=True):
     ids = prose_ids(adapter, items, keep, bound, cut, mode)
     if not ids:
         return
-    for j in _prose_region(adapter, items, keep, bound, cut):
+    for j in _prose_region(adapter, items, keep, bound, cut, mode):
         x = adapter.masked_results(items[j], ids, MASK_PLACEHOLDER) if mode == "mask" \
             else adapter.without_tool_calls(items[j], ids)
         sizes[j] = request_chars(x) if x is not None else 0

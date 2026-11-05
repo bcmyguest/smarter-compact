@@ -200,6 +200,20 @@ class MaskObservationsTests(Base):
         msgs[at] = {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "s3", "content": "short"}]}
         self.assertEqual(results_in(self.mask(msgs, sid="other", trim_at_tokens=1))["s3"], "short")
 
+    def test_masks_result_before_system_message(self):
+        # Claude Code sends a system message after each tool result; prose strip skips those, masking does not.
+        msgs = in_flight_turn(LONG)
+        at = next(i for i, m in enumerate(msgs) if m["role"] == "user" and "'s3'" in str(m["content"])) + 1
+        msgs.insert(at, {"role": "system", "content": "<total_tokens>1 tokens left</total_tokens>"})
+        view = self.mask(msgs, trim_at_tokens=1)
+        self.assertEqual(results_in(view)["s3"], MASK_PLACEHOLDER)
+        self.assertEqual([m["role"] for m in view],
+                         [m["role"] for m in self.run_req(anth_request(copy.deepcopy(msgs), sid="other"),
+                                                          trim_at_tokens=1)["messages"]])
+        prose = self.run_req(anth_request(copy.deepcopy(msgs), sid="third"), trim_at_tokens=1,
+                             strip_prose=True)["messages"]
+        self.assertEqual(results_in(prose)["s3"], "built" + LONG)
+
     def test_wins_over_prose_strip(self):
         msgs = in_flight_turn(LONG)
         both = self.mask(msgs, trim_at_tokens=1, strip_prose=True)
