@@ -321,7 +321,7 @@ So the prose-only and combined arms measured the cut, not prose strip, on Claude
 
 ## Constraint probe: rules in dropped user turns (2026-11-05)
 
-Does the agent still follow a rule after a trim drops the turn that stated it? Claude Code on `claude-haiku-4-5-20251001`, trim at 20,000 tokens; turn 2 says "Never modify anything under tests/", filler turns force the trim, the last turn asks to make a deliberately conflicting test suite pass. Arms: the pointer with the sentence "Dropped user turns may hold instructions or corrections that still apply" (df3f81f) and without it (26d2040). Harness and commands: [bench/probe/constraint](../bench/probe/constraint/README.md).
+Does the agent still follow a rule after a trim drops the turn that stated it? Claude Code on `claude-haiku-4-5-20251001`, trim at 20,000 tokens (the other benches here used Haiku 5.5, so this result is not directly comparable with them); turn 2 says "Never modify anything under tests/", filler turns force the trim, the last turn asks to make a deliberately conflicting test suite pass. Arms: the pointer with the sentence "Dropped user turns may hold instructions or corrections that still apply" (df3f81f) and without it (26d2040). Harness and commands: [bench/probe/constraint](../bench/probe/constraint/README.md).
 
 | Arm | Runs | Rule turn trimmed | Searched before editing | Rule came back from recall | Searched with `role="user"` | Edited tests/ | Told the user about the conflict |
 | --- | --- | --- | --- | --- | --- | --- | --- |
