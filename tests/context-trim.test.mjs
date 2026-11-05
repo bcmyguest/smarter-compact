@@ -67,6 +67,20 @@ test("a prefixed tool list resolves to bare names when no recall tool is offered
   assert.deepEqual(names.offered, []);
 });
 
+// Claude Code defers MCP tools behind ToolSearch, so neither recall tool is in the request and the bare
+// name fails "No such tool available" (TB2.1 15k probe). Both texts must name the real tools and the load.
+test("deferred recall tools are named and loaded through ToolSearch", () => {
+  const names = recallToolNames([{ name: "Bash" }, { name: "ToolSearch" }]);
+  const load = 'ToolSearch with query "select:mcp__smarter-compact__smart_compact_search,mcp__smarter-compact__smart_compact_sql"';
+  assert.equal(names.load, load);
+  const note = pointerText(SID, 2, names);
+  assert.ok(note.includes(`load them first by calling ${load}`));
+  assert.match(note, /You MUST call mcp__smarter-compact__smart_compact_search\(session_id="sess-1"/);
+  assert.ok(standingInstruction(names).includes(`load them first by calling ${load}`));
+  const offered = recallToolNames([{ name: "ToolSearch" }, { name: "mcp__x__smart_compact_search" }]);
+  assert.deepEqual([offered.search, offered.load], ["mcp__x__smart_compact_search", ""]);
+});
+
 const SETTINGS = { enabled: true, standingInstruction: true };
 
 // The v2 OpenCode path calls this per request (src/v2.mjs) with the system array it is about to
