@@ -45,7 +45,7 @@ def ids_in(view, kind, key):
 
 
 class ProseStripTests(Base):
-    def test_default_off_keeps_tool_pairs(self):
+    def test_off_keeps_tool_pairs(self):
         msgs = in_flight_turn()
         out = self.run_req(anth_request(copy.deepcopy(msgs)), trim_at_tokens=1)
         on = self.run_req(anth_request(copy.deepcopy(msgs), sid="other"), trim_at_tokens=1, strip_prose=True)
@@ -106,7 +106,7 @@ class ProgressNoteTests(Base):
     def note(self, view):
         return view[2]["content"][0]["text"]
 
-    def test_default_off_no_progress(self):
+    def test_off_no_progress(self):
         view = self.run_req(anth_request(in_flight_turn()), trim_at_tokens=1)["messages"]
         self.assertNotIn("Progress before this trim", self.note(view))
 
@@ -134,11 +134,12 @@ class ProgressNoteTests(Base):
 
 
 class ExperimentSettingsTests(unittest.TestCase):
-    def test_env_flags_default_off(self):
+    def test_env_flags_default_on(self):
         s = Settings.from_env({})
-        self.assertEqual((s.strip_prose, s.progress_note), (False, False))
-        s = Settings.from_env({"CONTEXT_STRIP_PROSE": "1", "CONTEXT_PROGRESS_NOTE": "true"})
         self.assertEqual((s.strip_prose, s.progress_note), (True, True))
+        self.assertEqual((Settings().strip_prose, Settings().progress_note), (True, True))
+        s = Settings.from_env({"CONTEXT_STRIP_PROSE": "0", "CONTEXT_PROGRESS_NOTE": "off"})
+        self.assertEqual((s.strip_prose, s.progress_note), (False, False))
         self.assertTrue(Settings.from_env({"CONTEXT_STANDING_INSTRUCTION": ""}).standing_instruction)
 
 

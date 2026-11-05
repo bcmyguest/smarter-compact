@@ -87,8 +87,10 @@ class Base(unittest.TestCase):
 
     def settings(self, **kw):
         # The standing instruction has its own tests (StandingInstructionTests); off here keeps the trim views plain.
+        # Prose strip and progress note have theirs (test_trim_experiments); off, at 0.3 depth, the gap counts stay small.
         base = dict(trim_at_tokens=BIG, compress_over_tokens=0, compaction_max_chars=12000,
-                    hindsight_url="http://hs.test", context_dir=self.ctx, standing_instruction=False)
+                    hindsight_url="http://hs.test", context_dir=self.ctx, standing_instruction=False,
+                    trim_to_fraction=0.3, strip_prose=False, progress_note=False)
         base.update(kw)
         return Settings(**base)
 
@@ -746,7 +748,7 @@ class InTurnGapTests(Base):
         self.assertEqual(json.dumps(out[3:]), json.dumps(strip_thinking(msgs)[11:]))
 
     def test_trim_depth_follows_trim_to_fraction(self):
-        # The same request at the same threshold: the default 0.3 keeps only the newest 3 exchanges, 0.5 keeps 6.
+        # The same request at the same threshold: 0.3 keeps only the newest 3 exchanges, 0.5 keeps 6.
         msgs = anth_history(2) + [{"role": "user", "content": "now this"}] + anth_loop(8)
         self.force()
         deep = self.run_req(anth_request(copy.deepcopy(msgs)), trim_at_tokens=2000)["messages"]
@@ -941,11 +943,11 @@ class SafetyTests(Base):
         self.assertFalse(self.ctx.exists())
 
     def test_trim_to_fraction_from_env(self):
-        self.assertEqual(Settings.from_env({}).trim_to_fraction, 0.3)
-        self.assertEqual(Settings().trim_to_fraction, 0.3)
+        self.assertEqual(Settings.from_env({}).trim_to_fraction, 0.53)
+        self.assertEqual(Settings().trim_to_fraction, 0.53)
         self.assertEqual(Settings.from_env({"CONTEXT_TRIM_TO_FRACTION": " 0.45 "}).trim_to_fraction, 0.45)
         for bad in ("0", "1", "-0.2", "1.5", "nan", "inf", "x", ""):
-            self.assertEqual(Settings.from_env({"CONTEXT_TRIM_TO_FRACTION": bad}).trim_to_fraction, 0.3, bad)
+            self.assertEqual(Settings.from_env({"CONTEXT_TRIM_TO_FRACTION": bad}).trim_to_fraction, 0.53, bad)
 
     def test_trim_at_by_model(self):
         s = Settings.from_env({})

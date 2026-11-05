@@ -50,7 +50,7 @@ function mergedTrimFamilies(overrideFamilies) {
   return map;
 }
 /** A trim keeps older in-turn exchanges while the request stays under this fraction of trimAtTokens; same as the proxy. */
-export const DEFAULT_TRIM_TO_FRACTION = 0.3;
+export const DEFAULT_TRIM_TO_FRACTION = 0.53;
 export const DEFAULT_COMPRESS_OVER_TOKENS = 4000;
 export const DEFAULT_COMPACTION_MAX_CHARS = 12000;
 export const DEFAULT_RECALL_TIMEOUT_S = 5.0;

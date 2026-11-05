@@ -103,7 +103,7 @@ The `server` hook sends `x-smarter-compact-session-id` when your Anthropic `base
 | `enabled` | `CONTEXT_PROXY_ENABLED` | on |
 | `standingInstruction` | `CONTEXT_STANDING_INSTRUCTION` | on |
 | `trimAtTokens` | `CONTEXT_TRIM_AT_TOKENS` | 125000 (95000 for Haiku when unset; setting this disables per-model defaults) |
-| `trimToFraction` | `CONTEXT_TRIM_TO_FRACTION` | 0.3 |
+| `trimToFraction` | `CONTEXT_TRIM_TO_FRACTION` | 0.53 |
 | `compressOverTokens` | `CONTEXT_COMPRESS_OVER_TOKENS` | 4000 |
 | `charsPerToken` | `CONTEXT_CHARS_PER_TOKEN` | 2.5 |
 | `compactionMaxChars` | `CONTEXT_COMPACTION_MAX_CHARS` | 12000 |

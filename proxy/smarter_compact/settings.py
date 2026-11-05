@@ -13,8 +13,8 @@ DEFAULT_TRIM_AT_TOKENS = 125000
 # Trim thresholds by model family (a substring of the lowercased model id), used while CONTEXT_TRIM_AT_TOKENS is
 # unset. Haiku's prompts over 100k tokens bill at a higher tier, so its sessions trim below it.
 MODEL_TRIM_AT_TOKENS = (("haiku", 95000),)
-# A trim keeps older in-turn exchanges while the request stays under this fraction of trim_at_tokens.
-DEFAULT_TRIM_TO_FRACTION = 0.3
+# A trim keeps older in-turn exchanges while the request stays under this fraction of trim_at_tokens (Haiku: ~50K).
+DEFAULT_TRIM_TO_FRACTION = 0.53
 DEFAULT_COMPRESS_OVER_TOKENS = 4000
 DEFAULT_COMPACTION_MAX_CHARS = 12000
 DEFAULT_RECALL_TIMEOUT_S = 5.0
@@ -107,10 +107,10 @@ class Settings:
     trim_at_by_model: bool = False
     # A trim lands under this fraction of trim_at_tokens, 0 < x < 1 (CONTEXT_TRIM_TO_FRACTION).
     trim_to_fraction: float = DEFAULT_TRIM_TO_FRACTION
-    # Kept items before the strip bound lose their tool_use/tool_result pairs, text stays (CONTEXT_STRIP_PROSE=1).
-    strip_prose: bool = False
-    # Each new trim appends a mechanical progress note (edited files, build/test runs) (CONTEXT_PROGRESS_NOTE=1).
-    progress_note: bool = False
+    # Kept items before the strip bound lose their tool_use/tool_result pairs, text stays (CONTEXT_STRIP_PROSE=0 turns it off).
+    strip_prose: bool = True
+    # Each new trim appends a mechanical progress note (edited files, build/test runs) (CONTEXT_PROGRESS_NOTE=0 turns it off).
+    progress_note: bool = True
     compress_over_tokens: int = DEFAULT_COMPRESS_OVER_TOKENS
     # Characters per token for the trim estimate until the session reports usage (CONTEXT_CHARS_PER_TOKEN).
     chars_per_token: float = DEFAULT_CHARS_PER_TOKEN
@@ -155,8 +155,8 @@ class Settings:
             trim_at_tokens=_int(env, "CONTEXT_TRIM_AT_TOKENS", DEFAULT_TRIM_AT_TOKENS),
             trim_at_by_model=_int(env, "CONTEXT_TRIM_AT_TOKENS", None) is None,
             trim_to_fraction=_fraction(env, "CONTEXT_TRIM_TO_FRACTION", DEFAULT_TRIM_TO_FRACTION),
-            strip_prose=_flag(env, "CONTEXT_STRIP_PROSE", "0"),
-            progress_note=_flag(env, "CONTEXT_PROGRESS_NOTE", "0"),
+            strip_prose=_flag(env, "CONTEXT_STRIP_PROSE"),
+            progress_note=_flag(env, "CONTEXT_PROGRESS_NOTE"),
             compress_over_tokens=_int(env, "CONTEXT_COMPRESS_OVER_TOKENS", DEFAULT_COMPRESS_OVER_TOKENS),
             chars_per_token=_positive_float(env, "CONTEXT_CHARS_PER_TOKEN", DEFAULT_CHARS_PER_TOKEN),
             compaction_max_chars=_int(env, "CONTEXT_COMPACTION_MAX_CHARS", DEFAULT_COMPACTION_MAX_CHARS),
