@@ -14,12 +14,12 @@ import json
 import os
 import sqlite3
 
-ARMS = ("Smart", "Native")
+ARMS = ("Smart", "Mask", "Native")
 
 
 def arm_of(trial):
     path = json.load(open(os.path.join(trial, "config.json")))["agent"]["import_path"]
-    return "Smart" if "Smarter" in path else "Native"
+    return "Smart" if "Smarter" in path else "Mask" if "Mask" in path else "Native"
 
 
 def stream_stats(path):
