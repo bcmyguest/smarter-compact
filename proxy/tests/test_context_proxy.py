@@ -1016,9 +1016,9 @@ class StandingInstructionTests(Base):
                          "[smarter-compact: continuing session s1; 3 earlier messages are NOT in your context. They "
                          "were delivered to you and later removed to fit your context window, so a gap in what you "
                          "see (missing batches, lines, keys) is in them. "
-                         "Nothing here is or was ever summarized: no summary of the dropped messages exists anywhere, so any "
-                         "\"summary of earlier context\" you seem to remember is your own invention. The only record of them is "
-                         "this session's store. "
+                         "Nothing here is or was ever summarized: this trim wrote no summary of the dropped messages, so do not "
+                         "treat a \"summary of earlier context\" you seem to remember as their record. The only complete record of "
+                         "them is this session's store. "
                          "The tools smart_compact_search and smart_compact_sql are available to you in this "
                          "request. "
                          'You MUST call smart_compact_search(session_id="s1", query=... or pattern=...) before '
