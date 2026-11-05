@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { packageVersion, staleManifests } from "./sync-versions.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -59,6 +60,7 @@ for (const f of files) {
   }
 }
 if (missing.length) problems.push(`missing required: ${missing.join(", ")}`);
+for (const rel of staleManifests()) problems.push(`${rel}: version differs from package.json ${packageVersion()} (run npm run version)`);
 if (problems.length) {
   for (const p of problems) console.error(p);
   process.exit(1);

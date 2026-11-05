@@ -221,7 +221,7 @@ CI runs the same `prek run --all-files` plus `npm test` and proxy unit tests. Us
 
 ## Releases
 
-Version bumps follow [Conventional Commits](https://www.conventionalcommits.org/) via [git-cliff](https://git-cliff.org/) (`cliff.toml`, same rules as [openmem](https://github.com/bcmyguest/openmem)). On `main`, run the **Prepare release** GitHub Action (dry-run first if you want the proposed version and notes). It bumps `package.json`, tags `vX.Y.Z`, and dispatches **Release** (tests, npm publish, GitHub Release body from git-cliff). Locally: `git-cliff --bumped-version` and `git-cliff --unreleased --strip header`.
+Version bumps follow [Conventional Commits](https://www.conventionalcommits.org/) via [git-cliff](https://git-cliff.org/) (`cliff.toml`, same rules as [openmem](https://github.com/bcmyguest/openmem)). On `main`, run the **Prepare release** GitHub Action (dry-run first if you want the proposed version and notes). It bumps `package.json` (`npm version` copies the version into the plugin manifests; `npm run pack:check` fails if they differ), tags `vX.Y.Z`, and dispatches **Release** (tests, npm publish, GitHub Release body from git-cliff). Locally: `git-cliff --bumped-version` and `git-cliff --unreleased --strip header`.
 
 ## License
 
