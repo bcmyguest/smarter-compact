@@ -27,6 +27,11 @@ Long agent sessions outgrow the context window. Agents handle this in one of thr
 | [MemGPT DMR](https://arxiv.org/abs/2310.08560) (Table 2) and [MSC-Self-Instruct](https://huggingface.co/datasets/MemGPT/MSC-Self-Instruct) | Deep memory retrieval questions over earlier Multi-Session Chat sessions. GPT-4 scored 32.1% fixed-context and 92.5% with MemGPT; GPT-4 Turbo scored 35.3% and 93.4%. | Evidence that search over stored turns beats a fixed window. | Its conversations fit in today's windows, so it doesn't force trimming. Not run here. |
 | MemGPT nested key-value retrieval (same paper) | Multi-hop lookups across key-value pairs. Fixed-context GPT-4 and GPT-4 Turbo reach 0% by 3 nesting levels; MemGPT with GPT-4 is unaffected by nesting depth. | Closest published analogue to our kv-store task. | Not run here. |
 | [The Complexity Trap](https://arxiv.org/html/2508.21433v3) (Lindenbauer et al., JetBrains Research, 2025) | SWE-agent on SWE-bench Verified: observation masking (replace old tool outputs with a placeholder, keep the last 10) against LLM summarization. Masking roughly halves cost against the raw agent and matches summarization's solve rate; Qwen3-Coder 480B scored 54.8% at $0.61 masked, 53.8% at $0.64 summarized, 53.4% at $1.29 raw. | Evidence that removal without an LLM summary is a sound default. | Masking drops only observations and keeps the agent's reasoning and actions; we drop whole turns but keep them searchable. |
+| [transparent-compact: Maximising Transparency in Context Compaction Improves Retention of Facts and Commitments for Lightweight Coding Agents](https://arxiv.org/abs/2610.20116v1) (Woolford, 2026-10-14) | Deterministic compaction for the Pi coding agent: user and assistant prose stays verbatim and every cut is flagged. Matched or beat Pi's LLM-summary compaction and pi-vcc on commitment and factual-recall probes across four models, with fewer confident wrong answers; the abstract gives no numbers. | The prose-strip arm, `CONTEXT_STRIP_PROSE` ([result](#terminal-bench-21-trim-shape-arms-2026-11-05)). | We strip prose only from kept turns before the strip bound; dropped turns stay searchable. |
+| [Compact-Bench: Measuring What Context Compaction Costs Long-Horizon Coding Agents](https://arxiv.org/abs/2610.31710) (Sun et al., 2026-10-22) | Same repo state continued from full history or from a summary: 35 SWE-bench repairs, 146 sessions, 106 production compaction chains. Mechanical extraction kept 79.1% of recurring details against at most 16.0% for LLM summaries; detail retention did not predict task completion, and the authors conclude compaction must keep "the progress needed to complete a task". | The progress-note arm, `CONTEXT_PROGRESS_NOTE`: files edited and last build/test commands, built from tool calls, no model ([result](#terminal-bench-21-trim-shape-arms-2026-11-05)). | Our note lists only what the trim removed and rides on the pointer. |
+| [AutoCompact: Learning When to Compact Context in Long-Horizon Coding Agents](https://arxiv.org/abs/2610.02163) (Zhang et al., 2026-10-01; [PREreview](https://prereview.org/reviews/23129310)) | A judge corrects the base agent's compaction decisions and summaries; the corrected trajectories train coding and compaction jointly (SFT, then RL on task success). Gains held at a 256K window and at 16K with fallback compaction. The review agrees that compacting when the window fills lands mid-stage, the worst moment. | Motivation for trimming at a stage boundary. | Not built; we do not train the model. |
+| [CompactionRL: Reinforcement Learning with Context Compaction for Long-Horizon Agents](https://www.alphaxiv.org/abs/2607.05378) | Trains the agent with RL to write its own compaction summaries as part of the task; consistent gains on agentic coding tasks with open models. | Nothing yet. | Learned summaries; we keep removed turns verbatim. |
+| [Self-Compacting Language Model Agents](https://arxiv.org/pdf/2606.23525) | Found in the same 2026-11 search; not read. | — | — |
 | [Letta: Is a Filesystem All You Need?](https://www.letta.com/blog/benchmarking-ai-agent-memory/) (2025-08-12) | Conversation history stored as files; agent uses `grep`, `search_files`, `open`, `close`. 74.0% on LoCoMo with GPT-4o mini, against 68.5% for Mem0's best graph variant. | File-like tools (search, open) work well; models already use them iteratively. | Letta's files are server-side and reached through tools. We copy that: the store is reached through MCP tools, not a shell. |
 | [Mainplane](https://github.com/mainplane-ai/mainplane) | Each session is one append-only state file. `/continue` starts a new session with "You are continuing session X. Retrieve key context from it as you go." A standing "Context Management" system-prompt section says the previous session's log "is searchable with rg". | The pointer-and-retrieve continuation, and a standing system instruction telling the agent the content exists and how to fetch it. | We trim in place, keeping the same session and prompt-cache prefix, instead of starting a new session. Access is through tools, not `rg`. |
 | [rtk](https://github.com/rtk-ai/rtk) | "CLI proxy that reduces LLM token consumption by 60-90% on common dev commands"; an optional `rtk-proxy` compresses provider-API payloads. | Compress large tool output before the model reads it. | Our compression keeps the full text as a blob behind `smart_compact_get`, so nothing is lost. |
@@ -52,6 +57,9 @@ Long agent sessions outgrow the context window. Agents handle this in one of thr
 | SQLite store: messages, lines, FTS5, hybrid ranking, read-only SQL tool | Built ([context store](context-store.md#session-database)). Run D: lookup 1.00 in all 18 log-triage trials, count 0.94 (d-sqlite) against 0 for every setting in the strict run. Letta shows file-like tools work, but shell-only access limits retrieval to coding agents; MCP tools reach any agent. `sessions/<sid>.db` holds every message, in context or trimmed; `smart_compact_search` filters by `role` and `in_context`, and `smart_compact_sql` answers counts and aggregates. Its `lines` table gives exact counts, which the old log-based `line_matches` could not. |
 | Semantic search through the memory provider | Being measured in run C (s3c-semantic-nudged, s3d-recall). |
 | Hybrid (vector) ranking in the session store | Unmeasured: in run D's d-hybrid the agent never ran a hybrid search. |
+| Trim depth, `CONTEXT_TRIM_TO_FRACTION` (experiment: 0.526, about 50K of a 95K threshold) | Make-doom trims cut about 100K to 22–31K and the agent reread files it had just read. On [Terminal-Bench 2.1](#terminal-bench-21-trim-shape-arms-2026-11-05) the arm passed 7/8 at the lowest cost per pass; one trial per task, so not separable from the other arms. |
+| Prose strip, `CONTEXT_STRIP_PROSE` (experiment, off) | [Complexity Trap](https://arxiv.org/html/2508.21433v3) and [transparent-compact](https://arxiv.org/abs/2610.20116v1). [Terminal-Bench 2.1](#terminal-bench-21-trim-shape-arms-2026-11-05): 6/8. |
+| Progress note, `CONTEXT_PROGRESS_NOTE` (experiment, off) | [Compact-Bench](https://arxiv.org/abs/2610.31710). [Terminal-Bench 2.1](#terminal-bench-21-trim-shape-arms-2026-11-05): 6/8; the note never decided a trial (see there). |
 
 ## Benchmark method
 
@@ -204,6 +212,63 @@ Sonnet 5 has two paired log L6400 seeds in [`bench/results-S/summary.json`](http
 
 The coding-task replay used Haiku 4.5. Its `step2c` brief required changing strings pinned by existing exact-string tests while forbidding assertion edits; all four `step2c` trials therefore report `tests_rc=1`. Two of four smart-arm replays searched the session store once. This does not diagnose the earlier hour-long subagents, whose transcripts were not scored for scratchpad behavior. The decision-consistency trial set remains partial. Scratchpad read-path work is outside `main`, so no scratchpad benefit is claimed here.
 
+## SWE-bench boundary: where the effect does not reach (2026-11-03)
+
+`bench/swebench` runs the Complexity-Trap arms on SWE-bench Verified: `none` keeps everything, `smart` trims and gets the recall tools. The 45-instance set is `hard45` — Verified instances labelled one-to-four-hours-plus to fix. With Qwen 3.8 Flash (self-hosted, via the `cairn2` endpoint) the `none` arm resolved **45/45**, so the quality endpoint is pinned at 100% before any arm is measured.
+
+Trimming at 40k on that set (35 trials, stopped 2026-11-03): `none` 19/19, `smart` 15/16, **zero** smart-only wins, one `none`-only loss; requests 373 vs 303 (+23%) with steps flat and wall clock up 17–59%; per-trial cost unchanged across `TRIM_AT` 17k→40k. Twenty-nine recall calls happened unprompted, so the pointer drives retrieval even with nothing at stake.
+
+That is a boundary, not a refutation, and the reason is the context distribution. Peaks on those tasks: median 34.5k (`none`) and 26.9k (`smart`), p90 59k and 39k, max 77k and 44k. Every documented effect above lives between 116k and 979k, and the shipped per-model thresholds are 95k (Haiku) and 125k (default). A 40k trim against a 120k-calibrated effect, on tasks whose history the agent can re-read off disk, cannot produce it.
+
+Two measurement rules came out of this:
+
+- A provider that reports `cache` separately makes `total` a count of tokens *processed*, not tokens billed. `cairn2` reported `input` with `cache: {read: 0}` while the API put 10.64M of 10.75M prompt tokens (99%) in `cache_read`. Token-derived cost on such an endpoint is meaningless; use wall clock and request counts, and measure cost on a real API where caching is implemented.
+- Launch a run as a harness-owned background process. `nohup … &` inside a foreground call belongs to that call's process group and dies with it, silently: a chained smoke run lost its parent mid-scoring with no traceback, no `meta.json`, and an orphaned scoring container, which read as "scoring is slow" for ten minutes.
+
+## Chained SWE sessions: manufacturing a long horizon (protocol, 2026-11-03)
+
+SWE-bench's unit of work is too short to reach the regime, so `--chain` makes the session longer instead: instances are grouped by repo and a repo's tasks run back to back **in one OpenCode session**, scoring each task separately.
+
+Per task: a fresh container on that instance's own base commit, `opencode run --session <previous task's session id>`, patch captured, then `git reset --hard && git clean -fdq` before the next task. What persists across containers is the agent home and the trim ledger on the host (`_chains/<arm>-<repo>-<run>/`, symlinked into each trial dir as `home`/`state`), which is what makes the conversation and the compaction state grow monotonically. Task 2 onward gets a preamble stating the tree was reset and earlier tasks are gone. Chain order is sorted instance ids, identical for both arms.
+
+Per-trial scoring stays inside the chain: in the flat run it cost 26s median on django and 95s on astropy (trial wall minus agent wall), which buys a `resolved` tied to the task that earned it. A first attempt deferred it on the strength of a "ten minute" django score that turned out to be an orphaned scoring container left behind when a killed parent stopped reading it — a measurement artifact, recorded here because it nearly reshaped the protocol. `--defer-score` exists for suites that really are the long pole.
+
+Confound to state in any result: chaining lets the `none` arm recall an earlier task's fix, which biases *toward* keep-everything. A smart arm that ties or wins under that bias is the strong result. Gate before spending: `max_prompt_tokens` must rise task over task, the session must resume across containers, and a spot-check of one deferred score must confirm the reset left each patch valid.
+
+## Terminal-Bench 2.1: trim-shape arms (2026-11-05)
+
+Claude Code on `claude-haiku-5-5` through Harbor ([`bench/termbench/harbor`](../bench/termbench/harbor)), smarter-compact trimming at 95K, Claude Code's own auto-compact window at 195K. Four arms, one trial each on eight long Terminal-Bench 2.1 tasks; each arm is a `sc_agent_claude` class whose env sets the knobs. The first job (`tb21-h55-arms`) lost 24 of 32 trials to an expired OAuth token; those 24 were rerun as `tb21-h55-arms-r3`. Baseline columns are the same tasks from `tb21-h55-rerun`, default settings.
+
+| Task | Progress note | Trim to 50K | Combined | Prose only | Default smart | Native |
+|---|---|---|---|---|---|---|
+| adaptive-rejection-sampler | 1 | 1 | 1 | 1 | 1 | 1 |
+| fix-ocaml-gc | 1 | 1 | 1 | 1 | 1 | 1 |
+| make-doom-for-mips | 0 timeout | 0 timeout | 0 timeout | 0 timeout | 0 timeout | 0 |
+| make-mips-interpreter | 0 | 1 | 1 | 0 | 1 | 0 |
+| path-tracing | 1 | 1 | 1 | 1 | 1 | 1 |
+| path-tracing-reverse | 1 | 1 | 1 | 1 | 0 | 1 |
+| regex-chess | 1 | 1 | 1 | 1 | 1 | 1 |
+| schemelike-metacircular-eval | 1 | 1 | 1 | 1 | 1 | 1 |
+| **Passed** | **6/8** | **7/8** | **7/8** | **6/8** | **6/8** | **6/8** |
+| Cost (Claude Code-reported) | $0.655 | $0.553 | $0.646 | $0.557 | $0.599 | $2.097 |
+| Cost per pass | $0.109 | $0.079 | $0.092 | $0.093 | $0.100 | $0.350 |
+| Requests | 203 | 168 | 188 | 148 | | |
+| Cache read / write / output tokens | 9.11M / 0.90M / 0.61M | 6.87M / 0.74M / 0.52M | 8.04M / 0.82M / 0.60M | 6.32M / 0.74M / 0.56M | | |
+
+- **Arms:** Trim to 50K sets `CONTEXT_TRIM_TO_FRACTION=0.526`; prose only sets `CONTEXT_STRIP_PROSE=1`; progress note sets `CONTEXT_PROGRESS_NOTE=1`; combined sets all three.
+- **Trims:** 26 of 32 trials trimmed once or twice. Peaks stayed at or under 97K except regex-chess (101–124K before its trim). 90.5% of input tokens were cache reads.
+- **Failures:** every arm timed out on make-doom-for-mips. Progress note and prose only failed make-mips-interpreter on the image-similarity check (about 0.76 against 0.95).
+- **Costs** are the `total_cost_usd` Claude Code reported, recorded by Harbor; not checked against list prices. The make-doom timeouts have Harbor's figure only.
+
+**Why the progress note shows nothing here.** The note never decided a trial:
+
+- Its one failure, make-mips-interpreter, trimmed once, and that trim's ledger has no progress section, so the model never saw a note. Prose only failed the same task on the same check with no note at all.
+- 8 of the 16 progress and combined trials carried a progress section. Each trial trimmed at most twice, so the note appeared once or twice per session.
+- At the first trim the dropped turns are mostly exploration: the notes list `which gcc objdump …` -> ok, or one edited file the agent can `ls`. Compact-Bench's "progress" is the state of a long repair after many compactions; a session trimmed once has little of it to lose, and Terminal-Bench state lives on disk where the agent rereads it.
+- One trial per cell: a single flipped result moves an arm by 1/8, the whole spread between arms.
+
+Testing the note needs sessions that trim many times (a lower threshold or longer tasks) and repeat attempts on the tasks that split. Raw rows: `/tmp/opencode/tb21-h55-usage.jsonl` (local, not committed).
+
 ## Limitations
 
 - The primary run E uses Haiku 5.5 and two or three seeds per cell. Sonnet has two paired seeds on one task. Earlier run B baselines have one or two seeds per cell.
@@ -219,8 +284,12 @@ The coding-task replay used Haiku 4.5. Its `step2c` brief required changing stri
 
 1. Fix counts: exclude tool output from counted lines, add a role filter, and add a count clause to the standing instruction. Deferred.
 2. Add a paraphrase or semantic task (Chroma's semantic needle variant or LongMemEval), so hybrid search is used and measured.
-3. Run Compact-Bench real coding sessions.
+3. Run Compact-Bench real coding sessions. Superseded for this purpose by the chained SWE protocol above, which gets a long horizon out of instances we already score.
 4. Finish decision-consistency and scratchpad tests with a validated Codex context limit before drawing a coding-agent conclusion.
+5. Run the chained protocol past context saturation, then move to a set with headroom. Checked 2026-11-03 for harder public SWE benchmarks we can self-host:
+   - **SWE-bench Pro V2** (Scale AI) is the best fit: ungated `ScaleAI/SWE-bench_Pro` on HF (642 tasks, plus a 51-task `hard` config), per-instance images on `ghcr.io/scaleapi/swe-bench_pro-v2:<instance_id>` with anonymous pull, SWE-bench columns plus `docker_image`, hidden F2P/P2P grading, frontier at roughly 45–60%. Its long-horizon claim rests on task size (gold patches average 107 lines across 4.1 files, ~3x Verified); no per-task step counts are published.
+   - **SWE-rebench** (`nebius/SWE-rebench`, 21k tasks, 7.5k prebuilt images, same schema, frontier ~64%, ~2.5M tokens per problem reported on its leaderboard) for volume and contamination control.
+   - **Terminal-Bench 3.0/4.0** is the only family with published evidence of genuinely multi-hour sessions (8-hour timeouts, frontier ~34%), but it is Harbor-format with per-task verifiers, not instance-id/patch/F2P, so it needs a separate runner.
 
 ## More
 
