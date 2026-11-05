@@ -96,7 +96,7 @@ Source: [ContextBench](https://github.com/RulinShao/ContextBench) synthetic task
 
 ### What this shows
 
-Across eight seed-matched log trials, smart compaction's mean score exceeded keep-everything by **0.469** (95% bootstrap interval 0.339–0.578). Across nine pairs it exceeded default native by **0.495** (0.384–0.593). All three arms scored 1.0 on kv R4000. Smart compaction cost less on every paired R4000, L6400, and L12800 trial. The L1600 cost interval includes no saving, and its wall-time interval includes a slowdown over 20%. These small synthetic samples do not establish the same effect for coding sessions.
+Across eight seed-matched log trials, smart compaction's mean score exceeded keep-everything by **0.469** (95% bootstrap interval 0.339–0.578). Across nine pairs it exceeded default native by **0.495** (0.384–0.593). All three arms scored 1.0 on kv R4000. Smart compaction cost less on every paired kv-store R4000 trial and every log-triage L6400 and L12800 trial. The L1600 cost interval includes no saving, and its wall-time interval includes a slowdown over 20%. These small synthetic samples do not establish the same effect for coding sessions.
 
 On Sonnet 5 log L6400, two seed-matched pairs favored smart compaction by 0.0625 score (0.0417–0.0833) and cost 0.401 times keep-everything (0.361–0.441). [Exclusions, price basis, and pending work](https://github.com/bcmyguest/openmem/blob/main/docs/evidence-plan.md#completed-seed-paired-comparisons).
 
