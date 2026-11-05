@@ -1,4 +1,4 @@
-"""Opt-in trim experiments: CONTEXT_STRIP_PROSE and CONTEXT_PROGRESS_NOTE. Run: python3 -m unittest discover -s proxy/tests"""
+"""Trim experiments: CONTEXT_STRIP_PROSE, CONTEXT_MASK_OBSERVATIONS and CONTEXT_PROGRESS_NOTE. Run: python3 -m unittest discover -s proxy/tests"""
 
 import copy
 import json
@@ -13,6 +13,7 @@ from test_context_proxy import BIG, Base, anth_history, anth_request  # noqa: E4
 
 from smarter_compact import Settings  # noqa: E402
 from smarter_compact.adapters import AnthropicAdapter  # noqa: E402
+from smarter_compact.core import MASK_PLACEHOLDER  # noqa: E402
 
 # Step k of the in-flight turn: (tool name, input, result text, is_error).
 STEPS = [
@@ -24,11 +25,13 @@ STEPS = [
 ]
 
 
-def in_flight_turn():
-    """History, then a running turn: user prompt, STEPS as text + tool_use / tool_result, and a latest run."""
+def in_flight_turn(pad=""):
+    """History, then a running turn: user prompt, STEPS as text + tool_use / tool_result (result + pad), and a
+    latest run."""
     msgs = anth_history(2)
     msgs.append({"role": "user", "content": "now this"})
     for k, (name, args, result, error) in enumerate(STEPS):
+        result += pad
         msgs.append({"role": "assistant", "content": [
             {"type": "text", "text": f"step {k}"},
             {"type": "tool_use", "id": f"s{k}", "name": name, "input": args}]})
@@ -152,6 +155,115 @@ class ProseStripTests(Base):
         self.assertEqual(json.dumps(again[2]), json.dumps(view[2]))
 
 
+LONG = "\n" + "x" * 300
+
+
+def results_in(view):
+    """{tool_use_id: content} of every tool_result block in the view."""
+    return {b["tool_use_id"]: b["content"] for m in view if isinstance(m.get("content"), list) for b in m["content"]
+            if b.get("type") == "tool_result"}
+
+
+class MaskObservationsTests(Base):
+    def mask(self, msgs, sid="sid-1", **kw):
+        return self.run_req(anth_request(copy.deepcopy(msgs), sid=sid), mask_observations=True, **kw)["messages"]
+
+    def test_off_by_default(self):
+        view = self.run_req(anth_request(in_flight_turn(LONG)), trim_at_tokens=1)["messages"]
+        self.assertNotIn(MASK_PLACEHOLDER, json.dumps(view))
+
+    def test_masks_results_keeps_calls_text_and_latest_run(self):
+        msgs = in_flight_turn(LONG)
+        off = self.run_req(anth_request(copy.deepcopy(msgs), sid="other"), trim_at_tokens=1)["messages"]
+        view = self.mask(msgs, trim_at_tokens=1)
+        # Every call the off view carries stays, paired with a result.
+        self.assertEqual(ids_in(view, "tool_use", "id"), ids_in(off, "tool_use", "id"))
+        self.assertEqual(ids_in(view, "tool_use", "id"), ids_in(view, "tool_result", "tool_use_id"))
+        results = results_in(view)
+        self.assertEqual(results["s3"], MASK_PLACEHOLDER)
+        # s4's result is the message right before the latest run: kept, as prose strip keeps it.
+        self.assertEqual(results["s4"], "contents" + LONG)
+        self.assertEqual(json.dumps(view[-2:]), json.dumps(msgs[-2:]))
+        # Same messages and roles as without masking; only result contents differ.
+        self.assertEqual([m["role"] for m in view], [m["role"] for m in off])
+        self.assertEqual(results_in(off)["s3"], "built" + LONG)
+
+    def test_keeps_is_error_and_short_results(self):
+        # The gap keeps the newest 3 steps, so s3 is the one result in the masked region.
+        msgs = in_flight_turn(LONG)
+        at = next(i for i, m in enumerate(msgs) if m["role"] == "user" and "'s3'" in str(m["content"]))
+        msgs[at]["content"][0]["is_error"] = True
+        masked = next(b for m in self.mask(msgs, trim_at_tokens=1) if isinstance(m["content"], list)
+                      for b in m["content"] if b.get("type") == "tool_result" and b.get("tool_use_id") == "s3")
+        self.assertEqual(masked, {"type": "tool_result", "tool_use_id": "s3", "content": MASK_PLACEHOLDER,
+                                  "is_error": True})
+        msgs[at] = {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "s3", "content": "short"}]}
+        self.assertEqual(results_in(self.mask(msgs, sid="other", trim_at_tokens=1))["s3"], "short")
+
+    def test_wins_over_prose_strip(self):
+        msgs = in_flight_turn(LONG)
+        both = self.mask(msgs, trim_at_tokens=1, strip_prose=True)
+        alone = self.mask(msgs, sid="other", trim_at_tokens=1)
+        self.assertEqual(json.dumps(both[3:]), json.dumps(alone[3:]))
+        self.assertIn("s3", ids_in(both, "tool_use", "id"))
+
+    def test_prefix_stable_on_next_request(self):
+        msgs = in_flight_turn(LONG)
+        first = self.mask(msgs, trim_at_tokens=1)
+        more = msgs + [{"role": "assistant", "content": [{"type": "tool_use", "id": "sM", "name": "Bash",
+                                                          "input": {"command": "pwd"}}]},
+                       {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "sM", "content": "/"}]}]
+        second = self.mask(more, trim_at_tokens=BIG)
+        self.assertEqual(json.dumps(second[:len(first)]), json.dumps(first))
+        # The latest run at trim time stays unmasked until the next trim.
+        self.assertEqual(results_in(second)["sL"], "ok")
+
+    def view_rows(self, msgs, view):
+        """(kind, text) of every non-thinking row the view carries, the note and placeholders left out."""
+        a = AnthropicAdapter()
+        names = a.tool_names(msgs)
+        return sorted((r[1], r[3]) for m in view for r in a.rows(m, names)
+                      if r[1] != "thinking" and not r[3].startswith("[smarter-compact:"))
+
+    def stored_in_context(self, sid):
+        return sorted((r["kind"], r["text"]) for r in self.db_rows(sid, "in_context = 1 AND kind != 'thinking'"))
+
+    def test_in_context_matches_view(self):
+        msgs = in_flight_turn(LONG)
+        view = self.mask(msgs, trim_at_tokens=1)
+        self.assertEqual(self.stored_in_context("sid-1"), self.view_rows(msgs, view))
+        # The call stays in context; its masked result's original text does not.
+        kept = [r["text"] for r in self.db_rows("sid-1", "in_context = 1 AND kind = 'tool_use'")]
+        self.assertIn("make build", " ".join(kept))
+        out = [r["text"] for r in self.db_rows("sid-1", "in_context = 0 AND kind = 'tool_result'")]
+        self.assertIn("built" + LONG, out)
+        self.assertNotIn("contents" + LONG, out)
+        more = msgs + [{"role": "assistant", "content": [{"type": "text", "text": "done"}]}]
+        view = self.mask(more, trim_at_tokens=BIG)
+        self.assertEqual(self.stored_in_context("sid-1"), self.view_rows(more, view))
+
+    def test_pointer_counts_and_names_recovery(self):
+        msgs = in_flight_turn(LONG)
+        view = self.mask(msgs, trim_at_tokens=1)
+        off = self.run_req(anth_request(copy.deepcopy(msgs), sid="other"), trim_at_tokens=1)["messages"]
+        prose = self.run_req(anth_request(copy.deepcopy(msgs), sid="third"), trim_at_tokens=1,
+                             strip_prose=True)["messages"]
+        # Masking empties no message, so the count is the cut's alone.
+        self.assertEqual(pointer_count(view), pointer_count(off))
+        self.assertLess(pointer_count(view), pointer_count(prose))
+        note = view[2]["content"][0]["text"]
+        self.assertIn('session_id="sid-1"', note.split("Older tool outputs")[1])
+        self.assertNotIn("Older tool outputs", off[2]["content"][0]["text"])
+        more = msgs + [{"role": "assistant", "content": [{"type": "text", "text": "done"}]}]
+        again = self.mask(more, trim_at_tokens=BIG)
+        self.assertEqual(json.dumps(again[2]), json.dumps(view[2]))
+
+    def test_short_results_masked_nowhere_and_no_recovery_line(self):
+        view = self.mask(in_flight_turn(), trim_at_tokens=1)
+        self.assertNotIn(MASK_PLACEHOLDER, json.dumps(view))
+        self.assertNotIn("Older tool outputs", view[2]["content"][0]["text"])
+
+
 class ProgressNoteTests(Base):
     def note(self, view):
         return view[2]["content"][0]["text"]
@@ -190,6 +302,10 @@ class ExperimentSettingsTests(unittest.TestCase):
         self.assertEqual((Settings().strip_prose, Settings().progress_note), (False, True))
         s = Settings.from_env({"CONTEXT_STRIP_PROSE": "1", "CONTEXT_PROGRESS_NOTE": "off"})
         self.assertEqual((s.strip_prose, s.progress_note), (True, False))
+        self.assertFalse(Settings.from_env({}).mask_observations)
+        self.assertFalse(Settings().mask_observations)
+        self.assertTrue(Settings.from_env({"CONTEXT_MASK_OBSERVATIONS": "1"}).mask_observations)
+        self.assertFalse(Settings.from_env({"CONTEXT_MASK_OBSERVATIONS": ""}).mask_observations)
         self.assertTrue(Settings.from_env({"CONTEXT_STANDING_INSTRUCTION": ""}).standing_instruction)
 
 

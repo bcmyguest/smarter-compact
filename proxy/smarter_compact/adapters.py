@@ -198,6 +198,17 @@ class AnthropicAdapter:
             return item
         return {**item, "content": kept} if kept else None
 
+    def masked_results(self, item, ids, placeholder):
+        """The message with the content of each tool_result whose id is in ids and whose content is longer than
+        placeholder replaced by placeholder (other keys kept): the same object when none changes."""
+        content = item.get("content")
+        if not isinstance(content, list):
+            return item
+        out = [{**b, "content": placeholder} if isinstance(b, dict) and b.get("type") == "tool_result"
+               and b.get("tool_use_id") in ids and len(_compact_json(b.get("content", ""))) > len(placeholder)
+               else b for b in content]
+        return item if all(a is b for a, b in zip(out, content)) else {**item, "content": out}
+
     def same_role(self, a, b):
         return a.get("role") == b.get("role")
 

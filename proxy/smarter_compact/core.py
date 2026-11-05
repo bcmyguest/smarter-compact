@@ -58,6 +58,9 @@ PROGRESS_COMMAND_MAX_CHARS = 200
 EDIT_TOOL_PATHS = {"Write": ("file_path",), "Edit": ("file_path",), "MultiEdit": ("file_path",),
                    "NotebookEdit": ("notebook_path", "file_path")}
 SHELL_TOOLS = ("Bash",)
+# CONTEXT_MASK_OBSERVATIONS: constant, so a masked result renders the same bytes on every request.
+MASK_PLACEHOLDER = ("[smarter-compact: tool output masked to save context; the call is kept and the output is stored, "
+                    "see the trim pointer]")
 # A shell command that builds or tests: a word of it starts one of these.
 _BUILD_RE = re.compile(
     r"(?:^|[\s;&|(/])(?:py\.?test|tox|nox|make|cmake|ctest|ninja|cargo (?:build|test|check)|go (?:build|test|vet)"
@@ -212,6 +215,17 @@ def pointer_text(sid, dropped, names=None):
     )
 
 
+def mask_text(sid, names=None):
+    """How to get back a result shown as MASK_PLACEHOLDER: its call's row, then the next tool_result row."""
+    names = names or _LEGACY_NAMES
+    return (
+        f"Older tool outputs in your context read \"{MASK_PLACEHOLDER}\". To get one back, find its call with "
+        f'{names["search"]}(session_id="{sid}", query=<words from the call>); its output is the first tool_result '
+        f'row of the same tool after that seq: {names["sql"]}(session_id="{sid}", sql="SELECT text FROM messages '
+        f"WHERE kind = 'tool_result' AND name = '<tool>' AND seq > <call seq> ORDER BY seq LIMIT 1\")."
+    )
+
+
 def pending_text(sid):
     return (
         "[smarter-compact: memory ingest is still running, so the most recent turns may not be in memory yet. "
@@ -318,7 +332,8 @@ def choose_gap(adapter, items, cut, after, first, fits):
 def render(adapter, items, cut, note, first=None, gap=None, strip=None, prose=False, shown=None):
     """The kept items (kept_indices) in order, the cut turn carrying the note, with signed reasoning stripped from
     kept assistant items before `strip` (default: the latest assistant run; see strip_reasoning), and with prose
-    their tool call/result pairs too (prose_ids). shown, when given, gets the strip_reasoning index map."""
+    their tool call/result pairs too (prose_ids), or with prose == "mask" those results masked instead.
+    shown, when given, gets the strip_reasoning index map."""
     if cut is None:
         if shown is not None:
             shown.update(enumerate(items))
@@ -348,11 +363,12 @@ def strip_reasoning(adapter, items, keep, bound, cut, note, prose=False, shown=N
     trimmed view and stays. The stripped set is fixed until the next trim, so the prefix stays byte-identical for
     the cache. A message left empty is dropped (adapter.without_reasoning).
 
-    With prose, the prose_ids pairs go too and adjacent stripped items of one role merge into one message.
+    With prose, the prose_ids pairs go too and adjacent stripped items of one role merge into one message. With
+    prose == "mask", each prose_ids tool_use stays and its tool_result content becomes MASK_PLACEHOLDER.
 
     shown, when given, maps the index of every item that reaches the view to its stripped form (no note, unmerged).
     """
-    ids = prose_ids(adapter, items, keep, bound, cut) if prose else set()
+    ids = prose_ids(adapter, items, keep, bound, cut, prose) if prose else set()
     out = []
     mergeable = False
     for j, x in enumerate(items):
@@ -364,7 +380,9 @@ def strip_reasoning(adapter, items, keep, bound, cut, note, prose=False, shown=N
                 x = adapter.without_reasoning(x)
                 if x is None:
                     continue
-            if ids and not adapter.is_pinned(x):
+            if ids and not adapter.is_pinned(x) and prose == "mask":
+                x = adapter.masked_results(x, ids, MASK_PLACEHOLDER)
+            elif ids and not adapter.is_pinned(x):
                 x = adapter.without_tool_calls(x, ids)
                 if x is None:
                     continue
@@ -391,9 +409,10 @@ def _prose_region(adapter, items, keep, bound, cut):
     return region[:-1]
 
 
-def prose_ids(adapter, items, keep, bound, cut):
-    """Tool call ids whose tool_use and tool_result both sit in the prose region; empty when the adapter cannot strip."""
-    if not hasattr(adapter, "without_tool_calls"):
+def prose_ids(adapter, items, keep, bound, cut, mode=True):
+    """Tool call ids whose tool_use and tool_result both sit in the prose region; empty when the adapter cannot strip
+    (or, mode "mask", mask)."""
+    if not hasattr(adapter, "masked_results" if mode == "mask" else "without_tool_calls"):
         return set()
     region = _prose_region(adapter, items, keep, bound, cut)
     calls = {c[0] for j in region for c in adapter.tool_calls(items[j])}
@@ -452,13 +471,18 @@ def _build_note(adapter, items, cut, sid, dropped, store, settings, http, names=
     return "\n".join(parts)
 
 
+def region_mode(settings):
+    """What the trim does to tool pairs in the prose region: "mask", True (strip) or False; masking wins."""
+    return "mask" if settings.mask_observations else bool(settings.strip_prose)
+
+
 def _with_progress(adapter, items, cut, gap, first, settings, note):
-    """note plus the progress section for the items this trim drops or prose-strips; note alone when empty."""
+    """note plus the progress section for the items this trim drops, prose-strips or masks; note alone when empty."""
     if not hasattr(adapter, "tool_calls"):
         return note
     keep = kept_indices(adapter, items, cut, gap, first)
     sources = {j for j in range(len(items)) if j not in keep}
-    if settings.strip_prose:
+    if region_mode(settings):
         sources.update(_prose_region(adapter, items, keep, latest_run_start(adapter, items), cut))
     text = progress_text(adapter, items, sorted(sources))
     return f"{note}\n{text}" if text else note
@@ -503,15 +527,17 @@ def _command_status(result):
     return "failed" if is_error else "ok"
 
 
-def _prose_sizes(adapter, items, cut, sizes):
-    """Shrink sizes (request_chars per item) to what prose stripping leaves of each item before the latest run."""
+def _prose_sizes(adapter, items, cut, sizes, mode=True):
+    """Shrink sizes (request_chars per item) to what prose stripping (or masking) leaves of each item before the
+    latest run."""
     keep = set(range(len(items)))
     bound = latest_run_start(adapter, items)
-    ids = prose_ids(adapter, items, keep, bound, cut)
+    ids = prose_ids(adapter, items, keep, bound, cut, mode)
     if not ids:
         return
     for j in _prose_region(adapter, items, keep, bound, cut):
-        x = adapter.without_tool_calls(items[j], ids)
+        x = adapter.masked_results(items[j], ids, MASK_PLACEHOLDER) if mode == "mask" \
+            else adapter.without_tool_calls(items[j], ids)
         sizes[j] = request_chars(x) if x is not None else 0
 
 
@@ -543,12 +569,15 @@ def stored_rows(adapter, original, items, names, cut, view):
 
 def _rows_kept(adapter, shown, sent, item, names):
     """Per row of item (shown = its rows), whether sent, the form the view carries (None: absent), still has it;
-    thinking rows of a sent message count as kept, so only dropping a message or its tool blocks clears the flag."""
+    thinking rows of a sent message count as kept, so only dropping a message or its tool blocks, or masking a
+    result (same row count, changed text), clears the flag."""
     if sent is item:
         return [True] * len(shown)
     if sent is None:
         return [False] * len(shown)
     left = adapter.rows(sent, names)
+    if len(left) == len(shown):
+        return [a == b or b[1] == "thinking" for a, b in zip(left, shown)]
     out, p = [], 0
     for row in shown:
         hit = p < len(left) and left[p] == row
@@ -634,7 +663,8 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, http,
                     # From 0: a trim on the last user turn records strip as the reply before the cut.
                     strip = _locate(items, thread.get("strip"), thread["strip_fp"])
         shown = {}
-        view = render(adapter, items, cut, note, first, gap, strip, settings.strip_prose, shown)
+        mode = region_mode(settings)
+        view = render(adapter, items, cut, note, first, gap, strip, mode, shown)
         force = store.force_requested(sid)
         ratio = settings.chars_per_token if settings.chars_per_token > 0 else DEFAULT_CHARS_PER_TOKEN
         base_chars = request_chars(*context)
@@ -647,8 +677,8 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, http,
             new_gap = None
             if new_cut is not None:
                 sizes = [request_chars(x) for x in items]
-                if settings.strip_prose:
-                    _prose_sizes(adapter, items, new_cut, sizes)
+                if mode:
+                    _prose_sizes(adapter, items, new_cut, sizes, mode)
                 target = trim_at * settings.trim_to_fraction
 
                 def fits(g):
@@ -662,13 +692,16 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, http,
             dropped = len(_droppable(adapter, items, new_cut, new_gap, first)) if new_cut is not None else 0
             if dropped and (new_cut, new_gap) != (cut, gap):
                 new_strip, new_shown = latest_run_start(adapter, items), {}
-                render(adapter, items, new_cut, "", first, new_gap, new_strip, settings.strip_prose, new_shown)
+                render(adapter, items, new_cut, "", first, new_gap, new_strip, mode, new_shown)
                 # The pointer counts every message absent from the view: dropped, or emptied by the strip.
                 dropped = len(items) - len(new_shown)
                 note = _build_note(adapter, items, new_cut, sid, dropped, store, settings, http,
                                  recall_tool_names(request_tool_names(data)))
                 if settings.progress_note:
                     note = _with_progress(adapter, items, new_cut, new_gap, first, settings, note)
+                if mode == "mask" and any(x is not items[j] and MASK_PLACEHOLDER in str(x.get("content"))
+                                          for j, x in new_shown.items()):
+                    note = f"{note}\n{mask_text(sid, recall_tool_names(request_tool_names(data)))}"
                 threads.pop(root, None)
                 threads[root] = {"cut": new_cut, "cut_fp": fingerprint(items[new_cut]), "note": note,
                                  "format": adapter.name, "updated": _utc_now()}
@@ -685,7 +718,7 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, http,
                 if force:
                     store.clear_force(sid)
                 shown = {}
-                view = render(adapter, items, new_cut, note, first, new_gap, strip, settings.strip_prose, shown)
+                view = render(adapter, items, new_cut, note, first, new_gap, strip, mode, shown)
                 cut, gap = new_cut, new_gap
                 after = estimate_prompt_tokens(base_chars + request_chars(view), state.get("usage"), root, ratio)
                 trim = {"tokens_before": tokens, "tokens_after": after, "dropped": dropped}

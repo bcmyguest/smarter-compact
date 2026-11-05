@@ -37,7 +37,7 @@ Smart compaction only works when something **sees and rewrites the model request
 | Tier | Agents | What you get |
 | --- | --- | --- |
 | **Full trim (proxy)** | Claude Code, Codex, OpenCode 1 | `smarter-compact enable` points the CLI at the loopback LiteLLM proxy; every turn is stored and older turns drop off the wire at the token threshold. |
-| **Full trim (in-process)** | OpenCode 2, Pi | JS port of the trim core in the agent's **`context` hook**; prose strip and the progress note are proxy-only ([OpenCode plugin](docs/opencode.md), [Pi extension](https://pi.dev/docs/latest/extensions#context) in this package). No proxy URL. |
+| **Full trim (in-process)** | OpenCode 2, Pi | JS port of the trim core in the agent's **`context` hook**; prose strip, observation masking and the progress note are proxy-only ([OpenCode plugin](docs/opencode.md), [Pi extension](https://pi.dev/docs/latest/extensions#context) in this package). No proxy URL. |
 
 Cursor and Copilot CLI are **not** supported for automatic trim (hooks + MCP only). See [Optional: Cursor and Copilot](#optional-cursor-and-copilot) if you still want search tools there.
 

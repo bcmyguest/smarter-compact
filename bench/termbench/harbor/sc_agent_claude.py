@@ -39,7 +39,8 @@ STATE_DIR = "/logs/agent/smarter-compact"
 TRIM_AT = os.environ.get("SC_TRIM_AT", "95000")
 # Proxy experiment knobs a job's per-agent "env" may set; Harbor applies that env only while the agent runs,
 # after install has already started the proxy, so install forwards these itself.
-ARM_ENV_KEYS = ("CONTEXT_TRIM_TO_FRACTION", "CONTEXT_STRIP_PROSE", "CONTEXT_PROGRESS_NOTE")
+ARM_ENV_KEYS = ("CONTEXT_TRIM_TO_FRACTION", "CONTEXT_STRIP_PROSE", "CONTEXT_PROGRESS_NOTE",
+                "CONTEXT_MASK_OBSERVATIONS")
 # Job-level bind mount of the host ~/.claude/.credentials.json (read-only in practice; the
 # trial container never refreshes it).
 CREDS_MOUNT = "/opt/claude-creds/.credentials.json"
@@ -194,3 +195,11 @@ class ScClaudeProgress(ScClaudeSmarterCompact):
 
 class ScClaudeCombined(ScClaudeSmarterCompact):
     """Trim to about 50K, prose strip and progress note together."""
+
+
+class ScClaudeMask(ScClaudeSmarterCompact):
+    """Keep older tool calls, mask their results (CONTEXT_MASK_OBSERVATIONS=1; wins over prose strip)."""
+
+
+class ScClaudeNoStrip(ScClaudeSmarterCompact):
+    """Prose strip off (CONTEXT_STRIP_PROSE=0, the default since 26d2040): the control for prose and mask."""
