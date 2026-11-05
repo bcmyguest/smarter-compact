@@ -134,6 +134,8 @@ async function enable(argv, enabled) {
       process.exit(1);
     }
     if (proxy.status === "started") console.error(`${PRODUCT}: proxy listening on http://127.0.0.1:${port}`);
+    if (proxy.status === "restarted") console.error(`${PRODUCT}: proxy restarted, ${proxy.from} -> ${proxy.to}`);
+    if (proxy.warning) console.error(`${PRODUCT}: ${proxy.warning}`);
   }
 
   if (global && enabled && process.env.SMARTER_COMPACT_INSTALL_CURSOR === "1" && fs.existsSync(path.join(home, ".cursor"))) {
@@ -177,6 +179,7 @@ function proxy() {
     PYTHONPATH: path.join(root, "proxy"),
     LITELLM_MASTER_KEY: ensureKey(home),
     SMARTER_COMPACT_STATE_DIR: stateParent(home, process.env),
+    CONTEXT_PROXY_PORT: port,
     CONTEXT_COMPACTION_RECALL: process.env.CONTEXT_COMPACTION_RECALL || "0",
   };
   const config = path.join(root, "proxy", "config.yaml");

@@ -115,6 +115,18 @@ docker compose logs -f context-proxy
 
 It needs `LITELLM_MASTER_KEY` in `~/.config/smarter-compact/proxy.env` (mode 600; `CONTEXT_PROXY_ENV_FILE` overrides the path), listens on `127.0.0.1:${CONTEXT_PROXY_PORT:-4100}`, and writes the session store to `~/.local/share/smarter-compact/context` — falling back to the deprecated openmem service's `~/.local/share/openmem/context` when only that exists, so switching which repo serves it changes no agent config and orphans no session a running agent can still recall. Set `CONTEXT_PROXY_PORT=4101` to move onto the CLI default instead.
 
+## Updates
+
+The proxy writes `proxy-<port>.json` to the context dir at start, and at most every 5 s while it serves requests: its `package.json` version, pid, start time and last request. At each session start (and on `smarter-compact enable`), the plugin compares that version with the installed package:
+
+| Proxy on the port | Idle 60 s or more | Busy |
+| --- | --- | --- |
+| Started by the plugin (`proxy.pid`, same pid as the status file) | Stopped and started from the installed package | Warning |
+| Docker compose container whose checkout's `package.json` matches the installed version | `docker restart <container>` | Warning |
+| Compose container on another checkout version, a manual `smarter-compact proxy`, or no status file | Warning | Warning |
+
+Claude Code and Codex show the warning as a session-start system message; `enable` prints it to stderr. A warning names what to restart or update.
+
 ## Limits
 
 - **One LiteLLM worker.** Session locking is in-process; do not run multiple workers.

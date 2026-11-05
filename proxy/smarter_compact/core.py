@@ -16,6 +16,7 @@ from pathlib import Path
 from . import embed as embed_mod
 from . import recall as recall_mod
 from . import sessiondb
+from . import status as status_mod
 from . import ttl as ttl_mod
 from .adapters import UnsupportedCallType, adapter_for, strip_reminders
 from .session import resolve_session_id
@@ -804,10 +805,11 @@ def process_usage(kwargs, response, settings=None):
 
 
 def startup(settings=None):
-    """Proxy start: TTL cleanup of old sessions (at most once a day), on a daemon thread. Returns the thread."""
+    """Proxy start: status file, then TTL cleanup of old sessions (at most once a day), on a daemon thread."""
     def run():
         try:
             s = settings or Settings.from_env()
+            status_mod.write(s.context_dir)
             if s.enabled:
                 ttl_mod.maybe_sweep(s.context_dir, s.ttl_days)
         except Exception as exc:
@@ -825,6 +827,7 @@ def process_request(data, call_type, settings=None, http=None, route=None, call_
     """
     try:
         settings = settings or Settings.from_env()
+        status_mod.write(settings.context_dir, request=True)
         if not settings.enabled or not isinstance(data, dict):
             return data
         return _rewrite(data, call_type, settings, http or recall_mod.urllib_http, route, call_id)

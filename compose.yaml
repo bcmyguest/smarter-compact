@@ -21,6 +21,8 @@ services:
     # here changes the running proxy after `docker compose restart context-proxy`.
     volumes:
       - ./proxy:/app/proxy:ro
+      # The proxy reports this version in proxy-<port>.json so the plugin can spot a stale container.
+      - ./package.json:/app/package.json:ro
       # The session store the recall MCP server reads. Same host path as before, so a switch of code source never
       # orphans a session a running agent can still recall.
       - ${HOME}/.local/share/openmem/context:/state/context
@@ -36,6 +38,8 @@ services:
       HOME: /tmp
       PYTHONDONTWRITEBYTECODE: "1"
       SMARTER_COMPACT_STATE_DIR: /state
+      # The host port, which names the status file the plugin looks for.
+      CONTEXT_PROXY_PORT: ${CONTEXT_PROXY_PORT:-4100}
       CONTEXT_PROXY_ENABLED: ${CONTEXT_PROXY_ENABLED:-1}
       # Empty CONTEXT_TRIM_AT_TOKENS lets the proxy choose per model (built-in haiku=95000, fallback 125000);
       # export it to force one threshold for every model.

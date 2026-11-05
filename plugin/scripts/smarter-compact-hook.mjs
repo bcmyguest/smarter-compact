@@ -57,8 +57,9 @@ try {
   const host = hookHost(process.argv, msg);
   const wireTrim = trimsOnWire(host);
   const cwd = typeof msg.cwd === "string" ? msg.cwd : process.cwd();
+  let proxy = null;
   if (wireTrim && (name.includes("sessionstart") || name === "startup")) {
-    await ensureContextProxyRunning({ home, env: process.env, importMetaUrl: import.meta.url, waitMs: 8000 });
+    proxy = await ensureContextProxyRunning({ home, env: process.env, importMetaUrl: import.meta.url, waitMs: 8000 });
   }
   if (sid && (name.includes("sessionstart") || name === "startup" || name === "")) {
     try { registerSession({ home, env: process.env, sessionId: sid, agent: host, cwd }); } catch { /* best effort */ }
@@ -69,9 +70,12 @@ try {
   if (name.includes("sessionstart") || name === "startup") {
     const hookEventName = msg.hook_event_name || "SessionStart";
     const note = isMcpOnlyHost(host) ? NOTE_MCP_ONLY : NOTE_TRIM;
+    // systemMessage reaches the user, not the model: a stale or just-restarted proxy.
+    const shown = proxy?.warning || (proxy?.status === "restarted" ? `proxy restarted, ${proxy.from} -> ${proxy.to}` : null);
     emit({
       hookSpecificOutput: { hookEventName, additionalContext: note },
       additional_context: note,
+      ...(shown ? { systemMessage: `Smarter Compact: ${shown}` } : {}),
     });
   } else {
     emit({});
