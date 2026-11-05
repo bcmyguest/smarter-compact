@@ -45,7 +45,7 @@ Auto-start is off when `SMARTER_COMPACT_AUTO_PROXY=0`. Logs: `~/.config/smarter-
 | `CONTEXT_TRIM_AT_TOKENS` | unset → per-model | **Set** (env, `proxy.env`, OpenCode `trimAtTokens`, or `[context_proxy] trim_at_tokens` / `context set trim=`) → one threshold for every model. **Unset** → `[context_proxy.trim_at]` in `~/.config/smarter-compact/config.toml` merged with built-in `haiku=95000`, fallback `default=125000`. CLI: `smarter-compact context set haiku=88000`. |
 | `CONTEXT_TRIM_TO_FRACTION` | `0.53` | In-turn tool retention fraction |
 | `CONTEXT_STRIP_PROSE` | `0` | Strips tool calls and results from kept turns, keeping their text; `1` on, under review ([research](context-research.md#terminal-bench-21-trim-shape-arms-2026-11-05)) |
-| `CONTEXT_MASK_OBSERVATIONS` | `0` | `1` keeps each tool call in the same region and replaces its result (when longer) with a fixed placeholder; the trim pointer gains how to fetch it back from the store. Wins over `CONTEXT_STRIP_PROSE`. Experimental ([research](context-research.md#terminal-bench-21-trim-shape-arms-2026-11-05)) |
+| `CONTEXT_MASK_OBSERVATIONS` | `0` | `1` keeps each tool call in the same region and replaces its result (when longer) with a fixed placeholder; the trim pointer gains how to fetch it back from the store. Wins over `CONTEXT_STRIP_PROSE`. Experimental ([research](context-research.md#prose-strip-versus-observation-masking-2026-11-05)) |
 | `CONTEXT_PROGRESS_NOTE` | `1` | Appends files edited and last build/test commands to the trim pointer; `0` off ([research](context-research.md#terminal-bench-21-trim-shape-arms-2026-11-05)) |
 | `CONTEXT_CHARS_PER_TOKEN` | `2.5` | Estimate before usage calibration |
 | `CONTEXT_COMPRESS_OVER_TOKENS` | `4000` | Tool compression threshold; `0` off |
