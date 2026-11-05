@@ -6,10 +6,13 @@
 # these tasks should blow through the threshold everywhere.
 #
 # Usage:
-#   ANTHROPIC_API_KEY=sk-... ./run-hard45.sh anthropic claude-sonnet-4-5
-#   ./run-hard45.sh cairn2 Qwen/Qwen3.8-Flash-Next-FP8          # rerun Qwen for the matrix
-#   CONTEXT_LIMIT=200000 PARALLEL=6 ./run-hard45.sh anthropic claude-opus-4-1
-#   TRIM_AT=80000 ./run-hard45.sh anthropic claude-haiku-4-5   # trim/native move together
+#   ./run-hard45.sh cairn2 Qwen/Qwen3.8-Flash-Next-FP8
+#   CONTEXT_LIMIT=102400 PARALLEL=6 ./run-hard45.sh cairn2 Qwen/Qwen3.8-Flash-Next-FP8
+#
+# Model policy: cairn2 only. Do not run the Anthropic provider for these benches —
+# a provider/model pair there bills the CLAUDE_API_KEY in the repo-root .env (the
+# fallback below), not an env var you exported, so the spend is invisible on the
+# dashboard you are watching.
 #
 # TRIM_AT (default 40000) sets the smart arm's verbatim trim; NATIVE_AT defaults
 # to TRIM_AT+2000 so the native arm compacts just after the smart one trims.
@@ -21,7 +24,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-PROVIDER="${1:?usage: run-hard45.sh <provider> <model-id>   e.g. anthropic claude-sonnet-4-5}"
+PROVIDER="${1:?usage: run-hard45.sh <provider> <model-id>   e.g. cairn2 Qwen/Qwen3.8-Flash-Next-FP8}"
 MODEL="${2:?usage: run-hard45.sh <provider> <model-id>}"
 CONTEXT_LIMIT="${CONTEXT_LIMIT:-200000}"   # claude=200k; pass 102400 for the Qwen rerun
 PARALLEL="${PARALLEL:-4}"

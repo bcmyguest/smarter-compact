@@ -43,11 +43,12 @@ import subprocess
 import sqlite3
 import statistics
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from concurrent.futures import TimeoutError as FutureTimeout
 from pathlib import Path
 
@@ -242,8 +243,15 @@ def write_agent_config(
 
 
 def extract_tokens(stream_path: Path) -> dict:
-    """Sum step token reports from the opencode JSON stream (tolerant)."""
-    totals = {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0, "cache_write": 0, "steps": 0}
+    """Sum step token reports from the opencode JSON stream (tolerant).
+
+    Also carries two facts the stream is the only place to get them: `session_id`, which a chained
+    run has to hand to the next task's `--session`, and `max_prompt_tokens`, the peak context the
+    session actually reached — the number that says whether a run entered the regime it is
+    supposed to be measuring.
+    """
+    totals = {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0, "cache_write": 0, "steps": 0,
+              "max_prompt_tokens": 0, "session_id": None}
     if not stream_path.is_file():
         return totals
     for line in stream_path.read_text(errors="replace").splitlines():
@@ -254,8 +262,22 @@ def extract_tokens(stream_path: Path) -> dict:
             row = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if totals["session_id"] is None:
+            sid = row.get("sessionID") or (row.get("part") or {}).get("sessionID")
+            if isinstance(sid, str) and sid.startswith("ses"):
+                totals["session_id"] = sid
         tokens = row.get("tokens") or (row.get("part") or {}).get("tokens")
         if isinstance(tokens, dict):
+            # An aborted step (a stream killed mid-generation) reports zero tokens, and counting it
+            # as a step re-ran the max() below against 0: a timeout that lands there records a peak
+            # of nothing, so the single most direct measure of whether an arm hit the threshold is
+            # lost exactly on the trials that ran longest. Only a step that produced tokens counts.
+            if not (tokens.get("output") or tokens.get("input")):
+                continue
+            totals["max_prompt_tokens"] = max(
+                totals["max_prompt_tokens"],
+                (tokens.get("input", 0) or 0) + (tokens.get("cache", {}) or {}).get("read", 0)
+                + (tokens.get("output", 0) or 0))
             totals["steps"] += 1
             totals["input"] += tokens.get("input", 0) or 0
             totals["output"] += tokens.get("output", 0) or 0
@@ -298,6 +320,110 @@ def estimate_cost(model: str | None, tokens: dict) -> float:
          + tokens.get("cache_write", 0) * pwrite)
         / 1_000_000
     )
+
+
+def cost_or_none(model: str | None, tokens: dict) -> float | None:
+    """estimate_cost, but None for a model with no price row rather than a confident $0.00.
+
+    A self-hosted model matches no PRICING entry, so estimate_cost returns 0.0 and a whole
+    cairn2 run reads as free work. Unpriced and free are different facts; the log line and the
+    mlflow metrics already skip None, and cost_report still sums the notional number.
+    """
+    return None if price_for(model) == FREE_PRICE else round(estimate_cost(model, tokens), 4)
+
+
+def exec_stream(container, cmd, out_path: Path, workdir: str | None = None,
+                timeout: int | None = None, durable: bool = False) -> int | None:
+    """Run cmd in the container, landing stdout+stderr in out_path, and survive being killed.
+
+    A buffered exec_run keeps the stream in the result object, so a trial that hits its timeout
+    loses all of it. durable=True is the stronger form and is how the agent runs: `cmd` redirects
+    its own output to a FILE at out_path (under the bind mount) instead of to the exec pipe. The
+    reason is the writer, not the reader — Node writes a file descriptor synchronously but
+    block-buffers a pipe, so a killed process discards whatever is still in that buffer. Measured
+    on tb-95k: a 952s trial reached 139 messages and 85,590 tokens of context in the store and left
+    a 0-byte stream on the host. With a file, everything the agent wrote survives the SIGKILL.
+    The tradeoff is that the host sees the file grow rather than a live copy of the pipe.
+
+    Returns the exit code, or None when the agent was killed at the timeout.
+    """
+    api = container.client.api
+    if durable:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(b"")        # the command appends to a file we just emptied
+        exec_id = api.exec_create(container.id, cmd, stdout=True, stderr=True,
+                                  workdir=workdir, tty=False)
+
+        def pump():
+            api.exec_start(exec_id, tty=False, stream=False, demux=False)
+            return api.exec_inspect(exec_id).get("ExitCode")
+    else:
+        exec_id = api.exec_create(container.id, cmd, stdout=True, stderr=True,
+                                  workdir=workdir, tty=False)
+
+        def pump():
+            with open(out_path, "wb") as fh:
+                for chunk in api.exec_start(exec_id, tty=False, stream=True, demux=True):
+                    out, err = chunk if isinstance(chunk, tuple) else (chunk, None)
+                    if out:
+                        fh.write(out)
+                    if err:  # interleaving is approximate; extract_tokens skips non-JSON lines
+                        fh.write(err)
+                    fh.flush()
+            return api.exec_inspect(exec_id).get("ExitCode")
+
+    ex = ThreadPoolExecutor(max_workers=1)
+    try:
+        fut = ex.submit(pump)
+        try:
+            return fut.result(timeout=timeout)
+        except FutureTimeout:
+            # Open the artifacts while the container can still be exec'd into: the caller's
+            # post-agent chmod and stats both need a live container. This has to be a *blocking*
+            # exec with its own deadline — a detached one is still queued when the kill lands, and
+            # the ledger dir then stays root-owned 700 where no host-side read can follow it.
+            chmod_ex = ThreadPoolExecutor(max_workers=1)
+            try:
+                chmod_ex.submit(
+                    container.exec_run,
+                    ["sh", "-c", "chmod -R a+rX /opt/trial /opt/agent/state /opt/agent/home "
+                                 "2>/dev/null; true"],
+                    stdout=False, stderr=False).result(timeout=10)
+            except Exception:  # noqa: BLE001 - best effort before the kill
+                pass
+            finally:
+                chmod_ex.shutdown(wait=False)
+            try:  # killing the container closes the stream, which ends the pump thread
+                container.kill()
+            except Exception:  # noqa: BLE001
+                pass
+            fut.cancel()
+            return None
+    finally:
+        ex.shutdown(wait=False)
+
+
+def context_stats_from_dir(trial_dir: Path) -> dict:
+    """Trim/recall counts for a trial whose container is already gone (killed on timeout).
+
+    The same program the live path runs, pointed at the bind mount instead of exec'd into a
+    container, so the two paths cannot drift. Two things only this path has to handle:
+
+    * the writer may have died with rows still in the WAL. A read-only connection on the live files
+      counted 0 where the ledger held 1, so the program copies db+wal aside and lets sqlite replay
+      them;
+    * a trial killed before the chmod watcher's first pass leaves the ledger dirs root-owned 700.
+      Globbing finds nothing there and sqlite would happily open a NEW empty db, which reads as
+      "this trial never trimmed"; that case is reported as None, not 0.
+    """
+    for d in (trial_dir / "state" / "context" / "sessions", trial_dir / "context" / "sessions"):
+        if d.is_dir():
+            try:
+                next(d.iterdir(), None)
+            except PermissionError:
+                return {"trims": None, "recall_calls": 0}
+    stats = _run_stats_program(trial_dir)
+    return stats if stats is not None else {"trims": None, "recall_calls": 0}
 
 
 def trial_model_id(trial_dir: Path) -> str | None:
@@ -420,7 +546,7 @@ def cost_report(run_dir: Path, model: str | None) -> None:
         if model_id and price_for(model_id) == FREE_PRICE:
             unknown.add(model_id)
         cost = estimate_cost(model_id, meta.get("tokens") or {})
-        stamped = {"cost_usd": round(cost, 4)}
+        stamped = {"cost_usd": cost_or_none(model_id, meta.get("tokens") or {})}
         if model_id:
             stamped["model"] = model_id
         if any(meta.get(k) != v for k, v in stamped.items()):  # idempotent re-runs
@@ -471,12 +597,90 @@ def cost_report(run_dir: Path, model: str | None) -> None:
           f"--display-name <display-name>")
 
 
-def run_trial(client, inst, arm, args, run_dir: Path) -> dict:
+CHAIN_PREAMBLE = """You are continuing ONE long working session in this repository. Tasks 1-{prev} are finished and their changes are gone: the working tree has been reset to the base commit. Do not re-open, re-apply or reference earlier tasks; treat what is in your history as work already shipped.
+
+New task:
+"""
+
+
+def _chunks(items: list, size: int):
+    if not size or size >= len(items):
+        yield items
+        return
+    for i in range(0, len(items), size):
+        yield items[i:i + size]
+
+
+def group_for_chaining(instances: list, arms: list, chain_max: int) -> list:
+    """[(arm, chain_label, instances)] in an order both arms see identically.
+
+    Grouping by repo keeps the tasks of a chain in one codebase, so earlier turns stay relevant to
+    later ones; the order is fixed (sorted ids) because a chain whose tasks differ between arms
+    would not be a comparison of anything.
+    """
+    by_repo: dict[str, list] = {}
+    for inst in sorted(instances, key=lambda i: i["instance_id"]):
+        by_repo.setdefault(inst.get("repo") or inst["instance_id"].rsplit("-", 1)[0], []).append(inst)
+    groups = []
+    for arm in arms:
+        for repo in sorted(by_repo):
+            for part, chunk in enumerate(_chunks(by_repo[repo], chain_max)):
+                groups.append((arm, repo if not chain_max else f"{repo}-p{part}", chunk))
+    return groups
+
+
+def run_chain(client, insts: list, arm: str, args, run_dir: Path, repo: str) -> list:
+    """One session, many tasks: each task is a fresh container on its own base commit, but every
+    task continues the same opencode session against one shared trim ledger, so the conversation
+    grows past what any single task could produce. Scores stay per-instance and comparable to the
+    flat runs because each task's patch is taken against its own base and the tree is reset after.
+    """
+    chain_dir = run_dir / "_chains" / f"{arm}-{repo.replace('/', '_')}-{args.run_id}"
+    chain_dir.mkdir(parents=True, exist_ok=True)
+    chain = {"dir": str(chain_dir), "label": repo, "pos": 0, "session_id": None, "trims": None,
+             "recall": {}}
+    metas = []
+    for pos, inst in enumerate(insts):
+        chain["pos"] = pos
+        meta = run_trial(client, inst, arm, args, run_dir, chain=chain)
+        if meta.get("session_id"):
+            chain["session_id"] = meta["session_id"]
+        elif pos + 1 < len(insts):
+            log(f"chain={repo} arm={arm} task={meta['instance_id']} gave no session id; "
+                f"the remaining {len(insts) - pos - 1} task(s) start a fresh session")
+        metas.append(meta)
+    log(f"chain={repo} arm={arm} finished {len(metas)} tasks session={chain['session_id']} "
+        f"trims={chain['trims']} recall={sum((chain['recall'] or {}).values())}")
+    return metas
+
+
+def run_trial(client, inst, arm, args, run_dir: Path, chain: dict | None = None) -> dict:
     iid = inst["instance_id"]
     trial_dir = run_dir / arm / iid
-    for sub in ("home", "state", "logs"):
-        (trial_dir / sub).mkdir(parents=True, exist_ok=True)
-    meta = {"instance_id": iid, "arm": arm, "image": inst["image"], "code_sha": CODE_SHA}
+    (trial_dir / "logs").mkdir(parents=True, exist_ok=True)
+    # Flat runs keep the agent home + trim ledger inside the trial dir, as they always have. A
+    # chained run points them at its chain dir instead: that shared store IS the long horizon, and
+    # the per-trial dirs keep prompt/patch/requests/score so scoring and reporting never change.
+    if chain is None:
+        agent_home, agent_state = trial_dir / "home", trial_dir / "state"
+    else:
+        agent_home, agent_state = Path(chain["dir"]) / "home", Path(chain["dir"]) / "state"
+    agent_home.mkdir(parents=True, exist_ok=True)
+    agent_state.mkdir(parents=True, exist_ok=True)
+    if chain is not None:
+        for name, target in (("home", agent_home), ("state", agent_state)):
+            link = trial_dir / name
+            if not link.is_symlink() and not link.exists():
+                link.symlink_to(target)
+    meta = {"instance_id": iid, "arm": arm, "image": inst["image"], "code_sha": CODE_SHA,
+            # The thresholds are what make a peak interpretable (a 59k trial at trim_at=60k and one
+            # at trim_at=40k are different results), and without them a results dir can only be read
+            # through the run id that named them.
+            "trim_at": args.trim_at, "native_at": args.native_at,
+            "context_limit": args.context_limit}
+    if chain is not None:
+        meta.update({"chain": chain["label"], "chain_pos": chain["pos"],
+                     "chain_session": chain["session_id"]})
     t0 = time.time()
     container = None
     log(f"{iid} arm={arm} start (pulls image if not local)")
@@ -498,6 +702,8 @@ def run_trial(client, inst, arm, args, run_dir: Path) -> dict:
                 str(args.node_bin_dir): {"bind": "/opt/node", "mode": "ro"},
                 str(REPO_ROOT): {"bind": REPO_MOUNT, "mode": "ro"},
                 str(trial_dir): {"bind": "/opt/trial", "mode": "rw"},
+                str(agent_home): {"bind": "/opt/agent/home", "mode": "rw"},
+                str(agent_state): {"bind": "/opt/agent/state", "mode": "rw"},
             },
         )
         # The session store makes itself 0700 (private by design) and the pass below opens the
@@ -506,8 +712,8 @@ def run_trial(client, inst, arm, args, run_dir: Path) -> dict:
         # agent works; the loop dies with the container, and it skips /opt/trial/home (npm/opencode
         # caches) so it stays cheap.
         container.exec_run(
-            ["sh", "-c", "while :; do chmod -R a+rX /opt/trial/state /opt/trial/requests "
-                          "/opt/trial/logs 2>/dev/null; sleep 30; done"],
+            ["sh", "-c", "while :; do chmod -R a+rX /opt/trial/requests /opt/trial/logs "
+                          "/opt/agent/state 2>/dev/null; sleep 5; done"],
             detach=True,
         )
         models = [args.model]
@@ -520,7 +726,7 @@ def run_trial(client, inst, arm, args, run_dir: Path) -> dict:
             route = re.match(r"https?://[^/]+(/.*)?$", upstream)
             base_url = f"http://127.0.0.1:{capture_port}{(route.group(1) if route and route.group(1) else '')}"
             meta["capture_port"] = capture_port
-        write_agent_config(trial_dir / "home", args.provider_cfg, models, arm, REPO_MOUNT,
+        write_agent_config(agent_home, args.provider_cfg, models, arm, REPO_MOUNT,
                            trim_at=args.trim_at, context_limit=args.context_limit, native_at=args.native_at,
                            base_url=base_url)
         image_env = dict(
@@ -528,16 +734,18 @@ def run_trial(client, inst, arm, args, run_dir: Path) -> dict:
         )
         image_path = image_env.get("PATH", "/usr/local/bin:/usr/bin:/bin")
         env = {
-            "HOME": "/opt/trial/home",
-            "XDG_CONFIG_HOME": "/opt/trial/home/.config",
-            "XDG_DATA_HOME": "/opt/trial/home/.local/share",
-            "XDG_CACHE_HOME": "/opt/trial/home/.cache",
+            "HOME": "/opt/agent/home",
+            "XDG_CONFIG_HOME": "/opt/agent/home/.config",
+            "XDG_DATA_HOME": "/opt/agent/home/.local/share",
+            "XDG_CACHE_HOME": "/opt/agent/home/.cache",
             "PATH": f"/opt/node:/opt/opencodebin:{image_path}",
-            "SMARTER_COMPACT_STATE_DIR": "/opt/trial/state",
+            "SMARTER_COMPACT_STATE_DIR": "/opt/agent/state",
             "SMARTER_COMPACT_AUTO_PROXY": "0",
             "CONTEXT_TRIM_AT_TOKENS": str(args.trim_at),
         }
         prompt = PROBLEM_LOCK.format(problem_statement=inst["problem_statement"])
+        if chain is not None and chain["pos"] > 0:
+            prompt = CHAIN_PREAMBLE.format(prev=chain["pos"]) + prompt
         (trial_dir / "prompt.txt").write_text(prompt)
         # Keep test-run byproducts out of `git add -A` (and the patch): uncommitted exclude file.
         container.exec_run(
@@ -548,55 +756,97 @@ def run_trial(client, inst, arm, args, run_dir: Path) -> dict:
             "/opt/opencodebin/opencode", "run", "--standalone", "--print-logs", "--auto",
             "--format", "json", "--model", f"local/{args.model}", "-",
         ]
-        inner = "cd /testbed && " + " ".join(shlex.quote(c) for c in oc_cmd) + " < /opt/trial/prompt.txt"
-        def agent_exec():
-            return container.exec_run(
-                ["env"] + [f"{k}={v}" for k, v in env.items()] + ["sh", "-c", inner],
-                stdout=True, stderr=True, tty=False,
-                socket=False, demux=False,
-            )
-
-        try:
-            with ThreadPoolExecutor(max_workers=1) as ex:
-                result = ex.submit(agent_exec).result(timeout=args.timeout)
-        except FutureTimeout:
+        if chain is not None and chain.get("session_id"):
+            # Same session id, new container: the conversation and its trim ledger come from the
+            # chain store, so context keeps accumulating across tasks.
+            oc_cmd[-1:-1] = ["--session", chain["session_id"]]
+            meta["chain_resumed"] = True
+        # The agent writes its own stream to a file (see exec_stream): a pipe would be block-buffered
+        # inside the agent process and lost whole when a timeout kills it.
+        stream_in_container = "/opt/trial/logs/agent_stream.jsonl"
+        inner = ("cd /testbed && " + " ".join(shlex.quote(c) for c in oc_cmd)
+                 + " < /opt/trial/prompt.txt > " + stream_in_container + " 2>&1")
+        exit_code = exec_stream(
+            container,
+            ["env"] + [f"{k}={v}" for k, v in env.items()] + ["sh", "-c", inner],
+            trial_dir / "logs" / "agent_stream.jsonl",
+            timeout=args.timeout, durable=True)
+        if exit_code is None:
             meta["agent_exit"] = -1
-            meta["agent_seconds"] = round(time.time() - t0, 1)
             meta["error"] = "agent: timeout"
-            try:  # kill so the exec thread dies with the container
-                container.kill()
-            except Exception:  # noqa: BLE001
-                pass
-            result = None
-        with open(trial_dir / "logs" / "agent_stream.jsonl", "wb") as f:
-            f.write(b"" if result is None else (result.output if isinstance(result.output, bytes) else result.output.encode()))
-        if result is not None:
-            meta["agent_exit"] = result.exit_code
+        else:
+            meta["agent_exit"] = exit_code
         meta["agent_seconds"] = round(time.time() - t0, 1)
         meta["tokens"] = extract_tokens(trial_dir / "logs" / "agent_stream.jsonl")
+        meta["session_id"] = meta["tokens"].pop("session_id", None)
+        meta["max_prompt_tokens"] = meta["tokens"].pop("max_prompt_tokens", 0)
         meta["model"] = args.model
-        meta["cost_usd"] = round(estimate_cost(args.model, meta["tokens"]), 4)
+        meta["cost_usd"] = cost_or_none(args.model, meta["tokens"])
 
-        patch = container.exec_run(
-            ["sh", "-c", "cd /testbed && git add -A && git diff --cached"],
-            stdout=True, stderr=True, tty=False,
-        )
-        patch_text = patch.output.decode(errors="replace")
-        (trial_dir / "patch.diff").write_text(patch_text)
-        meta["patch_bytes"] = len(patch_text)
+        if exit_code is None:
+            # Nothing else can be read from a killed container: no patch, no chain reset, and
+            # `patch_bytes` stays unset so score_trial is skipped and the trial is unscored
+            # rather than scored as an empty patch. The trim ledger and the request capture are on
+            # the bind mounts, so those still land in meta below.
+            stats = context_stats_from_dir(trial_dir)
+        else:
+            patch = container.exec_run(
+                ["sh", "-c", "cd /testbed && git add -A && git diff --cached"],
+                stdout=True, stderr=True, tty=False,
+            )
+            patch_text = patch.output.decode(errors="replace")
+            (trial_dir / "patch.diff").write_text(patch_text)
+            meta["patch_bytes"] = len(patch_text)
+            if chain is not None:
+                # The conversation stays whole; the tree does not. Each task is scored against its own
+                # base commit, so the next one starts from a pristine checkout.
+                reset = container.exec_run(
+                    ["sh", "-c", "cd /testbed && git reset --hard -q && git clean -fdq"],
+                    stdout=True, stderr=True, tty=False)
+                meta["chain_reset_exit"] = reset.exit_code
 
-        # Artifacts land root-owned; make them readable by the bench user before removal.
-        container.exec_run(["chmod", "-R", "a+rX", "/opt/trial"], stdout=False, stderr=False)
+            # Artifacts land root-owned; make them readable by the bench user before removal.
+            container.exec_run(["sh", "-c", "chmod -R a+rX /opt/trial /opt/agent/state "
+                                            "/opt/agent/home 2>/dev/null; true"], stdout=False, stderr=False)
 
         # Store-trim + recall evidence (in-container: a WAL db read from the host can demand
         # recovery or miss uncheckpointed rows). `recall_available` matters as much as the
         # count: a smart trial where the tools never answered is a masking result, not a
         # mechanism result, and must not be scored as one.
-        stats = context_stats_in_container(container)
-        meta["trims"] = stats.get("trims")
-        recall = stats.get("recall_calls") or {}
-        meta["recall_calls"] = sum(recall.values())
-        meta["recall_tools"] = recall
+        meta["trims_source"] = "host-dir" if exit_code is None else "in-container"
+        stats = (context_stats_from_dir(trial_dir) if exit_code is None
+                 else context_stats_in_container(container))
+        # The store's own ledger is the source: one `events` row per trim (with the tokens around
+        # it) and one `messages` row per tool call. recall_server_calls comes from the recall MCP
+        # server's own log, which current builds do not write -- kept because a nonzero count there
+        # is the only proof the server was reachable, and 0 means nothing either way.
+        recall = stats.get("recall_ledger") or {}
+        if chain is None:
+            meta["trims"] = stats.get("trims")
+            meta["recall_calls"] = stats.get("recall_calls") or 0
+            meta["recall_tools"] = recall
+            meta["recall_server_calls"] = stats.get("recall_server_calls") or {}
+        else:
+            # A chain has ONE ledger, so the raw counts are cumulative: keep them, and report the
+            # task's own delta so a trim storm can be pinned to the task that caused it.
+            total_trims = stats.get("trims")
+            meta["trims_total"] = total_trims
+            prev_recall = chain.get("recall") or {}
+            meta["recall_tools"] = {k: v - prev_recall.get(k, 0) for k, v in recall.items()}
+            meta["recall_calls"] = sum(meta["recall_tools"].values())
+            meta["recall_server_calls"] = stats.get("recall_server_calls") or {}
+            meta["trims"] = (total_trims - chain["trims"]
+                             if total_trims is not None and chain.get("trims") is not None
+                             else total_trims)
+            chain["trims"], chain["recall"] = total_trims, recall
+        if stats.get("trims") is not None:
+            meta["trims_dropped"] = stats.get("trims_dropped")
+            meta["trims_peak_before"] = stats.get("trims_peak_before")
+        # The store's peak stands on its own: on a trial whose stream never made it out of the
+        # agent's buffer it is the only surviving measure of how big the context got.
+        if stats.get("usage_peak_ctx"):
+            meta["peak_ctx_store"] = stats["usage_peak_ctx"]
+        meta["ledger_unreadable"] = bool(stats.get("ledger_unreadable"))
         if arm == "smart":
             # Availability comes from the request itself when the forwarder ran: `mcp connected
             # tools=4` proves OpenCode loaded the tools, only the request proves the model was
@@ -628,8 +878,15 @@ def run_trial(client, inst, arm, args, run_dir: Path) -> dict:
             except Exception:  # noqa: BLE001
                 pass
     # Score-as-you-go: harness runs this instance's tests in a fresh container
-    # right after the patch lands, so `resolved` is live per trial.
-    if meta.get("patch_bytes") is not None:
+    # right after the patch lands, so `resolved` is live per trial — in a chain too, which is the
+    # only place the number gets tied to the task that earned it. Measured cost of this call in the
+    # flat run was 26s median on django, 95s on astropy (trial wall minus agent wall), so keeping
+    # it inside the loop is nearly free; a claim that django scoring cost ten minutes here was an
+    # orphaned container from a killed parent, not a measurement. `--defer-score` moves it to
+    # `--score-only` for when a repo's suite really is the long pole.
+    if args.defer_score:
+        meta["score_deferred"] = True
+    if meta.get("patch_bytes") is not None and not args.defer_score:
         try:
             meta["resolved"] = score_trial(inst, trial_dir, arm, args)
         except Exception as e:  # noqa: BLE001 - scoring must not fail the trial
@@ -809,43 +1066,139 @@ def mlflow_log_scores(run_id: str, display_name: str, arm: str, report: dict) ->
     ))
 
 
-CONTEXT_STATS_PY = """
-import glob, json, sqlite3
-trims, recall, err = 0, {}, False
-for db in glob.glob('/opt/trial/state/context/sessions/*.db'):
+CONTEXT_STATS_PY = r"""
+import glob, json, os, shutil, sqlite3, sys, tempfile
+base = sys.argv[1]
+# The store's own db (not opencode's): `events` has one row per trim with the token counts around
+# it, and `messages` has one row per tool call, so both numbers come from what the plugin recorded
+# rather than from anything the model echoed back.
+TRIMS_QUERY = ("select count(*), coalesce(sum(dropped), 0), coalesce(max(tokens_before), 0) "
+               "from events where kind = 'trim'")
+RECALL_NAME = ("(name like '%smart_compact_search%' or name like '%smart_compact_sql%' "
+               "or name like '%smart_compact_context%')")
+CALLS_QUERY = "select count(*) from messages where kind = 'tool_use' and " + RECALL_NAME
+DONE_QUERY = "select count(*) from messages where kind = 'tool_result' and " + RECALL_NAME
+LEDGER_QUERY = ("select name, count(*) from messages where kind = 'tool_use' and " + RECALL_NAME
+                + " group by name")
+# The store's own measure of how big the context got, from the usage rows it logged. It stands on
+# its own when the stream is missing or truncated, which is what a killed trial looks like.
+USAGE_QUERY = ("select max(coalesce(input_tokens,0) + coalesce(cache_read_tokens,0)) from events "
+               "where kind = 'usage'")
+# `<trial>/state` is bind-mounted at /opt/agent/state and also sits under the /opt/trial mount, so
+# globbing both roots read every db twice and reported double every count -- the store said 3 and
+# the runner said 6 in every run before this dedupe. Dedupe by (dev, inode): a bind mount is not a
+# symlink, so realpath gives two different strings for one file.
+seen = set()
+def once(patterns):
+    for root in (os.path.join(base, 'state'), base):
+        for pat in patterns:
+            for p in glob.glob(os.path.join(root, pat)):
+                try: key = (os.stat(p).st_dev, os.stat(p).st_ino)
+                except OSError: key = ('path', p)
+                if key not in seen:
+                    seen.add(key); yield p
+trims = dropped = peak_before = calls = completed = 0
+usage_peak = None
+# A ledger dir that exists but cannot be listed is not an empty one: the artifacts are created
+# root-owned inside the container, and a trial killed before the chmod watcher reached this dir
+# leaves it 700. Reporting that as 0 trims would read as "this trial never trimmed".
+unreadable = any(os.path.isdir(d) and not os.access(d, os.R_OK)
+                 for d in (os.path.join(base, 'state', 'context', 'sessions'),
+                           os.path.join(base, 'context', 'sessions')))
+by_name: dict = {}
+found_db = events_found = ledger_error = False
+for db in once(['context/sessions/*.db']):
     try:
-        con = sqlite3.connect('file:' + db + '?mode=ro', uri=True)
-        trims += con.execute("select count(*) from events where kind = 'trim'").fetchone()[0]
-        con.close()
+        with tempfile.TemporaryDirectory() as tmp:
+            # db and -wal only: a copied -shm carries the writer process's own recovery state, which
+            # makes sqlite skip the WAL it should replay (measured: a killed trial read 0 with -shm
+            # copied, 1 without it). Copying at all is what lets a read follow a dead writer -- a
+            # read-only connection to a db with an open WAL fails outright.
+            for suffix in ('', '-wal'):
+                src = db + suffix
+                if os.path.isfile(src):
+                    dst = os.path.join(tmp, os.path.basename(src))
+                    shutil.copyfile(src, dst); os.chmod(dst, 0o600)
+            con = sqlite3.connect(os.path.join(tmp, os.path.basename(db)))
+            con.text_factory = str
+            found_db = True
+            try:
+                n, drop, before = con.execute(TRIMS_QUERY).fetchone()
+                trims += n or 0; dropped += drop or 0; peak_before = max(peak_before, before or 0)
+                events_found = True
+            except Exception:
+                pass          # no events table: trims stays unknown rather than zero
+            try:
+                u = con.execute(USAGE_QUERY).fetchone()[0]
+                if u and (usage_peak is None or u > usage_peak):
+                    usage_peak = u
+            except Exception:
+                pass
+            try:
+                calls += con.execute(CALLS_QUERY).fetchone()[0] or 0
+                completed += con.execute(DONE_QUERY).fetchone()[0] or 0
+                for name, n in con.execute(LEDGER_QUERY).fetchall():
+                    by_name[name] = by_name.get(name, 0) + (n or 0)
+            except Exception:
+                pass
+            con.close()
     except Exception:
-        err = True
-# tool-calls.jsonl is appended by the recall MCP server itself, so a nonzero count proves
-# the server was reachable from the agent, not merely that the model tried to reach it.
-for path in glob.glob('/opt/trial/state/context/tool-calls.jsonl'):
+        ledger_error = True   # a db that would not open: counts so far are a lower bound
+# tool-calls.jsonl is appended by the recall MCP server itself, so a nonzero count proves the server
+# was reachable from the agent. Current builds do not write it; it stays read so a build that does
+# is not silently missed.
+server = {}
+for path in once(['context/tool-calls.jsonl']):
     try:
         with open(path) as fh:
             for raw in fh:
-                try:
-                    name = json.loads(raw).get('tool')
-                except Exception:
-                    continue
-                if name:
-                    recall[name] = recall.get(name, 0) + 1
+                try: name = json.loads(raw).get('tool')
+                except Exception: continue
+                if name: server[name] = server.get(name, 0) + 1
     except Exception:
         pass
-print(json.dumps({'trims': None if err else trims, 'recall_calls': recall}))
+print(json.dumps({'trims': trims if events_found else None, 'trims_dropped': dropped,
+                  'trims_peak_before': peak_before, 'usage_peak_ctx': usage_peak,
+                  'recall_calls': calls,
+                  'recall_ledger': by_name, 'recall_completed': completed,
+                  'recall_server_calls': server, 'ledger_found': found_db,
+                  'events_found': events_found, 'ledger_error': ledger_error,
+                  'ledger_unreadable': unreadable}))
 """
 
 
-def context_stats_in_container(container) -> dict:
-    r = container.exec_run(
-        ["sh", "-c", f"python3 - <<'PY'\n{CONTEXT_STATS_PY}PY"],
-        stdout=True, stderr=True, tty=False,
-    )
+def _run_stats_program(trial_dir: Path) -> dict | None:
+    """Run the one stats program against a trial dir on this machine, or None if it did not run."""
     try:
-        return json.loads(r.output.decode().strip().splitlines()[-1])
-    except Exception:  # noqa: BLE001 - no python3/sqlite in image, or schema mismatch
-        return {"trims": None, "recall_calls": {}}
+        out = subprocess.run([sys.executable, "-c", CONTEXT_STATS_PY, str(trial_dir)],
+                             capture_output=True, text=True, timeout=120)
+    except Exception:  # noqa: BLE001
+        return None
+    for line in reversed(out.stdout.strip().splitlines()):
+        try:
+            return json.loads(line)
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
+
+def context_stats_in_container(container) -> dict:
+    """Trim/recall counts for a live trial, read where the ledger lives.
+
+    Same program the host fallback runs, so the two paths cannot drift.
+    """
+    r = container.exec_run(["python3", "-c", CONTEXT_STATS_PY, "/opt/trial"],
+                           stdout=True, stderr=True, tty=False)
+    try:
+        out = r.output.decode()
+    except Exception:  # noqa: BLE001
+        return {"trims": None, "recall_calls": 0}
+    for line in reversed(out.strip().splitlines()):
+        try:
+            return json.loads(line)
+        except Exception:  # noqa: BLE001
+            continue
+    return {"trims": None, "recall_calls": 0}
 
 
 def score_arms(run_dir: Path, instances: list, instance_ids: list, arms: list, display_name: str, run_id: str, parallel: int) -> None:
@@ -892,6 +1245,14 @@ def main() -> None:
     ap.add_argument("--context-limit", type=int, default=102400, help="model context window; native compaction is pinned to (limit - reserved)")
     ap.add_argument("--native-at", type=int, default=None, help="native opencode compaction trigger in tokens for BOTH arms (default: none=trim_at, smart=1.5x trim capped)")
     ap.add_argument("--timeout", type=int, default=2400, help="per-trial agent timeout (s)")
+    ap.add_argument("--chain", action="store_true", help="one session per repo: that repo's "
+        "instances run back to back in the SAME session (tree reset between tasks), so context "
+        "accumulates across tasks the way a real work session does")
+    ap.add_argument("--chain-max", type=int, default=0, help="split a repo's chain into batches of "
+        "at most N tasks (0 = one chain per repo)")
+    ap.add_argument("--defer-score", action="store_true", help="skip the per-trial test run and "
+        "score afterwards with --score-only (per-trial scoring costs ~26s on django, ~95s on "
+        "astropy; only worth deferring for a suite that really is the long pole)")
     ap.add_argument("--parallel", type=int, default=2)
     ap.add_argument("--evict-images", action="store_true", help="remove each instance's image after its last trial (layer-shared base layers survive); avoids mid-run docker prunes")
     ap.add_argument("--run-id", default=time.strftime("%Y%m%d-%H%M%S"))
@@ -955,8 +1316,12 @@ def main() -> None:
     # Group jobs by repo (and keep an instance's arms adjacent) so parallel workers
     # hit images sharing base layers back-to-back, and --evict-images reclaims the
     # repo-unique layers as each repo drains instead of needing mid-run prunes.
-    jobs = sorted(((inst, arm) for arm in arms for inst in instances),
-                  key=lambda j: (j[0]["repo"], j[0]["instance_id"], j[1]))
+    groups = group_for_chaining(instances, arms, args.chain_max) if args.chain else None
+    jobs = None if args.chain else sorted(
+        ((inst, arm) for arm in arms for inst in instances),
+        key=lambda j: (j[0]["repo"], j[0]["instance_id"], j[1]))
+    if args.chain:
+        log("chains: " + "  ".join(f"{a}:{r}x{len(i)}" for a, r, i in groups))
 
     remaining = collections.Counter()
     for inst in instances:
@@ -980,8 +1345,16 @@ def main() -> None:
                     except Exception:
                         pass
 
-    with ThreadPoolExecutor(max_workers=args.parallel) as pool:
-        metas = list(pool.map(lambda j: run_and_evict(j[0], j[1]), jobs))
+    if args.chain:
+        # Image eviction is per-image-count and a chain needs its repo's images until the chain
+        # ends, so chained runs leave images alone and rely on `docker image prune -a -f` after.
+        with ThreadPoolExecutor(max_workers=args.parallel) as pool:
+            futures = [pool.submit(run_chain, client, insts, arm, args, run_dir, repo)
+                       for arm, repo, insts in groups]
+            metas = [m for fut in as_completed(futures) for m in fut.result()]
+    else:
+        with ThreadPoolExecutor(max_workers=args.parallel) as pool:
+            metas = list(pool.map(lambda j: run_and_evict(j[0], j[1]), jobs))
 
     if args.skip_batch_score:
         log("batch scoring skipped (per-trial scores are in each trial dir + mlflow)")
