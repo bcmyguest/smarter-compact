@@ -17,7 +17,7 @@ The agent searches the store with `smart_compact_search`, `smart_compact_sql`, a
 
 **Learn more:** [Smart compaction](https://bcmyguest.github.io/smarter-compact/context-management.html) (benchmarks and how it trims) · [Context proxy & port](https://bcmyguest.github.io/smarter-compact/context-proxy.html) · [Context store](https://bcmyguest.github.io/smarter-compact/context-store.html)
 
-**Benchmarks:** In seed-matched [ContextBench](https://github.com/RulinShao/ContextBench) log tasks on Haiku 5.5, smart compaction scored **0.469** higher than keep-everything (95% bootstrap interval 0.339–0.578; eight pairs). Costs fell at R4000, L6400, and L12800. kv-store is a small ceiling test (all arms tie at R4000); the chart below is log-triage only. [Full tables and charts](https://bcmyguest.github.io/smarter-compact/context-management.html#benchmarks) · [methods](https://bcmyguest.github.io/smarter-compact/context-research.html).
+**Benchmarks:** In seed-matched [ContextBench](https://github.com/RulinShao/ContextBench) (Context Language Models, [arXiv:2609.37725](https://arxiv.org/abs/2609.37725); [Hugging Face dataset](https://huggingface.co/datasets/context-language-model/ContextBench)) log tasks on Haiku 5.5, smart compaction scored **0.469** higher than keep-everything (95% bootstrap interval 0.339–0.578; eight pairs). Costs fell at R4000, L6400, and L12800. kv-store is a small ceiling test (all arms tie at R4000); the chart below is log-triage only. [Full tables and charts](https://bcmyguest.github.io/smarter-compact/context-management.html#benchmarks) · [methods](https://bcmyguest.github.io/smarter-compact/context-research.html).
 
 <p align="center">
 <picture>
