@@ -1,10 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   addStandingInstruction,
   pointerText,
   recallToolNames,
   standingInstruction,
+  trimContext,
+  trimSettings,
 } from "../plugin/lib/context-trim.mjs";
 
 // The pointer note and the standing instruction are what make a trimmed-away past recoverable: they
@@ -155,4 +160,19 @@ test("tools arrive as a list, a keyed object, or a definitions wrapper", () => {
   const none = recallToolNames({ shell: {}, read: {} });
   assert.deepEqual([none.search, none.sql, none.offered.length, none.seen],
     ["smart_compact_search", "smart_compact_sql", 0, 2]);
+});
+
+test("CONTEXT_TRIM_MIN_GAIN_TOKENS skips a trim that frees too little", async () => {
+  const text = (role, t) => ({ role, content: [{ type: "text", text: t }] });
+  const messages = [];
+  for (let i = 0; i < 3; i++) messages.push(text("user", `question ${i} ${"q".repeat(200)}`), text("assistant", `answer ${i}`));
+  messages.push(text("user", "now this"));
+  assert.equal(trimSettings({}, os.tmpdir()).trimMinGainTokens, 0);
+  const run = async (gain) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "sc-gain-"));
+    const settings = trimSettings({ CONTEXT_TRIM_AT_TOKENS: "1", CONTEXT_TRIM_MIN_GAIN_TOKENS: String(gain), CONTEXT_COMPACTION_RECALL: "0", SMARTER_COMPACT_STATE_DIR: home }, home);
+    try { return await trimContext({ sessionID: SID, messages }, settings); } finally { fs.rmSync(home, { recursive: true, force: true }); }
+  };
+  assert.equal(await run(1e9), messages);
+  assert.ok((await run(1)).length < messages.length);
 });

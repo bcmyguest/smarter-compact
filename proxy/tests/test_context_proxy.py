@@ -289,6 +289,19 @@ class AnthropicTrimTests(Base):
         self.assertEqual(out["messages"], [{"role": "user", "content": "title please"}])
         self.assertTrue((self.ctx / "sessions" / f"{SID}.force").exists())
 
+    def test_min_gain_skips_a_small_trim(self):
+        msgs = anth_history(3)
+        out = self.run_req(anth_request(copy.deepcopy(msgs)), trim_at_tokens=1, trim_min_gain_tokens=10 ** 9)
+        self.assertEqual(out["messages"], msgs)
+        self.assertEqual(self.log_rows(), [])
+        out = self.run_req(anth_request(copy.deepcopy(msgs)), trim_at_tokens=1, trim_min_gain_tokens=1)
+        self.assertLess(len(out["messages"]), len(msgs))
+
+    def test_force_trims_below_min_gain(self):
+        self.force()
+        out = self.run_req(anth_request(copy.deepcopy(anth_history(2))), trim_min_gain_tokens=10 ** 9)
+        self.assertEqual(len(out["messages"]), 6)
+
     def test_side_thread_does_not_reset_main_cut(self):
         main = anth_history(3)
         first = self.run_req(anth_request(copy.deepcopy(main)), trim_at_tokens=1)["messages"]
@@ -948,6 +961,10 @@ class SafetyTests(Base):
         self.assertEqual(Settings.from_env({"CONTEXT_TRIM_TO_FRACTION": " 0.45 "}).trim_to_fraction, 0.45)
         for bad in ("0", "1", "-0.2", "1.5", "nan", "inf", "x", ""):
             self.assertEqual(Settings.from_env({"CONTEXT_TRIM_TO_FRACTION": bad}).trim_to_fraction, 0.53, bad)
+
+    def test_trim_min_gain_from_env(self):
+        self.assertEqual(Settings.from_env({}).trim_min_gain_tokens, 0)
+        self.assertEqual(Settings.from_env({"CONTEXT_TRIM_MIN_GAIN_TOKENS": "5000"}).trim_min_gain_tokens, 5000)
 
     def test_trim_at_by_model(self):
         s = Settings.from_env({})

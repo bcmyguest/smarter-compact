@@ -691,9 +691,15 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, http,
                 if new_gap is None and new_cut == cut:
                     new_gap = gap
             dropped = len(_droppable(adapter, items, new_cut, new_gap, first)) if new_cut is not None else 0
-            if dropped and (new_cut, new_gap) != (cut, gap):
+            moved = bool(dropped) and (new_cut, new_gap) != (cut, gap)
+            if moved:
                 new_strip, new_shown = latest_run_start(adapter, items), {}
-                render(adapter, items, new_cut, "", first, new_gap, new_strip, mode, new_shown)
+                bare = render(adapter, items, new_cut, "", first, new_gap, new_strip, mode, new_shown)
+                if not force and settings.trim_min_gain_tokens > 0:
+                    # A cut freeing fewer estimated tokens (pointer note not counted) waits for a bigger one.
+                    freed = tokens - estimate_prompt_tokens(base_chars + request_chars(bare), state.get("usage"), root, ratio)
+                    moved = freed >= settings.trim_min_gain_tokens
+            if moved:
                 # The pointer counts every message absent from the view: dropped, or emptied by the strip.
                 dropped = len(items) - len(new_shown)
                 note = _build_note(adapter, items, new_cut, sid, dropped, store, settings, http,

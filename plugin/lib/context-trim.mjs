@@ -181,6 +181,7 @@ export function trimSettings(env = process.env, home = env.HOME) {
     trimDefault: overrides.default ?? DEFAULT_TRIM_AT_TOKENS,
     trimFamilies: overrides.families,
     trimToFraction: fraction("CONTEXT_TRIM_TO_FRACTION", DEFAULT_TRIM_TO_FRACTION),
+    trimMinGainTokens: int("CONTEXT_TRIM_MIN_GAIN_TOKENS", 0),
     compressOverTokens: int("CONTEXT_COMPRESS_OVER_TOKENS", DEFAULT_COMPRESS_OVER_TOKENS),
     charsPerToken: positive("CONTEXT_CHARS_PER_TOKEN", DEFAULT_CHARS_PER_TOKEN),
     compactionMaxChars: int("CONTEXT_COMPACTION_MAX_CHARS", DEFAULT_COMPACTION_MAX_CHARS),
@@ -906,7 +907,13 @@ async function trimSession(request, settings, deps, { original, sid, store, item
         if (nextGap === null && next === cut) nextGap = gap;
       }
       const dropped = next !== null ? droppable(items, next, nextGap, first).length : 0;
-      if (dropped && (next !== cut || nextGap !== gap)) {
+      let moved = dropped > 0 && (next !== cut || nextGap !== gap);
+      if (moved && !force && settings.trimMinGainTokens > 0) {
+        // A cut freeing fewer estimated tokens (pointer note not counted) waits for a bigger one.
+        const bare = render(items, next, "", first, nextGap, decorate, latestRunStart(items));
+        moved = tokens - estimatePromptTokens(baseChars + requestChars(bare), state.usage, root, ratio) >= settings.trimMinGainTokens;
+      }
+      if (moved) {
         const ts = utcNow(deps.now?.());
         note = await buildNote(items, next, sid, dropped, store, settings, deps, toolNames);
         threads.delete(root);
