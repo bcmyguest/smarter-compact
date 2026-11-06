@@ -36,7 +36,7 @@ SERVER_CLEAR_EDIT = "clear_tool_uses_20250919"
 # A stream's applied context edits arrive in its final message_delta; this much of the stream's tail is scanned.
 STREAM_TAIL_BYTES = 65536
 # Tool exchanges a cut inside the in-flight turn always keeps; older ones stay while the request fits under
-# trim_to_fraction of the trim threshold.
+# the trim target (trim_to_for, capped at the trim threshold).
 MIN_TAIL_STEPS = 3
 # Added to the system prompt of every request while trimming is on, before any trim. The tool NAMES come from
 # the request: a coding agent namespaces MCP tools by server (OpenCode `smarter-compact.smart_compact_search`,
@@ -330,8 +330,8 @@ def choose_gap(adapter, items, cut, after, first, fits):
     """Start of the kept tail for a cut inside the turn at `cut`, > after; None when no gap is possible.
 
     The tail keeps the newest MIN_TAIL_STEPS tool exchanges, then older ones while fits(gap) holds (the request
-    stays under trim_to_fraction of the trim threshold). An exchange is never split: the tail starts at an adapter
-    step start.
+    stays under the trim target: trim_to_for, capped at the trim threshold). An exchange is never split: the tail
+    starts at an adapter step start.
     """
     starts = [j for j in range(cut + 2, len(items)) if adapter.is_step_start(items, j)]
     best = None
@@ -718,7 +718,8 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
         trim_at = settings.trim_at_for(request["model"])
         if force or tokens >= trim_at:
             new_clear = _next_clear(adapter, items, settings.clear_keep_results, clear)
-            target = trim_at * settings.trim_to_fraction
+            # A target at or above the threshold could not land a trim under it, so the threshold caps it.
+            target = min(settings.trim_to_for(request["model"]), trim_at)
             new_cut, new_gap = None, None
             if new_clear is not None and first is not None:
                 # Clearing first: the current cut, or the first user turn (dropping nothing), with the newer bound.

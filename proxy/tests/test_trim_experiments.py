@@ -2,6 +2,7 @@
 
 import copy
 import json
+import math
 import re
 import sys
 import unittest
@@ -360,7 +361,7 @@ class ClearResultsTests(Base):
                                                      "content": "later" + HUGE}]}]
         sent = self.clear(more, trim_at_tokens=BIG)
         # Over the threshold again: clearing s4 alone fits under the target, so nothing drops.
-        view = self.clear(more, trim_at_tokens=full_tokens(sent), trim_to_fraction=0.9)
+        view = self.clear(more, trim_at_tokens=full_tokens(sent), trim_to_tokens=math.ceil(0.9 * full_tokens(sent)))
         results = results_in(view)
         self.assertEqual(len(view), len(more))
         self.assertEqual((results["sM"], results["sL"]), ("later" + HUGE, "ok"))

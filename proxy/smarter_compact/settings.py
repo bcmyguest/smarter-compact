@@ -13,8 +13,10 @@ DEFAULT_TRIM_AT_TOKENS = 125000
 # Trim thresholds by model family (a substring of the lowercased model id), used while CONTEXT_TRIM_AT_TOKENS is
 # unset. Haiku's prompts over 100k tokens bill at a higher tier, so its sessions trim below it.
 MODEL_TRIM_AT_TOKENS = (("haiku", 95000),)
-# A trim keeps older in-turn exchanges while the request stays under this fraction of trim_at_tokens (Haiku: ~50K).
-DEFAULT_TRIM_TO_FRACTION = 0.53
+# A trim keeps older in-turn exchanges while the request stays under this many tokens, by model family like the
+# threshold, used while CONTEXT_TRIM_TO_TOKENS is unset.
+DEFAULT_TRIM_TO_TOKENS = 66000
+MODEL_TRIM_TO_TOKENS = (("haiku", 50000),)
 DEFAULT_SCRATCHPAD_NUDGE_AT = 0.75
 DEFAULT_COMPRESS_OVER_TOKENS = 4000
 DEFAULT_TTL_DAYS = 30
@@ -108,8 +110,10 @@ class Settings:
     trim_at_tokens: int = DEFAULT_TRIM_AT_TOKENS
     # MODEL_TRIM_AT_TOKENS picks the threshold, trim_at_tokens being the fallback (CONTEXT_TRIM_AT_TOKENS unset).
     trim_at_by_model: bool = False
-    # A trim lands under this fraction of trim_at_tokens, 0 < x < 1 (CONTEXT_TRIM_TO_FRACTION).
-    trim_to_fraction: float = DEFAULT_TRIM_TO_FRACTION
+    # A trim lands under this many tokens, capped at the trim threshold (CONTEXT_TRIM_TO_TOKENS, positive).
+    trim_to_tokens: int = DEFAULT_TRIM_TO_TOKENS
+    # MODEL_TRIM_TO_TOKENS picks the target, trim_to_tokens being the fallback (CONTEXT_TRIM_TO_TOKENS unset).
+    trim_to_by_model: bool = False
     # Kept items before the strip bound lose their tool_use/tool_result pairs, text stays (off by default; CONTEXT_STRIP_PROSE=1 turns it on).
     strip_prose: bool = False
     # Same region keeps tool_use, masks tool_result; wins over strip_prose (on by default; CONTEXT_MASK_OBSERVATIONS=0 turns it off).
@@ -169,7 +173,8 @@ class Settings:
             standing_instruction=_flag(env, "CONTEXT_STANDING_INSTRUCTION"),
             trim_at_tokens=_int(env, "CONTEXT_TRIM_AT_TOKENS", DEFAULT_TRIM_AT_TOKENS),
             trim_at_by_model=_int(env, "CONTEXT_TRIM_AT_TOKENS", None) is None,
-            trim_to_fraction=_fraction(env, "CONTEXT_TRIM_TO_FRACTION", DEFAULT_TRIM_TO_FRACTION),
+            trim_to_tokens=_positive_int(env, "CONTEXT_TRIM_TO_TOKENS", DEFAULT_TRIM_TO_TOKENS),
+            trim_to_by_model=_positive_int(env, "CONTEXT_TRIM_TO_TOKENS", 0) == 0,
             strip_prose=_flag(env, "CONTEXT_STRIP_PROSE", "0"),
             mask_observations=_flag(env, "CONTEXT_MASK_OBSERVATIONS", "1"),
             clear_keep_results=max(_int(env, "CONTEXT_CLEAR_KEEP_RESULTS", 10), 0),
@@ -211,3 +216,12 @@ class Settings:
                     return tokens
             return self.trim_default
         return self.trim_at_tokens
+
+    def trim_to_for(self, model):
+        """The token count a trim of a request to model (its id, or None) lands under."""
+        if self.trim_to_by_model and isinstance(model, str):
+            name = model.lower()
+            for family, tokens in MODEL_TRIM_TO_TOKENS:
+                if family in name:
+                    return tokens
+        return self.trim_to_tokens

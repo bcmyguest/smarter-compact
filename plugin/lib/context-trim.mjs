@@ -52,8 +52,12 @@ function mergedTrimFamilies(overrideFamilies) {
   for (const [k, v] of Object.entries(overrideFamilies)) map.set(k, v);
   return map;
 }
-/** A trim keeps older in-turn exchanges while the request stays under this fraction of trimAtTokens; same as the proxy. */
-export const DEFAULT_TRIM_TO_FRACTION = 0.53;
+/**
+ * A trim keeps older in-turn exchanges while the request stays under this many tokens, by model family like the
+ * threshold, used while CONTEXT_TRIM_TO_TOKENS is unset; same as the proxy.
+ */
+export const DEFAULT_TRIM_TO_TOKENS = 66000;
+export const MODEL_TRIM_TO_TOKENS = [["haiku", 50000]];
 export const DEFAULT_COMPRESS_OVER_TOKENS = 4000;
 /** Characters per prompt token before a session has reported usage (proxy/smarter_compact/tokens.py). */
 export const DEFAULT_CHARS_PER_TOKEN = 2.5;
@@ -178,6 +182,10 @@ export function trimSettings(env = process.env, home = env.HOME) {
     const value = float(name, fallback);
     return value > 0 ? value : fallback;
   };
+  const positiveInt = (name, fallback) => {
+    const value = int(name, fallback);
+    return value > 0 ? value : fallback;
+  };
   const fraction = (name, fallback) => {
     const value = float(name, fallback);
     return value > 0 && value < 1 ? value : fallback;
@@ -191,7 +199,8 @@ export function trimSettings(env = process.env, home = env.HOME) {
     trimAtByModel: int("CONTEXT_TRIM_AT_TOKENS", null) === null,
     trimDefault: overrides.default ?? DEFAULT_TRIM_AT_TOKENS,
     trimFamilies: overrides.families,
-    trimToFraction: fraction("CONTEXT_TRIM_TO_FRACTION", DEFAULT_TRIM_TO_FRACTION),
+    trimToTokens: positiveInt("CONTEXT_TRIM_TO_TOKENS", DEFAULT_TRIM_TO_TOKENS),
+    trimToByModel: positiveInt("CONTEXT_TRIM_TO_TOKENS", null) === null,
     trimMinGainTokens: int("CONTEXT_TRIM_MIN_GAIN_TOKENS", 0),
     // Strip prose before the cut, masking wins (CONTEXT_STRIP_PROSE=1, default off).
     stripProse: flag("CONTEXT_STRIP_PROSE", "0"),
@@ -221,6 +230,15 @@ export function trimAtFor(settings, model) {
     if (id.includes(family)) return tokens;
   }
   return settings.trimDefault ?? settings.trimAtTokens;
+}
+
+/** The token count a trim of a request to model lands under, before the threshold caps it; Settings.trim_to_for. */
+export function trimToFor(settings, model) {
+  const id = settings.trimToByModel ? modelName(model)?.toLowerCase() : null;
+  for (const [family, tokens] of id ? MODEL_TRIM_TO_TOKENS : []) {
+    if (id.includes(family)) return tokens;
+  }
+  return settings.trimToTokens ?? DEFAULT_TRIM_TO_TOKENS;
 }
 
 export function textTokens(text) {
@@ -549,7 +567,7 @@ function storeMessages(store, sid, settings, original, items, cut, view, ts, dep
 }
 
 // Tool exchanges a cut inside the in-flight turn always keeps; older ones stay while the request fits under
-// trimToFraction of the trim threshold.
+// the trim target (trimToFor, capped at the trim threshold).
 const MIN_TAIL_STEPS = 3;
 
 /** Index of the agent reply just before the cut turn (kept with it, so the turn reads in context), or null. */
@@ -604,7 +622,8 @@ function lastTurnIndex(items) {
 /**
  * Start of the kept tail for a cut inside the turn at `cut`, > after; null when no gap is possible. The tail
  * keeps the newest MIN_TAIL_STEPS tool exchanges, then older ones while fits(gap) holds (the request stays
- * under trimToFraction of the trim threshold). An exchange is never split: the tail starts at a step start.
+ * under the trim target: trimToFor, capped at the trim threshold). An exchange is never split: the tail starts
+ * at a step start.
  */
 export function chooseGap(items, cut, after, first, fits) {
   const starts = [];
@@ -1198,7 +1217,8 @@ async function trimSession(request, settings, deps, { original, sid, store, item
     const trimAt = trimAtFor(settings, request.model);
     if (force || tokens >= trimAt) {
       const nextClearAt = nextClear(items, settings.clearKeepResults, clear);
-      const target = trimAt * (settings.trimToFraction ?? DEFAULT_TRIM_TO_FRACTION);
+      // A target at or above the threshold could not land a trim under it, so the threshold caps it.
+      const target = Math.min(trimToFor(settings, request.model), trimAt);
       const under = (sizes, c, g) => {
         let chars = baseChars;
         for (const j of keptIndices(items, c, g, first)) chars += sizes[j];

@@ -25,7 +25,7 @@ OpenCode plugin options override the environment ([which reach what](#opencode-p
 | `CONTEXT_PROXY_ENABLED` | `1` | proxy, OpenCode 2 | `0` forwards requests unchanged: no trim, compression, store or standing instruction |
 | `CONTEXT_TRIM_AT_TOKENS` | unset | proxy, OpenCode 2 | Set: one threshold in estimated prompt tokens for every model. Unset: the model id picks a threshold from `CONTEXT_TRIM_AT_OVERRIDES` merged over built-in `haiku` 95000, else `default` 125000 |
 | `CONTEXT_TRIM_AT_OVERRIDES` | unset | proxy, OpenCode 2 | JSON `{"<family>": tokens, "default": tokens}`; a family matches a substring of the lowercased model id. The CLI fills it from `config.toml` `[context_proxy.trim_at]`; set it by hand only where `config.toml` is not read (Docker) |
-| `CONTEXT_TRIM_TO_FRACTION` | `0.53` | proxy, OpenCode 2 | Older in-turn tool steps stay while the request is under this fraction of the threshold; `0 < x < 1`, else the default |
+| `CONTEXT_TRIM_TO_TOKENS` | unset | proxy, OpenCode 2 | Older in-turn tool steps stay while the request is under this many estimated tokens, capped at the trim threshold. Set: one target for every model; a value that is not a positive integer counts as unset. Unset: built-in `haiku` 50000, else 66000 |
 | `CONTEXT_TRIM_MIN_GAIN_TOKENS` | `0` | proxy, OpenCode 2 | Skips a new trim that would free fewer estimated tokens than this; a forced trim (`/compact`) ignores it; `0` off |
 | `CONTEXT_CLEAR_KEEP_RESULTS` | `10` | proxy, OpenCode 2 | `N` > 0: a trim first masks every tool result but the N newest, keeping turns and calls; it drops whole turns when masking leaves the prompt above the target; `0` off ([research](context-research.md#clearing-versus-turn-deletion-2026-11-05)) |
 | `CONTEXT_MASK_OBSERVATIONS` | `1` | proxy, OpenCode 2 | Keeps tool calls in the kept region before the latest run and replaces their longer results with a placeholder; wins over `CONTEXT_STRIP_PROSE`; `0` off ([research](context-research.md#prose-strip-versus-observation-masking-2026-11-05)) |
@@ -102,7 +102,7 @@ OpenCode 2 maps each option to its variable for the in-process trim (`src/option
 | `enabled` | `CONTEXT_PROXY_ENABLED` | yes |
 | `standingInstruction` | `CONTEXT_STANDING_INSTRUCTION` | yes |
 | `trimAtTokens` | `CONTEXT_TRIM_AT_TOKENS` | yes |
-| `trimToFraction` | `CONTEXT_TRIM_TO_FRACTION` | yes |
+| `trimToTokens` | `CONTEXT_TRIM_TO_TOKENS` | yes |
 | `compressOverTokens` | `CONTEXT_COMPRESS_OVER_TOKENS` | yes |
 | `charsPerToken` | `CONTEXT_CHARS_PER_TOKEN` | yes |
 | `stateDir` | `SMARTER_COMPACT_STATE_DIR` | yes: trim store, session registration, `/compact` flags and the registered MCP server |

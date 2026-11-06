@@ -41,7 +41,7 @@ STATE_DIR = "/logs/agent/smarter-compact"
 TRIM_AT = os.environ.get("SC_TRIM_AT", "95000")
 # Proxy experiment knobs a job's per-agent "env" may set; Harbor applies that env only while the agent runs,
 # after install has already started the proxy, so install forwards these itself.
-ARM_ENV_KEYS = ("CONTEXT_TRIM_AT_TOKENS", "CONTEXT_TRIM_TO_FRACTION", "CONTEXT_STRIP_PROSE", "CONTEXT_PROGRESS_NOTE",
+ARM_ENV_KEYS = ("CONTEXT_TRIM_AT_TOKENS", "CONTEXT_TRIM_TO_TOKENS", "CONTEXT_STRIP_PROSE", "CONTEXT_PROGRESS_NOTE",
                 "CONTEXT_MASK_OBSERVATIONS", "CONTEXT_STANDING_INSTRUCTION", "CONTEXT_POINTER_TOOLS",
                 "CONTEXT_SERVER_CLEAR", "CONTEXT_SERVER_CLEAR_TRIGGER_TOKENS", "CONTEXT_SERVER_CLEAR_KEEP_TOOL_USES",
                 "CONTEXT_SERVER_CLEAR_AT_LEAST_TOKENS", "CONTEXT_CLEAR_KEEP_RESULTS", "CONTEXT_SCRATCHPAD",
@@ -220,7 +220,7 @@ class ScClaudeSmarterCompact(ScClaudeBase):
 
 # Experiment arms: distinct class names keep Harbor's eval buckets apart; the job's per-agent env sets the knobs.
 class ScClaudeTrim50(ScClaudeSmarterCompact):
-    """Trim to about 50K (CONTEXT_TRIM_TO_FRACTION)."""
+    """Trim to about 50K (CONTEXT_TRIM_TO_TOKENS)."""
 
 
 class ScClaudeProse(ScClaudeSmarterCompact):

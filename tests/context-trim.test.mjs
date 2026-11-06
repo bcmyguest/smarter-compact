@@ -13,6 +13,7 @@ import {
   standingInstruction,
   trimContext,
   trimSettings,
+  trimToFor,
 } from "../plugin/lib/context-trim.mjs";
 
 // The pointer note and the standing instruction are what make a trimmed-away past recoverable: they
@@ -206,9 +207,9 @@ function clearTurns(pad) {
 const resultsOf = (view) => Object.fromEntries(view.flatMap((m) => m.content.filter((p) => p.type === "tool-result")
   .map((p) => [p.id, p.result.value])));
 
-async function clearRun(home, messages, trimAt, keep = "2", fraction = "0.3") {
+async function clearRun(home, messages, trimAt, keep = "2") {
   const settings = trimSettings({ CONTEXT_TRIM_AT_TOKENS: String(trimAt), CONTEXT_CLEAR_KEEP_RESULTS: keep,
-    CONTEXT_TRIM_TO_FRACTION: fraction, CONTEXT_CHARS_PER_TOKEN: "1", CONTEXT_COMPRESS_OVER_TOKENS: "0",
+    CONTEXT_TRIM_TO_TOKENS: String(Math.ceil(0.3 * trimAt)), CONTEXT_CHARS_PER_TOKEN: "1", CONTEXT_COMPRESS_OVER_TOKENS: "0",
     CONTEXT_STANDING_INSTRUCTION: "0", CONTEXT_PROGRESS_NOTE: "0", CONTEXT_MASK_OBSERVATIONS: "0", SMARTER_COMPACT_STATE_DIR: home }, home);
   return trimContext({ sessionID: SID, messages: structuredClone(messages) }, settings);
 }
@@ -224,6 +225,18 @@ test("clearing keeps 10 results by default and parses like the proxy", () => {
   assert.equal(trimSettings({}, os.tmpdir()).clearKeepResults, 10);
   assert.equal(trimSettings({ CONTEXT_CLEAR_KEEP_RESULTS: "10" }, os.tmpdir()).clearKeepResults, 10);
   assert.equal(trimSettings({ CONTEXT_CLEAR_KEEP_RESULTS: "-3" }, os.tmpdir()).clearKeepResults, 0);
+});
+
+test("trim target defaults by model and parses like the proxy", () => {
+  const defaults = trimSettings({}, os.tmpdir());
+  assert.deepEqual([trimToFor(defaults, "claude-sonnet-5"), trimToFor(defaults, "anthropic/claude-haiku-5-5"),
+    trimToFor(defaults, null)], [66000, 50000, 66000]);
+  const set = trimSettings({ CONTEXT_TRIM_TO_TOKENS: " 40000 " }, os.tmpdir());
+  assert.deepEqual([trimToFor(set, "claude-haiku-5-5"), trimToFor(set, "claude-sonnet-5")], [40000, 40000]);
+  for (const bad of ["0", "-5", "1.5", "x", ""]) {
+    const s = trimSettings({ CONTEXT_TRIM_TO_TOKENS: bad }, os.tmpdir());
+    assert.deepEqual([trimToFor(s, "claude-haiku-5"), trimToFor(s, "claude-sonnet-5")], [50000, 66000], bad);
+  }
 });
 
 test("off by default a trim drops turns and clears nothing", withHome(async (home) => {
@@ -305,7 +318,7 @@ function inFlightTurn(pad = "", steps = STEPS) {
 
 /** Trim at 1 token with env on top of the test defaults; omitted CONTEXT_* keys keep their real defaults. */
 async function expRun(home, messages, env = {}, sid = SID) {
-  const settings = trimSettings({ CONTEXT_TRIM_AT_TOKENS: "1", CONTEXT_TRIM_TO_FRACTION: "0.3", CONTEXT_CHARS_PER_TOKEN: "1",
+  const settings = trimSettings({ CONTEXT_TRIM_AT_TOKENS: "1", CONTEXT_TRIM_TO_TOKENS: "1", CONTEXT_CHARS_PER_TOKEN: "1",
     CONTEXT_COMPRESS_OVER_TOKENS: "0", CONTEXT_STANDING_INSTRUCTION: "0",
     SMARTER_COMPACT_STATE_DIR: home, ...env }, home);
   return trimContext({ sessionID: sid, messages: structuredClone(messages) }, settings);
@@ -428,11 +441,21 @@ test("prose strip keeps the pair of a message before a system message; masking d
 test("masked sizes let the in-turn gap keep more steps", withHome(async (home) => {
   const steps = Array.from({ length: 8 }, (_, k) => ["bash", { command: "ls" }, `r${k}`, false]);
   const messages = inFlightTurn(LONG, steps).slice(0, -2);
-  const env = { CONTEXT_TRIM_AT_TOKENS: "3700", CONTEXT_TRIM_TO_FRACTION: "0.5" };
+  const env = { CONTEXT_TRIM_AT_TOKENS: "3700", CONTEXT_TRIM_TO_TOKENS: "1850" };
   const masked = await expRun(home, messages, { ...MASK, ...env });
   const off = await expRun(home, messages, { ...OFF, ...env }, "other");
   assert.deepEqual([...idsIn(off, "tool-call")], ["s5", "s6", "s7"]);
   assert.deepEqual([...idsIn(masked, "tool-call")], ["s4", "s5", "s6", "s7"]);
+}));
+
+test("a trim target over the threshold trims as deep as one equal to it", withHome(async (home) => {
+  const steps = Array.from({ length: 8 }, (_, k) => ["bash", { command: "ls" }, `r${k}`, false]);
+  const messages = inFlightTurn(LONG, steps).slice(0, -2);
+  const at = await expRun(home, messages, { ...OFF, CONTEXT_TRIM_AT_TOKENS: "2500", CONTEXT_TRIM_TO_TOKENS: "2500" });
+  const over = await expRun(home, messages, { ...OFF, CONTEXT_TRIM_AT_TOKENS: "2500", CONTEXT_TRIM_TO_TOKENS: "10000000" },
+    "other");
+  assert.deepEqual([...idsIn(at, "tool-call")], ["s4", "s5", "s6", "s7"]);
+  assert.deepEqual([...idsIn(over, "tool-call")], [...idsIn(at, "tool-call")]);
 }));
 
 test("a masked error result stays an error", withHome(async (home) => {

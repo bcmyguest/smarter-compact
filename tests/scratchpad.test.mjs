@@ -45,7 +45,7 @@ function withHome(fn) {
 }
 
 function run(home, messages, env = {}) {
-  const settings = trimSettings({ CONTEXT_TRIM_AT_TOKENS: BIG, CONTEXT_TRIM_TO_FRACTION: "0.3", CONTEXT_CHARS_PER_TOKEN: "1",
+  const settings = trimSettings({ CONTEXT_TRIM_AT_TOKENS: BIG, CONTEXT_TRIM_TO_TOKENS: "3000000", CONTEXT_CHARS_PER_TOKEN: "1",
     CONTEXT_COMPRESS_OVER_TOKENS: "0", CONTEXT_STANDING_INSTRUCTION: "0", CONTEXT_PROGRESS_NOTE: "0",
     CONTEXT_MASK_OBSERVATIONS: "0", SMARTER_COMPACT_STATE_DIR: home, ...env }, home);
   return trimContext({ sessionID: SID, messages: structuredClone(messages) }, settings);

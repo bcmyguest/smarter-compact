@@ -72,7 +72,7 @@ const seg = (t, a, b) => clamp((t - a) / (b - a));
 const lerp = (a, b, f) => a + (b - a) * f;
 const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-// Prompt size by time (k tokens). Trim at 95k, down to about half (CONTEXT_TRIM_TO_FRACTION 0.53).
+// Prompt size by time (k tokens). Trim at 95k, down to about half (CONTEXT_TRIM_TO_TOKENS, Haiku default 50000).
 const LIMIT = 95, TRIM_T = 8.35, STORED = 31;
 const CTX = [[0, 18], [1.8, 18], [2.1, 39], [2.6, 58], [3.1, 76], [3.6, 82], [4.4, 84], [6.9, 86], [7.3, 89], [7.7, 97],
   [TRIM_T, 97], [TRIM_T + 0.6, 51], [9.6, 53], [12.6, 54], [13.4, 56], [14.2, 58], [15.2, 60]];

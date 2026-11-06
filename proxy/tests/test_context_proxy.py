@@ -3,6 +3,7 @@
 import copy
 import io
 import json
+import math
 import os
 import sqlite3
 import stat
@@ -85,11 +86,12 @@ class Base(unittest.TestCase):
 
     def settings(self, **kw):
         # The standing instruction has its own tests (StandingInstructionTests); off here keeps the trim views plain.
-        # Prose strip, masking and progress note have theirs (test_trim_experiments); off, at 0.3 depth, the gap counts
-        # stay small.
+        # Prose strip, masking and progress note have theirs (test_trim_experiments); off, at 0.3 of trim_at, the gap
+        # counts stay small.
         base = dict(trim_at_tokens=BIG, compress_over_tokens=0, context_dir=self.ctx, standing_instruction=False,
-                    trim_to_fraction=0.3, strip_prose=False, progress_note=False, mask_observations=False)
+                    strip_prose=False, progress_note=False, mask_observations=False)
         base.update(kw)
+        base.setdefault("trim_to_tokens", math.ceil(0.3 * base["trim_at_tokens"]))
         return Settings(**base)
 
     def ptr(self, dropped, sid=SID):
@@ -656,16 +658,25 @@ class InTurnGapTests(Base):
         self.assertEqual(out[2]["content"][0]["text"], self.ptr(8))
         self.assertEqual(json.dumps(out[3:]), json.dumps(strip_thinking(msgs)[11:]))
 
-    def test_trim_depth_follows_trim_to_fraction(self):
-        # The same request at the same threshold: 0.3 keeps only the newest 3 exchanges, 0.5 keeps 6.
+    def test_trim_depth_follows_trim_to_tokens(self):
+        # The same request at the same threshold: 600 tokens keeps only the newest 3 exchanges, 1000 keeps 6.
         msgs = anth_history(2) + [{"role": "user", "content": "now this"}] + anth_loop(8)
         self.force()
-        deep = self.run_req(anth_request(copy.deepcopy(msgs)), trim_at_tokens=2000)["messages"]
+        deep = self.run_req(anth_request(copy.deepcopy(msgs)), trim_at_tokens=2000,
+                            trim_to_tokens=600)["messages"]
         self.assertEqual(json.dumps(deep[3:]), json.dumps(strip_thinking(msgs)[-6:]))
         self.force("other")
         shallow = self.run_req(anth_request(copy.deepcopy(msgs), sid="other"), trim_at_tokens=2000,
-                               trim_to_fraction=0.5)["messages"]
+                               trim_to_tokens=1000)["messages"]
         self.assertEqual(json.dumps(shallow[3:]), json.dumps(strip_thinking(msgs)[-12:]))
+
+    def test_trim_target_at_or_over_threshold_is_capped(self):
+        # A target over the threshold trims as deep as one equal to it: only the newest 3 exchanges stay.
+        msgs = anth_history(2) + [{"role": "user", "content": "now this"}] + anth_loop(8)
+        views = [self.run_req(anth_request(copy.deepcopy(msgs), sid=sid), trim_at_tokens=600,
+                              trim_to_tokens=target)["messages"] for sid, target in (("at", 600), ("over", BIG))]
+        self.assertEqual(json.dumps(views[0][3:]), json.dumps(strip_thinking(msgs)[-6:]))
+        self.assertEqual(json.dumps(views[1][3:]), json.dumps(views[0][3:]))
 
     def test_fewer_than_four_exchanges_means_no_gap(self):
         msgs = [{"role": "user", "content": "task"}] + anth_loop(3)
@@ -851,12 +862,16 @@ class SafetyTests(Base):
         self.assertEqual(out["messages"], msgs)
         self.assertFalse(self.ctx.exists())
 
-    def test_trim_to_fraction_from_env(self):
-        self.assertEqual(Settings.from_env({}).trim_to_fraction, 0.53)
-        self.assertEqual(Settings().trim_to_fraction, 0.53)
-        self.assertEqual(Settings.from_env({"CONTEXT_TRIM_TO_FRACTION": " 0.45 "}).trim_to_fraction, 0.45)
-        for bad in ("0", "1", "-0.2", "1.5", "nan", "inf", "x", ""):
-            self.assertEqual(Settings.from_env({"CONTEXT_TRIM_TO_FRACTION": bad}).trim_to_fraction, 0.53, bad)
+    def test_trim_to_tokens_from_env(self):
+        self.assertEqual(Settings.from_env({}).trim_to_for("claude-sonnet-5"), 66000)
+        self.assertEqual(Settings.from_env({}).trim_to_for("anthropic/claude-haiku-5-5"), 50000)
+        self.assertEqual(Settings.from_env({}).trim_to_for(None), 66000)
+        self.assertEqual(Settings().trim_to_for("claude-haiku-5-5"), 66000)
+        env = Settings.from_env({"CONTEXT_TRIM_TO_TOKENS": " 40000 "})
+        self.assertEqual((env.trim_to_for("claude-haiku-5-5"), env.trim_to_for("claude-sonnet-5")), (40000, 40000))
+        for bad in ("0", "-5", "1.5", "x", ""):
+            s = Settings.from_env({"CONTEXT_TRIM_TO_TOKENS": bad})
+            self.assertEqual((s.trim_to_for("claude-haiku-5"), s.trim_to_for("claude-sonnet-5")), (50000, 66000), bad)
 
     def test_trim_min_gain_from_env(self):
         self.assertEqual(Settings.from_env({}).trim_min_gain_tokens, 0)
