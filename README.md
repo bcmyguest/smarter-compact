@@ -55,6 +55,14 @@ smarter-compact enable claude
 
 Start a new `claude` session after `enable`. The marketplace install registers the search tools and the compact command. `enable` points `ANTHROPIC_BASE_URL` at `http://127.0.0.1:4101`, starts the LiteLLM proxy in the background when needed, and stores a key in `~/.config/smarter-compact/proxy.env` (mode 600). Session hooks also ensure the proxy is up. A previous base URL is saved in `~/.config/smarter-compact/proxy-backup.json` and restored by `smarter-compact disable claude`. Logs: `~/.config/smarter-compact/proxy.log`. Set `SMARTER_COMPACT_AUTO_PROXY=0` to disable auto-start.
 
+On Claude Code 2.1.275 or later you can install the plugin from inside Claude Code instead of running `plugins add`:
+
+```
+/plugin install smarter-compact --marketplace bcmyguest/smarter-compact
+```
+
+That adds the search tools, hooks and commands. Trimming still needs `smarter-compact enable claude`, which points Claude Code at the proxy.
+
 <details>
 <summary>Optional: install from a git clone</summary>
 
