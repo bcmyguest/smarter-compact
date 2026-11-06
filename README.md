@@ -20,7 +20,7 @@ The agent searches the store with `smart_compact_search`, `smart_compact_sql`, a
 <img src="docs/media/contextbench-savings.png" alt="Average cost saving 72%: paired cost of Smarter Compact relative to keep everything, kv-store R4000 −87%, log-triage L1600 −19% (not significant), L6400 −89%, L12800 −94%; log-task score +0.47" width="720" />
 </p>
 
-The stored text still uses the OpenMem wire format (`[smarter-compact: …]`, `<smarter-compact-recall>`). Memory recall on a trim is off unless you set `CONTEXT_COMPACTION_RECALL=1`.
+Trimmed context is marked with a `[smarter-compact: …]` pointer, and recalled text arrives in `<smarter-compact-recall>` blocks. Memory recall on a trim is off unless you set `CONTEXT_COMPACTION_RECALL=1`.
 
 You need Node 24 or newer (for `node:sqlite`) and, for agents that trim through the proxy, the LiteLLM dev build `v1.109.0-dev.1` on `PATH` as `litellm`. The plugin has no API key of its own. Your agent keeps its own login.
 
@@ -227,7 +227,7 @@ CI runs the same `prek run --all-files` plus `npm test` and proxy unit tests. Us
 
 ## Releases
 
-Version bumps follow [Conventional Commits](https://www.conventionalcommits.org/) via [git-cliff](https://git-cliff.org/) (`cliff.toml`, same rules as [openmem](https://github.com/bcmyguest/openmem)). On `main`, run the **Prepare release** GitHub Action (dry-run first if you want the proposed version and notes). It bumps `package.json` (`npm version` copies the version into the plugin manifests; `npm run pack:check` fails if they differ), tags `vX.Y.Z`, and dispatches **Release** (tests, npm publish, GitHub Release body from git-cliff). Locally: `git-cliff --bumped-version` and `git-cliff --unreleased --strip header`.
+Version bumps follow [Conventional Commits](https://www.conventionalcommits.org/) via [git-cliff](https://git-cliff.org/) (`cliff.toml`). On `main`, run the **Prepare release** GitHub Action (dry-run first if you want the proposed version and notes). It bumps `package.json` (`npm version` copies the version into the plugin manifests; `npm run pack:check` fails if they differ), tags `vX.Y.Z`, and dispatches **Release** (tests, npm publish, GitHub Release body from git-cliff). Locally: `git-cliff --bumped-version` and `git-cliff --unreleased --strip header`.
 
 ## License
 
