@@ -190,7 +190,7 @@ export function trimSettings(env = process.env, home = env.HOME) {
     // Add a progress note listing edited files and build commands (CONTEXT_PROGRESS_NOTE=0, default on).
     progressNote: flag("CONTEXT_PROGRESS_NOTE"),
     // Each trim first clears every tool result but the newest N, keeping all turns and calls; 0 is off.
-    clearKeepResults: Math.max(int("CONTEXT_CLEAR_KEEP_RESULTS", 0), 0),
+    clearKeepResults: Math.max(int("CONTEXT_CLEAR_KEEP_RESULTS", 10), 0),
     compressOverTokens: int("CONTEXT_COMPRESS_OVER_TOKENS", DEFAULT_COMPRESS_OVER_TOKENS),
     charsPerToken: positive("CONTEXT_CHARS_PER_TOKEN", DEFAULT_CHARS_PER_TOKEN),
     compactionMaxChars: int("CONTEXT_COMPACTION_MAX_CHARS", DEFAULT_COMPACTION_MAX_CHARS),

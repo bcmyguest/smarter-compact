@@ -214,8 +214,8 @@ function withHome(fn) {
   };
 }
 
-test("clearing is off by default and parses like the proxy", () => {
-  assert.equal(trimSettings({}, os.tmpdir()).clearKeepResults, 0);
+test("clearing keeps 10 results by default and parses like the proxy", () => {
+  assert.equal(trimSettings({}, os.tmpdir()).clearKeepResults, 10);
   assert.equal(trimSettings({ CONTEXT_CLEAR_KEEP_RESULTS: "10" }, os.tmpdir()).clearKeepResults, 10);
   assert.equal(trimSettings({ CONTEXT_CLEAR_KEEP_RESULTS: "-3" }, os.tmpdir()).clearKeepResults, 0);
 });

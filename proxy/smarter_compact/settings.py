@@ -116,9 +116,9 @@ class Settings:
     strip_prose: bool = False
     # Same region keeps tool_use, masks tool_result; wins over strip_prose (on by default; CONTEXT_MASK_OBSERVATIONS=0 turns it off).
     mask_observations: bool = True
-    # Each trim first clears every tool_result but the newest N, keeping all turns and calls; turns drop only when
-    # that is not enough. 0 is off (CONTEXT_CLEAR_KEEP_RESULTS).
-    clear_keep_results: int = 0
+    # Each trim first masks every tool_result but the newest N, keeping turns and calls; turns drop only when that
+    # is not enough. 0 is off (CONTEXT_CLEAR_KEEP_RESULTS, default 10).
+    clear_keep_results: int = 10
     # A trim that would free fewer estimated tokens than this is skipped; 0 is off (CONTEXT_TRIM_MIN_GAIN_TOKENS).
     trim_min_gain_tokens: int = 0
     # Anthropic requests to Claude gain a clear_tool_uses_20250919 context edit (CONTEXT_SERVER_CLEAR=1 turns it on).
@@ -175,7 +175,7 @@ class Settings:
             trim_to_fraction=_fraction(env, "CONTEXT_TRIM_TO_FRACTION", DEFAULT_TRIM_TO_FRACTION),
             strip_prose=_flag(env, "CONTEXT_STRIP_PROSE", "0"),
             mask_observations=_flag(env, "CONTEXT_MASK_OBSERVATIONS", "1"),
-            clear_keep_results=max(_int(env, "CONTEXT_CLEAR_KEEP_RESULTS", 0), 0),
+            clear_keep_results=max(_int(env, "CONTEXT_CLEAR_KEEP_RESULTS", 10), 0),
             trim_min_gain_tokens=_int(env, "CONTEXT_TRIM_MIN_GAIN_TOKENS", 0),
             server_clear=_flag(env, "CONTEXT_SERVER_CLEAR", "0"),
             server_clear_trigger_tokens=_positive_int(env, "CONTEXT_SERVER_CLEAR_TRIGGER_TOKENS",

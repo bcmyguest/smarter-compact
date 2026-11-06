@@ -294,12 +294,12 @@ class ClearResultsTests(Base):
         kw.setdefault("chars_per_token", 1.0)
         return self.run_req(anth_request(copy.deepcopy(msgs), sid=sid), clear_keep_results=keep, **kw)["messages"]
 
-    def test_off_by_default(self):
-        self.assertEqual(Settings().clear_keep_results, 0)
-        self.assertEqual(Settings.from_env({}).clear_keep_results, 0)
+    def test_keeps_10_by_default(self):
+        self.assertEqual(Settings().clear_keep_results, 10)
+        self.assertEqual(Settings.from_env({}).clear_keep_results, 10)
         self.assertEqual(Settings.from_env({"CONTEXT_CLEAR_KEEP_RESULTS": "10"}).clear_keep_results, 10)
         self.assertEqual(Settings.from_env({"CONTEXT_CLEAR_KEEP_RESULTS": "-3"}).clear_keep_results, 0)
-        self.assertEqual(Settings.from_env({"CONTEXT_CLEAR_KEEP_RESULTS": "x"}).clear_keep_results, 0)
+        self.assertEqual(Settings.from_env({"CONTEXT_CLEAR_KEEP_RESULTS": "x"}).clear_keep_results, 10)
         msgs = in_flight_turn(HUGE)
         view = self.run_req(anth_request(copy.deepcopy(msgs)), trim_at_tokens=full_tokens(msgs),
                             chars_per_token=1.0)["messages"]

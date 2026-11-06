@@ -129,8 +129,8 @@ class ScClaudeSmarterCompact(ScClaudeBase):
     REQUIRES_PROXY_SETTINGS = ()
     # Proxy env that defines the arm; applied after the job's env so a job cannot undo it.
     FORCED_ENV = {}
-    # Proxy env the arm defaults to; the job's env overrides it. Turn drops only: masking is the proxy default.
-    DEFAULT_ENV = {"CONTEXT_MASK_OBSERVATIONS": "0"}
+    # Proxy env the arm defaults to; the job's env overrides it. Turn drops only: both masking modes are proxy defaults.
+    DEFAULT_ENV = {"CONTEXT_MASK_OBSERVATIONS": "0", "CONTEXT_CLEAR_KEEP_RESULTS": "0"}
 
     async def install(self, environment):
         await super().install(environment)
@@ -232,7 +232,7 @@ class ScClaudeCombined(ScClaudeSmarterCompact):
 class ScClaudeMask(ScClaudeSmarterCompact):
     """Keep older tool calls, mask their results (CONTEXT_MASK_OBSERVATIONS=1, the proxy default; wins over prose strip)."""
 
-    DEFAULT_ENV = {"CONTEXT_MASK_OBSERVATIONS": "1"}
+    DEFAULT_ENV = {"CONTEXT_MASK_OBSERVATIONS": "1", "CONTEXT_CLEAR_KEEP_RESULTS": "0"}
 
 
 class ScClaudeClear(ScClaudeSmarterCompact):
