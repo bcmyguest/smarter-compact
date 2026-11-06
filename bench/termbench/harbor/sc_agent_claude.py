@@ -97,6 +97,11 @@ class ScClaudeBase(ClaudeCode):
     `ANTHROPIC_API_KEY` this is a no-op (nothing is mounted, so it silently skips).
     """
 
+    def __init__(self, *args, extra_env=None, **kwargs):
+        # The subscription login fetches the account's claude.ai connectors: hundreds of KB of deferred tools per request.
+        extra_env = {"ENABLE_CLAUDEAI_MCP_SERVERS": "false", **(extra_env or {})}
+        super().__init__(*args, extra_env=extra_env, **kwargs)
+
     async def install(self, environment):
         await super().install(environment)
         dest = (self.environment_logs_dir / "sessions").as_posix()
