@@ -3,10 +3,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import {
+  MASK_PLACEHOLDER,
   addStandingInstruction,
   pointerText,
   recallToolNames,
+  requestChars,
   standingInstruction,
   trimContext,
   trimSettings,
@@ -176,3 +179,94 @@ test("CONTEXT_TRIM_MIN_GAIN_TOKENS skips a trim that frees too little", async ()
   assert.equal(await run(1e9), messages);
   assert.ok((await run(1)).length < messages.length);
 });
+
+// CONTEXT_CLEAR_KEEP_RESULTS: same contract as proxy/tests/test_trim_experiments.py::ClearResultsTests.
+const HUGE = `\n${"x".repeat(20000)}`;
+const textMsg = (role, t) => ({ role, content: [{ type: "text", text: t }] });
+const signed = { type: "reasoning", text: "go", providerMetadata: { anthropic: { signature: "SIG==" } } };
+
+function clearTurns(pad) {
+  const messages = [textMsg("user", `question ${"q".repeat(200)}`)];
+  for (let k = 0; k < 5; k++) {
+    messages.push({ role: "assistant", content: [signed, { type: "text", text: `step ${k}` },
+      { type: "tool-call", id: `s${k}`, name: "bash", input: { command: `cmd ${k}` } }]});
+    messages.push({ role: "tool", content: [{ type: "tool-result", id: `s${k}`, name: "bash", result: { type: "text", value: `out ${k}${pad}` } }] });
+  }
+  messages.push({ role: "assistant", content: [signed, { type: "tool-call", id: "sL", name: "bash", input: { command: "ls" } }] });
+  messages.push({ role: "tool", content: [{ type: "tool-result", id: "sL", name: "bash", result: { type: "text", value: "ok" } }] });
+  return messages;
+}
+
+const resultsOf = (view) => Object.fromEntries(view.flatMap((m) => m.content.filter((p) => p.type === "tool-result")
+  .map((p) => [p.id, p.result.value])));
+
+async function clearRun(home, messages, trimAt, keep = "2", fraction = "0.3") {
+  const settings = trimSettings({ CONTEXT_TRIM_AT_TOKENS: String(trimAt), CONTEXT_CLEAR_KEEP_RESULTS: keep,
+    CONTEXT_TRIM_TO_FRACTION: fraction, CONTEXT_CHARS_PER_TOKEN: "1", CONTEXT_COMPRESS_OVER_TOKENS: "0", CONTEXT_COMPACTION_RECALL: "0",
+    CONTEXT_STANDING_INSTRUCTION: "0", CONTEXT_PROGRESS_NOTE: "0", SMARTER_COMPACT_STATE_DIR: home }, home);
+  return trimContext({ sessionID: SID, messages: structuredClone(messages) }, settings);
+}
+
+function withHome(fn) {
+  return async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "sc-clear-"));
+    try { await fn(home); } finally { fs.rmSync(home, { recursive: true, force: true }); }
+  };
+}
+
+test("clearing is off by default and parses like the proxy", () => {
+  assert.equal(trimSettings({}, os.tmpdir()).clearKeepResults, 0);
+  assert.equal(trimSettings({ CONTEXT_CLEAR_KEEP_RESULTS: "10" }, os.tmpdir()).clearKeepResults, 10);
+  assert.equal(trimSettings({ CONTEXT_CLEAR_KEEP_RESULTS: "-3" }, os.tmpdir()).clearKeepResults, 0);
+});
+
+test("off by default a trim drops turns and clears nothing", withHome(async (home) => {
+  const messages = clearTurns(HUGE);
+  const view = await clearRun(home, messages, requestChars(messages), "0");
+  assert.ok(!JSON.stringify(view).includes(MASK_PLACEHOLDER));
+  assert.ok(view.length < messages.length);
+}));
+
+test("clearing keeps every turn and call, the newest N results, and strips old signed reasoning", withHome(async (home) => {
+  const messages = clearTurns(HUGE);
+  const view = await clearRun(home, messages, requestChars(messages));
+  assert.deepEqual(view.map((m) => m.role), messages.map((m) => m.role));
+  const results = resultsOf(view);
+  assert.equal(results.sL, "ok");
+  assert.equal(results.s4, `out 4${HUGE}`);
+  for (const k of ["s0", "s1", "s2", "s3"]) assert.equal(results[k], MASK_PLACEHOLDER, k);
+  const calls = view.flatMap((m) => m.content.filter((p) => p.type === "tool-call").map((p) => p.id));
+  assert.deepEqual(calls, ["s0", "s1", "s2", "s3", "s4", "sL"]);
+  // Signed reasoning before the latest run goes; the latest run keeps its own.
+  assert.equal(view.flatMap((m) => m.content.filter((p) => p.type === "reasoning")).length, 1);
+  assert.deepEqual(view.at(-2), messages.at(-2));
+  assert.match(view[0].content[0].text, /Older tool outputs in your context read/);
+  assert.ok(!/earlier messages are NOT/.test(view[0].content[0].text));
+  // The store keeps every cleared output, out of context.
+  const db = new DatabaseSync(path.join(home, "context", "sessions", `${SID}.db`));
+  try {
+    const out = db.prepare("SELECT text FROM messages WHERE in_context = 0 AND kind = 'tool_result'").all().map((r) => r.text);
+    assert.ok(out.some((t) => t.startsWith("out 3")));
+    assert.ok(!out.some((t) => t.startsWith("out 4")));
+  } finally { db.close(); }
+}));
+
+test("clearing drops turns only when it is not enough", withHome(async (home) => {
+  const messages = clearTurns(`\n${"x".repeat(300)}`);
+  const view = await clearRun(home, messages, requestChars(messages));
+  assert.ok(view.length < messages.length);
+  const note = view.find((m) => m.content[0]?.text?.startsWith("[smarter-compact:")).content[0].text;
+  assert.match(note, /earlier messages are NOT in your context/);
+  assert.match(note, /Older tool outputs/);
+}));
+
+test("the cleared prefix is byte-identical on the next request", withHome(async (home) => {
+  const messages = clearTurns(HUGE);
+  const first = await clearRun(home, messages, requestChars(messages));
+  const more = [...messages,
+    { role: "assistant", content: [{ type: "tool-call", id: "sM", name: "bash", input: { command: "pwd" } }] },
+    { role: "tool", content: [{ type: "tool-result", id: "sM", name: "bash", result: { type: "text", value: `later${HUGE}` } }] }];
+  const second = await clearRun(home, more, 1e9);
+  assert.equal(JSON.stringify(second.slice(0, first.length)), JSON.stringify(first));
+  assert.equal(resultsOf(second).sM, `later${HUGE}`);
+}));

@@ -182,6 +182,8 @@ export function trimSettings(env = process.env, home = env.HOME) {
     trimFamilies: overrides.families,
     trimToFraction: fraction("CONTEXT_TRIM_TO_FRACTION", DEFAULT_TRIM_TO_FRACTION),
     trimMinGainTokens: int("CONTEXT_TRIM_MIN_GAIN_TOKENS", 0),
+    // Each trim first clears every tool result but the newest N, keeping all turns and calls; 0 is off.
+    clearKeepResults: Math.max(int("CONTEXT_CLEAR_KEEP_RESULTS", 0), 0),
     compressOverTokens: int("CONTEXT_COMPRESS_OVER_TOKENS", DEFAULT_COMPRESS_OVER_TOKENS),
     charsPerToken: positive("CONTEXT_CHARS_PER_TOKEN", DEFAULT_CHARS_PER_TOKEN),
     compactionMaxChars: int("CONTEXT_COMPACTION_MAX_CHARS", DEFAULT_COMPACTION_MAX_CHARS),
@@ -467,7 +469,7 @@ function toolNames(items) {
  * for messages the view drops (keptIndices; every message when `dropAll`). Returns { rows, cutRow }, cutRow
  * being the index of the cut turn's first row or null.
  */
-export function storedRows(original, items, cut, first, gap = null, dropAll = false) {
+export function storedRows(original, items, cut, first, gap = null, dropAll = false, clear = null) {
   const names = toolNames(items);
   const kept = keptIndices(items, cut, gap, first);
   const rows = [];
@@ -478,20 +480,23 @@ export function storedRows(original, items, cut, first, gap = null, dropAll = fa
     const shown = items[j] === item ? base : logRows(items[j], names);
     if (cut !== null && j === cut && base.length) cutRow = rows.length;
     const keep = !dropAll && kept.has(j);
+    const sent = cleared(items[j], j, clear, first);
+    // A cleared result keeps its row count with changed text: that row is out of context.
+    const left = sent === items[j] ? shown : logRows(sent, names);
     base.forEach(([role, kind, name, text], k) => {
       const blob = shown !== base && k < shown.length ? blobRef(shown[k][3]) : null;
-      rows.push({ role, kind, name, text, blob_id: blob, keep });
+      rows.push({ role, kind, name, text, blob_id: blob, keep: keep && (left === shown || left[k]?.[3] === shown[k]?.[3]) });
     });
   });
   return { rows: rows.length ? chain(rows) : rows, cutRow };
 }
 
 /** Write the request's messages to sessions/<sid>.db; never throws (a database error is logged). */
-function storeMessages(store, sid, settings, original, items, cut, gap, first, ts, deps, dropAll = false) {
+function storeMessages(store, sid, settings, original, items, cut, gap, first, ts, deps, dropAll = false, clear = null) {
   let file = null;
   try {
     file = store.dbPath(sid);
-    const { rows, cutRow } = storedRows(original, items, cut, first, gap, dropAll);
+    const { rows, cutRow } = storedRows(original, items, cut, first, gap, dropAll, clear);
     if (!rows.length) return;
     const added = openSession(file).sync(rows, cutRow, ts);
     if (added && settings.embeddingModel) {
@@ -583,15 +588,56 @@ export function chooseGap(items, cut, after, first, fits) {
  * kept assistant messages before `strip` (default: the latest assistant run; see stripReasoning). `decorate(message)`
  * adds per-message parts at render time only; trimming, fingerprints and log rows always see the undecorated messages.
  */
-export function render(items, cut, note, first = null, gap = null, decorate = (m) => m, strip = null) {
+export function render(items, cut, note, first = null, gap = null, decorate = (m) => m, strip = null, clear = null) {
   if (cut === null) return items.map(decorate);
   const keep = keptIndices(items, cut, gap, first);
   const run = latestRunStart(items);
-  return stripReasoning(items.flatMap((x, j) => {
+  return stripReasoning(items.flatMap((item, j) => {
     if (!keep.has(j)) return [];
+    const x = cleared(item, j, clear, first);
     return [{ message: j === cut ? prependNote(decorate(x), note) : decorate(x), j }];
   }), strip === null ? run : Math.min(strip, run));
 }
+
+/**
+ * The message with every tool result longer than MASK_PLACEHOLDER replaced by it when message j sits before the
+ * clear bound (the first user turn and pinned messages aside); the message itself otherwise. Proxy _cleared.
+ */
+export function cleared(message, j, clear, first) {
+  if (clear === null || j >= clear || j === first || isPinned(message)) return message;
+  const content = parts(message);
+  let next = null;
+  content.forEach((p, i) => {
+    if (p?.type !== "tool-result" || cpLen(resultText(p.result)) <= cpLen(MASK_PLACEHOLDER)) return;
+    next ??= [...content];
+    next[i] = { ...p, result: { type: "text", value: MASK_PLACEHOLDER } };
+  });
+  return next ? { ...message, content: next } : message;
+}
+
+/**
+ * Index of the message holding the keepResults-th newest tool result: it and every later message keep their
+ * results, earlier ones are cleared. null when no earlier message holds a result to clear. Proxy clear_bound.
+ */
+export function clearBound(items, keepResults) {
+  let seen = 0;
+  for (let j = items.length - 1; j >= 0; j--) {
+    seen += resultIds(items[j]).size;
+    if (seen >= keepResults) return items.slice(0, j).some((x) => resultIds(x).size) ? j : null;
+  }
+  return null;
+}
+
+/** The clear bound a trim now records: the newer of the current one and clearBound; null when clearing is off. */
+function nextClear(items, keepResults, clear) {
+  if (!(keepResults > 0)) return null;
+  const bounds = [clear, clearBound(items, keepResults)].filter((b) => b !== null);
+  return bounds.length ? Math.max(...bounds) : null;
+}
+
+/** Whether bound next masks a result of a kept message that bound old leaves whole. */
+const clearsMore = (items, keep, old, next, first) => next !== null
+  && [...keep].some((j) => (old === null || j >= old) && cleared(items[j], j, next, first) !== items[j]);
 
 /** Index where the trailing run of assistant messages ending at the last one starts; items.length if none. */
 export function latestRunStart(items) {
@@ -674,6 +720,18 @@ export function addStandingInstruction(system, settings, names) {
 export function pendingText(sid, names = LEGACY_RECALL_NAMES) {
   return "[smarter-compact: memory ingest is still running, so the most recent turns may not be in memory yet. "
     + `Use ${names.search}(session_id="${sid}", query=...) for them.]`;
+}
+
+/** A cleared tool result's text; constant, so it renders the same bytes on every request. Same as core.MASK_PLACEHOLDER. */
+export const MASK_PLACEHOLDER = "[smarter-compact: tool output masked to save context; the call is kept and the output is stored, "
+  + "see the trim pointer]";
+
+/** How to get back a result shown as MASK_PLACEHOLDER; same text as mask_text in proxy/smarter_compact/core.py. */
+export function maskText(sid, names = LEGACY_RECALL_NAMES) {
+  return `Older tool outputs in your context read "${MASK_PLACEHOLDER}". To get one back, find its call with `
+    + `${names.search}(session_id="${sid}", query=<words from the call>); its output is the first tool_result `
+    + `row of the same tool after that seq: ${names.sql}(session_id="${sid}", sql="SELECT text FROM messages `
+    + "WHERE kind = 'tool_result' AND name = '<tool>' AND seq > <call seq> ORDER BY seq LIMIT 1\").";
 }
 
 const utcNow = (now = new Date()) => now.toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -873,6 +931,7 @@ async function trimSession(request, settings, deps, { original, sid, store, item
     let gap = null;
     let strip = null;
     let note = null;
+    let clear = null;
     if (thread) {
       cut = locate(items, thread.cut, thread.cut_fp);
       if (cut === null) threads.delete(root);
@@ -881,9 +940,10 @@ async function trimSession(request, settings, deps, { original, sid, store, item
         if (thread.gap_fp) gap = locate(items, thread.gap, thread.gap_fp, cut + 2);
         // From 0: a trim on the last user turn records strip as the reply before the cut.
         if (thread.strip_fp) strip = locate(items, thread.strip, thread.strip_fp);
+        if (thread.clear_fp) clear = locate(items, thread.clear, thread.clear_fp);
       }
     }
-    let rendered = render(items, cut, note, first, gap, decorate, strip);
+    let rendered = render(items, cut, note, first, gap, decorate, strip, clear);
     const force = store.forceRequested(sid);
     const ratio = settings.charsPerToken > 0 ? settings.charsPerToken : DEFAULT_CHARS_PER_TOKEN;
     const toolNames = recallToolNames(request.tools);
@@ -891,49 +951,71 @@ async function trimSession(request, settings, deps, { original, sid, store, item
     const tokens = estimatePromptTokens(baseChars + requestChars(rendered), state.usage, root, ratio);
     const trimAt = trimAtFor(settings, request.model);
     if (force || tokens >= trimAt) {
-      let next = chooseCut(items, cut === null ? -1 : cut, first);
-      if (next === null) next = cut !== null ? cut : lastTurnIndex(items);
+      const nextClearAt = nextClear(items, settings.clearKeepResults, clear);
+      const target = trimAt * (settings.trimToFraction ?? DEFAULT_TRIM_TO_FRACTION);
+      const sizesFor = () => items.map((x, j) => Math.min(requestChars(x), requestChars(cleared(x, j, nextClearAt, first))));
+      const under = (sizes, c, g) => {
+        let chars = baseChars;
+        for (const j of keptIndices(items, c, g, first)) chars += sizes[j];
+        return estimatePromptTokens(chars, state.usage, root, ratio) < target;
+      };
+      let next = null;
       let nextGap = null;
-      if (next !== null) {
-        const sizes = items.map((x) => requestChars(x));
-        const target = trimAt * (settings.trimToFraction ?? DEFAULT_TRIM_TO_FRACTION);
-        const fits = (g) => {
-          let chars = baseChars;
-          for (const j of keptIndices(items, next, g, first)) chars += sizes[j];
-          return estimatePromptTokens(chars, state.usage, root, ratio) < target;
-        };
-        const after = next === cut && gap !== null ? gap : next + 1;
-        nextGap = chooseGap(items, next, after, first, fits);
-        if (nextGap === null && next === cut) nextGap = gap;
+      if (nextClearAt !== null && first !== null) {
+        // Clearing first: the current cut, or the first user turn (dropping nothing), with the newer bound.
+        const [anchor, anchorGap] = cut !== null ? [cut, gap] : [first, null];
+        if (under(sizesFor(), anchor, anchorGap)) [next, nextGap] = [anchor, anchorGap];
+      }
+      if (next === null) {
+        next = chooseCut(items, cut === null ? -1 : cut, first);
+        if (next === null) next = cut !== null ? cut : lastTurnIndex(items);
+        if (next !== null) {
+          const sizes = sizesFor();
+          const after = next === cut && gap !== null ? gap : next + 1;
+          nextGap = chooseGap(items, next, after, first, (g) => under(sizes, next, g));
+          if (nextGap === null && next === cut) nextGap = gap;
+        }
       }
       const dropped = next !== null ? droppable(items, next, nextGap, first).length : 0;
       let moved = dropped > 0 && (next !== cut || nextGap !== gap);
+      // A newer clear bound alone moves the trim when it masks a result the current bound left whole.
+      if (next !== null && !moved) moved = clearsMore(items, keptIndices(items, next, nextGap, first), clear, nextClearAt, first);
       if (moved && !force && settings.trimMinGainTokens > 0) {
         // A cut freeing fewer estimated tokens (pointer note not counted) waits for a bigger one.
-        const bare = render(items, next, "", first, nextGap, decorate, latestRunStart(items));
+        const bare = render(items, next, "", first, nextGap, decorate, latestRunStart(items), nextClearAt);
         moved = tokens - estimatePromptTokens(baseChars + requestChars(bare), state.usage, root, ratio) >= settings.trimMinGainTokens;
       }
       if (moved) {
         const ts = utcNow(deps.now?.());
-        note = await buildNote(items, next, sid, dropped, store, settings, deps, toolNames);
+        const masked = nextClearAt !== null
+          && [...keptIndices(items, next, nextGap, first)].some((j) => cleared(items[j], j, nextClearAt, first) !== items[j]);
+        if (dropped || !masked) {
+          note = await buildNote(items, next, sid, dropped, store, settings, deps, toolNames);
+          if (masked) note = `${note}\n${maskText(sid, toolNames)}`;
+        } else {
+          // Clearing alone drops no message: the note only says how to fetch a cleared result back.
+          note = `[smarter-compact: session ${sid}] ${maskText(sid, toolNames)}`;
+        }
         threads.delete(root);
         const entry = { cut: next, cut_fp: fingerprint(items[next]), note, format: FORMAT, updated: ts };
         if (nextGap !== null) Object.assign(entry, { gap: nextGap, gap_fp: fingerprint(items[nextGap]) });
         strip = latestRunStart(items);
         if (strip < items.length) Object.assign(entry, { strip, strip_fp: fingerprint(items[strip]) });
+        if (nextClearAt !== null) Object.assign(entry, { clear: nextClearAt, clear_fp: fingerprint(items[nextClearAt]) });
         threads.set(root, entry);
         while (threads.size > MAX_THREADS) threads.delete(threads.keys().next().value);
         store.saveTrim(sid, state);
         if (force) store.clearForce(sid);
-        rendered = render(items, next, note, first, nextGap, decorate, strip);
+        rendered = render(items, next, note, first, nextGap, decorate, strip, nextClearAt);
         cut = next;
         gap = nextGap;
+        clear = nextClearAt;
         const after = estimatePromptTokens(baseChars + requestChars(rendered), state.usage, root, ratio);
         trim = { tokens_before: tokens, tokens_after: after, dropped };
       } else if (thread && cut === null) store.saveTrim(sid, state);
     } else if (thread && cut === null) store.saveTrim(sid, state);
     const ts = utcNow(deps.now?.());
-    storeMessages(store, sid, settings, original, items, cut, gap, first, ts, deps);
+    storeMessages(store, sid, settings, original, items, cut, gap, first, ts, deps, false, clear);
     if (trim) recordEvent(store, sid, "trim", trim, ts);
     trimmed = trim ? TRIM_NEW : cut !== null ? TRIM_KEPT : TRIM_NONE;
     return rendered;
