@@ -1,0 +1,452 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Smarter Compact promo scene</title>
+<style>
+  :root {
+    --bg: #0f1226;
+    --panel: #171b36;
+    --line: #262b52;
+    --grid: #232849;
+    --ink: #eef0ff;
+    --muted: #9aa0c8;
+    --dim: #5d6390;
+    --smart: #8b93ff;
+    --smart-glow: rgba(139, 147, 255, 0.45);
+    --keep: #f0a35e;
+    --good: #6fdca6;
+    --mono: "JetBrains Mono", monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--bg); }
+  body {
+    width: 1200px; height: 675px; overflow: hidden; position: relative;
+    font-family: Inter, sans-serif; color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+  }
+  body.gh { width: 1280px; height: 640px; }
+  #dots {
+    position: absolute; inset: -40px;
+    background-image: radial-gradient(var(--grid) 1.2px, transparent 1.2px);
+    background-size: 28px 28px;
+  }
+  #vignette { position: absolute; inset: 0; background: radial-gradient(ellipse at 30% 40%, rgba(139,147,255,0.07), transparent 60%); }
+  .layer { position: absolute; inset: 0; }
+  .brand { position: absolute; left: 56px; top: 40px; display: flex; align-items: center; gap: 12px; }
+  .logo { width: 30px; height: 30px; border-radius: 8px; background: var(--smart); position: relative; }
+  .logo::before, .logo::after { content: ""; position: absolute; left: 7px; right: 7px; height: 3px; border-radius: 2px; background: var(--bg); }
+  .logo::before { top: 9px; } .logo::after { top: 17px; right: 13px; }
+  .brand span { font-weight: 700; font-size: 20px; letter-spacing: -0.01em; }
+  .tag { position: absolute; right: 56px; top: 44px; font-family: var(--mono); font-size: 15px; color: var(--muted); }
+
+  #chartwrap { position: absolute; left: 56px; top: 104px; width: 760px; height: 440px; }
+  .gridl { stroke: var(--grid); stroke-width: 1; stroke-dasharray: 3 6; }
+  .axis { stroke: var(--grid); stroke-width: 1.5; }
+  .tick { fill: var(--dim); font-size: 14px; font-family: var(--mono); }
+  .lineK { fill: none; stroke: var(--keep); stroke-width: 4; stroke-linejoin: round; stroke-linecap: round; }
+  .lineS { fill: none; stroke: var(--smart); stroke-width: 4; stroke-linejoin: round; stroke-linecap: round; }
+  .lbl { font-size: 17px; font-weight: 700; }
+
+  #side { position: absolute; left: 852px; top: 104px; width: 292px; }
+  .meter { background: var(--panel); border-radius: 14px; padding: 16px 18px; margin-bottom: 14px; border: 1px solid var(--line); }
+  .meter h4, .db h4 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; display: flex; align-items: center; gap: 8px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .rows { margin-top: 10px; display: grid; grid-template-columns: 1fr auto; row-gap: 6px; font-size: 15px; color: var(--muted); align-items: baseline; }
+  .rows b { font-family: var(--mono); font-weight: 600; color: var(--ink); font-size: 18px; text-align: right; display: inline-block; }
+  .bar { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: #0c0f22; margin-top: 4px; position: relative; overflow: hidden; }
+  .bar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; }
+  .db { background: var(--panel); border-radius: 14px; padding: 16px 18px; border: 1px dashed #3a4080; position: relative; }
+  .db .path { font-family: var(--mono); font-size: 13px; color: var(--dim); margin-top: 4px; }
+  .stack { margin-top: 12px; height: 58px; position: relative; }
+  .chip { position: absolute; height: 10px; border-radius: 3px; background: var(--smart); }
+  .db .count { font-family: var(--mono); font-size: 14.5px; color: var(--ink); margin-top: 8px; }
+  .fly { position: absolute; border-radius: 6px; background: var(--smart); }
+  .snip { position: absolute; font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--bg); background: var(--smart); padding: 3px 8px; border-radius: 6px; white-space: nowrap; }
+
+  .intro { position: absolute; left: 0; right: 0; top: 0; bottom: 0; display: flex; flex-direction: column; justify-content: center; padding: 0 56px; }
+  .intro h1 { font-size: 58px; font-weight: 800; letter-spacing: -0.03em; line-height: 1.08; }
+  .intro h1 em { font-style: normal; color: var(--keep); }
+  .intro p { font-size: 22px; color: var(--muted); margin-top: 18px; }
+
+  #qcard { position: absolute; left: 56px; top: 104px; width: 1088px; }
+  .q { font-size: 34px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.25; }
+  .q small { display: block; font-size: 16px; color: var(--muted); font-weight: 500; margin-bottom: 10px; letter-spacing: 0.04em; text-transform: uppercase; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 28px; }
+  .col { background: var(--panel); border-radius: 16px; padding: 24px 26px; border: 1px solid var(--line); height: 330px; position: relative; overflow: hidden; }
+  .col h5 { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+  .wall { margin-top: 16px; height: 186px; border-radius: 10px; background: #0c0f22; position: relative; overflow: hidden; font-family: var(--mono); font-size: 11px; line-height: 15px; color: #4a4f78; padding: 0 12px; white-space: pre; }
+  .wall .hit { color: var(--keep); }
+  .scan { position: absolute; left: 0; right: 0; height: 26px; background: linear-gradient(180deg, transparent, rgba(240,163,94,0.18), transparent); }
+  .code { margin-top: 16px; font-family: var(--mono); font-size: 17px; line-height: 1.7; color: #c9ccf2; background: #0c0f22; border-radius: 10px; padding: 12px 16px; white-space: pre; height: 128px; }
+  .code .k { color: var(--smart); } .code .s { color: var(--good); } .code .c { color: var(--dim); }
+  .result { margin-top: 12px; font-family: var(--mono); font-size: 15px; background: rgba(111,220,166,0.08); border: 1px solid rgba(111,220,166,0.35); color: var(--good); border-radius: 10px; padding: 10px 14px; display: flex; justify-content: space-between; }
+  .verdict { position: absolute; left: 26px; bottom: 22px; font-size: 18px; font-weight: 600; }
+
+  .headline { position: absolute; left: 56px; top: 104px; font-size: 48px; font-weight: 800; letter-spacing: -0.025em; line-height: 1.08; width: 1088px; }
+  .headline em { font-style: normal; color: var(--smart); }
+  .headline .sub { font-size: 24px; font-weight: 500; color: var(--muted); letter-spacing: 0; margin-top: 14px; }
+  .stats { position: absolute; left: 56px; top: 252px; width: 1088px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  .stat { background: var(--panel); border-radius: 16px; padding: 22px 24px; border: 1px solid var(--line); position: relative; }
+  .from { font-family: var(--mono); font-size: 20px; color: var(--keep); position: relative; display: inline-block; }
+  .from s { position: absolute; left: -2px; top: 50%; height: 2px; background: rgba(240,163,94,0.85); }
+  .to { font-family: var(--mono); font-size: 46px; font-weight: 700; color: var(--ink); margin-top: 2px; letter-spacing: -0.02em; }
+  .what { font-size: 16px; color: var(--muted); margin-top: 6px; line-height: 1.35; }
+  .install { position: absolute; left: 56px; top: 476px; font-family: var(--mono); font-size: 22px; background: #0c0f22; border: 1px solid #2c3260; border-radius: 12px; padding: 14px 20px; color: var(--ink); white-space: pre; }
+  .install .p { color: var(--good); margin-right: 10px; }
+  .foot { position: absolute; left: 56px; right: 56px; bottom: 30px; font-size: 13.5px; color: var(--dim); line-height: 1.45; }
+
+  .hero-title { font-size: 56px; font-weight: 800; letter-spacing: -0.03em; line-height: 1.04; }
+  .hero-title em { font-style: normal; color: var(--smart); }
+  .hero-sub { margin-top: 22px; font-size: 21px; color: var(--muted); line-height: 1.45; }
+  .hero-sub b { color: var(--ink); font-weight: 600; }
+</style>
+</head>
+<body>
+<div id="dots"></div>
+<div id="vignette"></div>
+<div class="layer" id="root"></div>
+
+<script>
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+const ease = (x) => { x = clamp(x); return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2; };
+const easeOut = (x) => 1 - Math.pow(1 - clamp(x), 3);
+const back = (x) => { x = clamp(x); const c = 1.7; return 1 + (c + 1) * Math.pow(x - 1, 3) + c * Math.pow(x - 1, 2); };
+const seg = (t, a, b) => clamp((t - a) / (b - a));
+const lerp = (a, b, f) => a + (b - a) * f;
+
+// ---- Data: ContextBench log-triage L12800, Claude Haiku 5.5 (docs/context-management.md) ----
+const PEAK_KEEP = 762, PEAK_SMART = 95, COST_KEEP = 6.07, COST_SMART = 0.38;
+// Run E trimmer settings: trim at 95k, cut to 0.3 of it (CONTEXT_TRIM_TO_FRACTION was 0.3 then).
+const TRIM_AT = 95, TRIM_TO = 28.5, START = 22;
+
+// Turns arrive as uneven chunks (log batches, tool results). Deterministic pseudo-random sizes,
+// scaled so keep-everything ends at its measured peak.
+function rng(seed) { return () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; }; }
+function build() {
+  const r = rng(7), raw = [];
+  for (let i = 0; i < 64; i++) raw.push(0.35 + r() * (r() < 0.15 ? 2.2 : 1));
+  const scale = (PEAK_KEEP - START) / raw.reduce((a, b) => a + b, 0);
+  const chunks = raw.map((v) => v * scale);
+  // per turn: keep before/after, smart before/after, and whether a trim fired before the turn landed
+  const turns = []; let k = START, s = START;
+  for (const c of chunks) {
+    let trimmed = 0, cutFrom = 0;
+    if (s + c > TRIM_AT) { cutFrom = s; trimmed = s - TRIM_TO; s = TRIM_TO; }
+    turns.push({ k0: k, k1: k + c, s0: s, s1: s + c, trimmed, cutFrom });
+    k += c; s += c;
+  }
+  return turns;
+}
+const TURNS = build();
+const NT = TURNS.length;
+const TRIM_IDX = TURNS.map((u, i) => (u.trimmed ? i : -1)).filter((i) => i >= 0);
+// cumulative prompt tokens for cost counters
+const cumK = [0], cumS = [0];
+TURNS.forEach((u, i) => { cumK.push(cumK[i] + u.k1); cumS.push(cumS[i] + u.s1); });
+
+const fmtK = (v) => `${Math.round(v)}k`;
+const fmt$ = (v) => `$${v.toFixed(2)}`;
+const brand = (extra = "") => `<div class="brand"><div class="logo"></div><span>Smarter Compact</span></div><div class="tag">${extra}</div>`;
+
+// geometry
+const CW = 760, CH = 440, PL = 70, PB = 40, PT = 16, PR = 40, YMAX = 800;
+const X = (f) => PL + f * (CW - PL - PR);              // f = turn position 0..NT
+const Y = (v) => PT + (1 - v / YMAX) * (CH - PT - PB);
+// a turn draws as a short rise (the chunk landing) then a flat run (the agent working)
+const RISE = 0.7, DROP = 0.18;
+
+function pathUpTo(pos, which) {
+  let d = `M${X(0).toFixed(1)},${Y(START).toFixed(1)}`;
+  const n = Math.min(NT, Math.ceil(pos));
+  for (let i = 0; i < n; i++) {
+    const u = TURNS[i], fx = (j) => X(j / NT);
+    const local = clamp(pos - i);
+    const v0 = which === "k" ? u.k0 : u.s0, v1 = which === "k" ? u.k1 : u.s1;
+    if (which === "s" && u.trimmed) {
+      const dr = easeOut(clamp(local / DROP));
+      d += `L${fx(i).toFixed(1)},${Y(u.cutFrom).toFixed(1)}L${fx(i).toFixed(1)},${Y(lerp(u.cutFrom, u.s0, dr)).toFixed(1)}`;
+      if (local < DROP) continue;
+    }
+    const rise = clamp(local / RISE);
+    d += `L${fx(i + RISE * rise).toFixed(1)},${Y(lerp(v0, v1, ease(rise))).toFixed(1)}`;
+    if (local > RISE) d += `L${fx(i + local).toFixed(1)},${Y(v1).toFixed(1)}`;
+  }
+  return d;
+}
+function valueAt(pos, which) {
+  if (pos <= 0) return START;
+  const i = Math.min(NT - 1, Math.floor(pos)), u = TURNS[i];
+  const local = clamp(pos - i), v0 = which === "k" ? u.k0 : u.s0, v1 = which === "k" ? u.k1 : u.s1;
+  if (which === "s" && u.trimmed && local < DROP) return lerp(u.cutFrom, u.s0, easeOut(local / DROP));
+  return lerp(v0, v1, ease(clamp(local / RISE)));
+}
+
+const T_PITCH = 6.4, T_CHART = 10.2, T_SAVE = 7.4;
+const CHART_A = 0.7, CHART_B = 9.0;   // session runs between these (chart-local seconds)
+const posAt = (u) => { const f = seg(u, CHART_A, CHART_B); return NT * (0.8 * f + 0.2 * ease(f)); };
+// chart-local time at which turn index i starts (inverse of posAt)
+function timeOfPos(p) { let lo = CHART_A, hi = CHART_B; for (let k = 0; k < 40; k++) { const m = (lo + hi) / 2; if (posAt(m) < p) lo = m; else hi = m; } return (lo + hi) / 2; }
+const TRIM_T = TRIM_IDX.map((i) => timeOfPos(i));
+
+function pitchScene(u, still = false) {
+  if (still) u = 99;
+  const f = (a, d = 0.45) => easeOut(seg(u, a, a + d));
+  const SLOT = 36, BOTTOM = 566, COLX = 690, COLW = 230;
+  const slotTop = (k) => BOTTOM - (k + 1) * SLOT + 6;
+  const ARR = (k) => 0.5 + k * 0.24;              // turn k arrives
+  const TRIM = 2.55, RECALL = 4.35;
+  const TH = slotTop(7) - 4;                     // limit sits above slot 7
+  const flash = still ? 0 : Math.exp(-Math.max(0, u - TRIM) * 5) * (u >= TRIM ? 1 : 0);
+  let blocks = "";
+  const block = (x, y, w, label, style = "", op = 1) =>
+    `<div style="position:absolute;left:${x}px;top:${y}px;width:${w}px;height:30px;border-radius:8px;opacity:${op};font-family:var(--mono);font-size:13px;display:flex;align-items:center;padding:0 12px;white-space:nowrap;overflow:hidden;${style}">${label}</div>`;
+  blocks += block(COLX, slotTop(0), COLW, "system + task · pinned", "background:#22274a;color:var(--muted);border:1px solid #333a6e");
+  for (let k = 1; k <= 8; k++) {
+    const a = f(ARR(k), 0.3);
+    if (a <= 0) continue;
+    let x = COLX, y = slotTop(k) - (1 - a) * 26, w = COLW, op = a;
+    if (k <= 4) {
+      const m = ease(seg(u, TRIM + (k - 1) * 0.08, TRIM + 0.6 + (k - 1) * 0.08));
+      x = lerp(COLX, 990, m); y = lerp(y, 520 - (k - 1) * 34, m); w = lerp(COLW, 128, m);
+    } else {
+      const m = ease(seg(u, TRIM + 0.35, TRIM + 0.85));
+      y = lerp(y, slotTop(k - 3), m);
+    }
+    const glow = k === 2 ? Math.exp(-Math.max(0, u - RECALL) * 4) * (u >= RECALL ? 1 : 0) : 0;
+    blocks += block(x, y, w, `turn ${k}`, `background:${k <= 4 && u > TRIM ? "#2b3170" : "#262b57"};color:var(--ink);border:1px solid ${glow > 0.05 ? "var(--good)" : "var(--smart)"};box-shadow:0 0 ${20 * glow}px rgba(111,220,166,${0.6 * glow})`, op);
+  }
+  const ptr = f(TRIM + 0.6, 0.35);
+  if (ptr > 0) blocks += block(COLX, slotTop(1), COLW, "↳ turns 1–4 in store", "background:transparent;color:var(--smart);border:1px dashed var(--smart)", ptr);
+  // recall: a copy of turn 2's line flies back into the prompt
+  const r = ease(seg(u, RECALL + 0.15, RECALL + 0.8));
+  if (r > 0) {
+    const x = lerp(990, COLX, r), y = lerp(520 - 34, slotTop(6), r) - 50 * Math.sin(Math.PI * r);
+    blocks += block(x, y, lerp(128, COLW, r), "turn 2 · line 412", "background:rgba(111,220,166,0.12);color:var(--good);border:1px solid var(--good)", 1);
+  }
+  const pill = f(RECALL - 0.45, 0.35);
+  const query = 'smart_compact_search("timeout")';
+  const typed = query.slice(0, Math.round(query.length * seg(u, RECALL - 0.4, RECALL + 0.1)));
+  const bullet = (n, t0, text) => `<div style="display:flex;gap:14px;align-items:flex-start;margin-top:18px;opacity:${f(t0)};transform:translateX(${(1 - f(t0)) * -16}px)">
+      <div style="flex:none;width:30px;height:30px;border-radius:50%;background:rgba(139,147,255,0.15);border:1px solid var(--smart);color:var(--smart);font-weight:700;font-size:15px;display:flex;align-items:center;justify-content:center">${n}</div>
+      <div style="font-size:21px;line-height:1.35;color:var(--ink)">${text}</div></div>`;
+  return `
+    ${brand("Claude Code · Codex · OpenCode · Pi")}
+    <div style="position:absolute;left:56px;top:110px;width:580px">
+      <div class="hero-title" style="font-size:48px;opacity:${f(0)};transform:translateY(${(1 - f(0)) * 14}px)">Long agent sessions. <em>Small, cached prompts.</em></div>
+      <div style="margin-top:26px">
+        ${bullet(1, 0.7, "Every turn is saved <b style='color:var(--smart)'>verbatim</b> to a local SQLite store.")}
+        ${bullet(2, TRIM - 0.1, "Older turns leave the prompt, so it stays <b style='color:var(--smart)'>under your limit</b> and the cache keeps hitting.")}
+        ${bullet(3, RECALL - 0.5, "The agent <b style='color:var(--smart)'>searches and queries</b> its history when it needs a detail.")}
+      </div>
+    </div>
+    <div style="position:absolute;left:${COLX}px;top:104px;font-size:13px;font-weight:600;color:var(--muted);letter-spacing:0.08em;opacity:${f(0.3)}">PROMPT</div>
+    <div style="position:absolute;left:990px;top:104px;font-size:13px;font-weight:600;color:var(--muted);letter-spacing:0.08em;opacity:${f(0.3)}">SESSION STORE</div>
+    <div style="position:absolute;left:972px;top:${(still ? 1 : 1) * 300}px;width:164px;height:268px;border-radius:18px;border:1px dashed rgba(139,147,255,${0.4 + 0.5 * flash});background:rgba(23,27,54,0.6);opacity:${f(0.3)};box-shadow:0 0 ${30 * flash}px rgba(139,147,255,${0.3 * flash})"></div>
+    <div style="position:absolute;left:990px;top:128px;font-family:var(--mono);font-size:13px;color:var(--dim);opacity:${f(0.3)}">sessions/&lt;sid&gt;.db</div>
+    <div style="position:absolute;left:${COLX - 8}px;width:${COLW + 16}px;top:${TH}px;border-top:2px dashed rgba(139,147,255,${0.4 + 0.6 * flash});opacity:${f(0.3)}"></div>
+    <div style="position:absolute;left:${COLX + COLW - 120}px;top:${TH - 22}px;width:120px;text-align:right;font-family:var(--mono);font-size:13px;color:var(--smart);opacity:${f(0.3)}">token limit</div>
+    ${blocks}
+    <div style="position:absolute;left:${COLX}px;top:150px;font-family:var(--mono);font-size:14px;color:var(--good);background:#0c0f22;border:1px solid rgba(111,220,166,0.4);border-radius:8px;padding:7px 12px;opacity:${pill};white-space:nowrap">${typed}<span>${typed.length < query.length ? "▍" : ""}</span></div>
+    <div class="foot" style="opacity:${f(RECALL + 0.6)}">Smarter Compact works through MCP tools and a local proxy. It has no API key of its own.</div>`;
+}
+
+function chartScene(u, still = false) {
+  const pos = still ? NT : posAt(u);
+  const kv = valueAt(pos, "k"), sv = valueAt(pos, "s");
+  const draw = still ? 1 : easeOut(seg(u, 0, 0.5));
+
+  let grid = "";
+  for (const v of [0, 200, 400, 600, 800]) {
+    grid += `<line class="gridl" x1="${PL}" x2="${CW - PR}" y1="${Y(v)}" y2="${Y(v)}" opacity="${draw}"/>`;
+    grid += `<text class="tick" x="${PL - 12}" y="${Y(v) + 5}" text-anchor="end" opacity="${draw}">${v}k</text>`;
+  }
+  // threshold flash when a trim fires
+  let flash = 0, lastTrim = -1;
+  TRIM_T.forEach((tt, j) => { if (u >= tt) lastTrim = j; flash = Math.max(flash, still ? 0 : Math.exp(-Math.max(0, u - tt) * 6) * (u >= tt ? 1 : 0)); });
+  const trimsDone = still ? TRIM_IDX.length : lastTrim + 1;
+
+  const kPath = pathUpTo(pos, "k"), sPath = pathUpTo(pos, "s");
+  const xHead = X(Math.min(pos, NT) / NT);
+  const area = (p, v) => `${p}L${xHead.toFixed(1)},${Y(0)}L${X(0)},${Y(0)}Z`;
+  const pulse = 6 + 3 * Math.sin(u * 7);
+  const near = xHead > CW - 270;
+  const lx = near ? xHead - 16 : xHead + 16, anchor = near ? "end" : "start";
+
+  // snip markers and flying slices
+  let marks = "", flies = "";
+  TRIM_IDX.forEach((i, j) => {
+    if (!still && u < TRIM_T[j]) return;
+    const x = X(i / NT), age = still ? 9 : u - TRIM_T[j];
+    const pop = back(seg(age, 0, 0.35));
+    marks += `<g opacity="${still ? 0.5 : lerp(1, 0.45, seg(age, 0.6, 1.4))}"><circle cx="${x}" cy="${Y(TRIM_AT)}" r="${4 * pop}" fill="var(--smart)"/></g>`;
+    if (!still && age < 0.75) {
+      // the trimmed slice detaches from the line and flies into the store
+      const f = easeOut(seg(age, 0.05, 0.75));
+      const sx = 56 + x, sy = 104 + Y(TURNS[i].cutFrom), h = (Y(TRIM_TO) - Y(TURNS[i].cutFrom));
+      const slot = j, ex = 870 + (slot % 6) * 42, ey = 104 + 274 + Math.floor(slot / 6) * 16;
+      flies += `<div class="fly" style="left:${lerp(sx - 5, ex, f)}px;top:${lerp(sy, ey, f) - 60 * Math.sin(Math.PI * f)}px;width:${lerp(10, 36, f)}px;height:${lerp(h, 10, f)}px;opacity:${1 - 0.3 * f};box-shadow:0 0 ${18 * (1 - f)}px var(--smart-glow)"></div>`;
+      if (age < 0.6) flies += `<div class="snip" style="left:${56 + x - 78}px;top:${104 + Y(TRIM_AT) + 10 + 6 * easeOut(seg(age, 0, 0.3))}px;opacity:${1 - seg(age, 0.35, 0.6)};transform:scale(${back(seg(age, 0, 0.25))})">✂ trim</div>`;
+    }
+  });
+
+  const svg = `
+  <svg viewBox="0 0 ${CW} ${CH}" style="width:100%;height:100%;overflow:visible">
+    <defs>
+      <linearGradient id="gk" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f0a35e" stop-opacity="0.22"/><stop offset="1" stop-color="#f0a35e" stop-opacity="0"/></linearGradient>
+      <linearGradient id="gs" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8b93ff" stop-opacity="0.35"/><stop offset="1" stop-color="#8b93ff" stop-opacity="0.02"/></linearGradient>
+      <filter id="glow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    </defs>
+    ${grid}
+    <line class="axis" x1="${PL}" x2="${CW - PR}" y1="${Y(0)}" y2="${Y(0)}"/>
+    <text x="${PL}" y="${CH - 8}" fill="var(--muted)" font-size="14">agent turns →</text>
+    <line x1="${PL}" x2="${CW - PR}" y1="${Y(TRIM_AT)}" y2="${Y(TRIM_AT)}" stroke="#8b93ff" stroke-opacity="${0.35 + 0.65 * flash}" stroke-width="${1 + 2 * flash}" stroke-dasharray="6 6"/>
+    <text class="tick" x="${CW - PR}" y="${Y(TRIM_AT) - 8}" text-anchor="end" fill="#8b93ff" opacity="${draw}">trim at 95k</text>
+    <path d="${area(kPath)}" fill="url(#gk)"/>
+    <path d="${area(sPath)}" fill="url(#gs)"/>
+    <path class="lineK" d="${kPath}"/>
+    <path class="lineS" d="${sPath}" filter="url(#glow)"/>
+    ${marks}
+    ${still ? "" : `<circle cx="${xHead}" cy="${Y(kv)}" r="${pulse + 6}" fill="var(--keep)" opacity="0.15"/>
+    <circle cx="${xHead}" cy="${Y(sv)}" r="${pulse + 6}" fill="var(--smart)" opacity="0.2"/>`}
+    <circle cx="${xHead}" cy="${Y(kv)}" r="6" fill="var(--keep)"/>
+    <circle cx="${xHead}" cy="${Y(sv)}" r="6" fill="var(--smart)"/>
+    <text class="lbl" x="${lx}" text-anchor="${anchor}" y="${Y(kv) - 16}" fill="var(--keep)" opacity="${draw}">Keep everything · ${fmtK(kv)}</text>
+    ${still ? `<text class="lbl" x="${CW - PR}" text-anchor="end" y="${Y(TRIM_AT) - 34}" fill="var(--smart)">Smarter Compact · ≤ 95k</text>` : ""}
+  </svg>`;
+
+  const done = Math.min(NT, Math.floor(pos));
+  const frac = clamp(pos - done);
+  const ck = done < NT ? cumK[done] + frac * TURNS[done].k1 : cumK[NT];
+  const cs = done < NT ? cumS[done] + frac * TURNS[done].s1 : cumS[NT];
+  const costK = COST_KEEP * ck / cumK[NT], costS = COST_SMART * cs / cumS[NT];
+
+  let chips = "";
+  for (let j = 0; j < trimsDone; j++) {
+    const age = still ? 9 : u - TRIM_T[j] - 0.7;
+    const glow = age < 0.6 && age > 0 ? 1 - age / 0.6 : 0;
+    chips += `<div class="chip" style="left:${(j % 6) * 42}px;top:${Math.floor(j / 6) * 16}px;width:${36 * easeOut(clamp((age + 0.15) / 0.3))}px;box-shadow:0 0 ${14 * glow}px var(--smart-glow);opacity:${0.85 * clamp((age + 0.15) / 0.15)}"></div>`;
+  }
+  const dbGlow = still ? 0 : Math.max(0, ...TRIM_T.map((tt) => { const a = u - tt - 0.7; return a > 0 && a < 0.6 ? 1 - a / 0.6 : 0; }));
+  const landed = still ? trimsDone : TRIM_T.filter((tt) => u - tt >= 0.7).length;
+
+  return `
+    ${brand("example · one long log-triage session")}
+    <div id="chartwrap">${svg}</div>
+    <div id="side" style="opacity:${draw};transform:translateX(${(1 - draw) * 20}px)">
+      <div class="meter">
+        <h4><span class="dot" style="background:var(--keep)"></span>Keep everything</h4>
+        <div class="rows"><span>prompt</span><b>${fmtK(kv)}</b>
+          <div class="bar"><i style="width:${kv / 8}%;background:var(--keep)"></i></div>
+          <span>cost so far</span><b>${fmt$(costK)}</b></div>
+      </div>
+      <div class="meter">
+        <h4><span class="dot" style="background:var(--smart)"></span>Smarter Compact</h4>
+        <div class="rows"><span>prompt</span><b>${fmtK(sv)}</b>
+          <div class="bar"><i style="width:${sv / 8}%;background:var(--smart)"></i></div>
+          <span>cost so far</span><b>${fmt$(costS)}</b></div>
+      </div>
+      <div class="db" style="border-color:rgba(139,147,255,${0.4 + 0.6 * dbGlow});box-shadow:0 0 ${30 * dbGlow}px rgba(139,147,255,${0.25 * dbGlow})">
+        <h4>Session store</h4>
+        <div class="path">sessions/&lt;sid&gt;.db · SQLite</div>
+        <div class="stack">${chips}</div>
+        <div class="count">${landed} trim${landed === 1 ? "" : "s"} · every turn kept verbatim</div>
+      </div>
+    </div>
+    ${flies}
+    <div class="foot">Illustration of one log-triage session. Peak prompt and cost per trial are measured means (ContextBench L12800, Claude Haiku 5.5; smart n = 3, keep everything n = 2). Trims follow that run's settings: at 95k, down to about 29k.</div>`;
+}
+
+const SAVINGS = [
+  { task: "kv-store R4000", ratio: 0.130 },
+  { task: "log-triage L1600", ratio: 0.811, ns: true },
+  { task: "log-triage L6400", ratio: 0.109 },
+  { task: "log-triage L12800", ratio: 0.062 },
+];
+const AVG_SAVING = Math.round(100 * (1 - SAVINGS.reduce((a, r) => a + r.ratio, 0) / SAVINGS.length));
+function savingsScene(u, still = false) {
+  if (still) u = 99;
+  const f = (a, d = 0.45) => easeOut(seg(u, a, a + d));
+  const pct = Math.round(AVG_SAVING * ease(seg(u, 0.3, 2.6)));
+  const BAR = 560, X0 = 290;
+  let rows = "";
+  SAVINGS.forEach((r, i) => {
+    const t0 = 0.4 + i * 0.3, top = 236 + i * 56;
+    const grow = ease(seg(u, t0, t0 + 0.5)), shrink = ease(seg(u, t0 + 0.55, t0 + 1.35));
+    const w = BAR * lerp(1, r.ratio, shrink) * grow;
+    const save = Math.round(100 * (1 - r.ratio));
+    rows += `<div style="position:absolute;left:56px;top:${top}px;width:220px;font-size:17px;color:var(--muted);opacity:${f(t0)}">${r.task}</div>
+      <div style="position:absolute;left:${X0}px;top:${top - 2}px;height:12px;width:${BAR * grow}px;border-radius:6px;background:rgba(240,163,94,0.85)"></div>
+      <div style="position:absolute;left:${X0}px;top:${top + 15}px;height:12px;width:${w}px;border-radius:6px;background:var(--smart);box-shadow:0 0 ${12 * (1 - shrink) * grow}px var(--smart-glow)"></div>
+      <div style="position:absolute;left:${X0 + BAR + 24}px;top:${top - 4}px;font-family:var(--mono);font-size:26px;font-weight:700;color:${r.ns ? "var(--muted)" : "var(--ink)"};opacity:${f(t0 + 1.2)}">−${save}%<span style="font-family:Inter;font-size:14px;font-weight:500;color:var(--dim);margin-left:10px">${r.ns ? "not significant" : ""}</span></div>`;
+  });
+  const cmd = "npm install -g smarter-compact";
+  const typed = cmd.slice(0, Math.round(cmd.length * seg(u, 3.6, 4.4)));
+  const caret = Math.floor(u * 2.5) % 2 ? "▍" : " ";
+  return `
+    ${brand("github.com/bcmyguest/smarter-compact")}
+    <div class="headline" style="top:100px;opacity:${f(0)};transform:translateY(${(1 - f(0)) * 14}px)">Average cost saving: <em style="font-variant-numeric:tabular-nums">${pct}%</em>
+      <div class="sub">Four benchmark task sizes, same model, same seeds, cost relative to keeping everything.</div></div>
+    <div style="position:absolute;left:${X0}px;top:208px;font-size:13px;color:var(--muted);display:flex;gap:18px;opacity:${f(0.3)}">
+      <span><span class="dot" style="background:var(--keep);margin-right:6px"></span>Keep everything</span>
+      <span><span class="dot" style="background:var(--smart);margin-right:6px"></span>Smarter Compact</span></div>
+    ${rows}
+    <div style="position:absolute;left:56px;top:470px;font-size:19px;color:var(--ink);opacity:${f(2.9)}">Better answers too: <b style="color:var(--good)">+0.47</b> <span style="color:var(--muted)">score on log tasks (95% CI 0.34–0.58)</span></div>
+    <div class="install" style="top:520px;opacity:${f(3.5, 0.3)}"><span class="p">$</span>${still ? cmd : typed}<span style="color:var(--good)">${still ? "" : caret}</span></div>
+    <div class="foot" style="opacity:${f(3.0)}">Paired list-price cost, Smarter Compact ÷ keep everything, seed-matched trials. ContextBench synthetic tasks, Claude Haiku 5.5, 2–3 pairs per size. Average is the mean of the four ratios (0.28). L1600's interval includes no saving.</div>`;
+}
+
+function heroScene(gh) {
+  return `
+    ${brand("Claude Code · Codex · OpenCode · Pi")}
+    <div style="position:absolute;left:56px;top:${gh ? 128 : 140}px;width:600px">
+      <div class="hero-title">Long agent sessions. <em>Small, cached prompts.</em></div>
+      <div class="hero-sub">Older turns move to a <b>local SQLite store</b>, verbatim. The agent pulls them back with <b>search and SQL</b>, and the prompt cache keeps hitting.</div>
+    </div>
+    <div style="position:absolute;left:${gh ? 720 : 670}px;top:${gh ? 130 : 150}px;width:760px;height:440px;transform:scale(0.66);transform-origin:0 0">${miniChart()}</div>
+    <div class="install" style="top:${gh ? 488 : 520}px"><span class="p">$</span>npm install -g smarter-compact</div>`;
+}
+function miniChart() {
+  const k = pathUpTo(NT, "k"), s = pathUpTo(NT, "s");
+  let grid = "";
+  for (const v of [0, 200, 400, 600, 800]) grid += `<line class="gridl" x1="${PL}" x2="${CW - PR}" y1="${Y(v)}" y2="${Y(v)}"/><text class="tick" x="${PL - 12}" y="${Y(v) + 5}" text-anchor="end" style="font-size:20px">${v}k</text>`;
+  return `<svg viewBox="0 0 ${CW} ${CH}" style="width:760px;height:440px;overflow:visible">
+    <defs><linearGradient id="mk" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f0a35e" stop-opacity="0.22"/><stop offset="1" stop-color="#f0a35e" stop-opacity="0"/></linearGradient>
+    <linearGradient id="ms" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8b93ff" stop-opacity="0.35"/><stop offset="1" stop-color="#8b93ff" stop-opacity="0.02"/></linearGradient></defs>
+    ${grid}
+    <path d="${k}L${X(1)},${Y(0)}L${X(0)},${Y(0)}Z" fill="url(#mk)"/><path d="${s}L${X(1)},${Y(0)}L${X(0)},${Y(0)}Z" fill="url(#ms)"/>
+    <path class="lineK" d="${k}" style="stroke-width:6"/><path class="lineS" d="${s}" style="stroke-width:6"/>
+    <text x="${CW - PR}" y="${Y(PEAK_KEEP) - 18}" text-anchor="end" fill="var(--keep)" style="font-size:26px;font-weight:700">Keep everything · 762k</text>
+    <text x="${CW - PR}" y="${Y(PEAK_SMART) - 22}" text-anchor="end" fill="var(--smart)" style="font-size:26px;font-weight:700">Smarter Compact · 95k</text>
+    <text x="${PL}" y="${CH + 8}" fill="var(--muted)" style="font-size:20px">peak prompt per trial, log-triage L12800, Haiku 5.5 · line shape illustrative</text>
+  </svg>`;
+}
+
+window.DURATION = T_PITCH + T_CHART + T_SAVE;
+window.render = function (t) {
+  const root = document.getElementById("root");
+  if (!window.STILL_BG) document.getElementById("dots").style.transform = `translate(${(-t * 6) % 28}px, ${(-t * 3) % 28}px)`;
+  let html, op = 1;
+  const fade = (u, d) => Math.min(easeOut(seg(u, 0, 0.3)), 1 - ease(seg(u, d - 0.3, d)));
+  if (t < T_PITCH) { html = pitchScene(t); op = fade(t, T_PITCH); }
+  else if (t < T_PITCH + T_CHART) { const u = t - T_PITCH; html = chartScene(u); op = fade(u, T_CHART); }
+  else { const u = t - T_PITCH - T_CHART; html = savingsScene(u); op = easeOut(seg(u, 0, 0.3)); }
+  root.innerHTML = html;
+  root.style.opacity = op;
+};
+window.card = function (name) {
+  const root = document.getElementById("root");
+  root.style.opacity = 1;
+  if (name === "hero") root.innerHTML = heroScene(false);
+  if (name === "gh") { document.body.classList.add("gh"); root.innerHTML = heroScene(true); }
+  if (name === "results") root.innerHTML = savingsScene(0, true);
+  if (name === "pitch") root.innerHTML = pitchScene(0, true);
+  if (name === "chart") root.innerHTML = chartScene(99, true);
+};
+window.TRIMS = TRIM_IDX.length;
+const q = new URLSearchParams(location.search);
+window.STILL_BG = q.has("stillbg");
+if (q.get("card")) window.card(q.get("card")); else window.render(+(q.get("t") || 0));
+</script>
+</body>
+</html>

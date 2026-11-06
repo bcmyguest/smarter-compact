@@ -1,5 +1,5 @@
 title: Smarter Compact
-description: Context management (smart compaction) for coding agents — long sessions under a token limit without an LLM summary.
+description: Context management (smart compaction) for coding agents — long sessions with small, cached prompts; every turn kept in a local SQLite store the agent can search.
 theme: jekyll-theme-cayman
 markdown: GFM
 baseurl: "/smarter-compact"

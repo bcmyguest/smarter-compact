@@ -1,7 +1,10 @@
 {
   "mcpServers": {
     "smarter-compact": {
-      "command": "${CLAUDE_PLUGIN_ROOT}/scripts/smarter-compact-mcp"
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/lib/mcp/server.mjs"
+      ]
     }
   }
 }

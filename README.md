@@ -4,26 +4,20 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![GitHub](https://img.shields.io/badge/github-bcmyguest%2Fsmarter--compact-blue)](https://github.com/bcmyguest/smarter-compact)
 
-**Context management (smart compaction)** keeps long coding-agent sessions under a token limit without an LLM summary. Every message goes into a local SQLite session store; older turns leave the context and the turn they precede carries a pointer to them.
+**Context management (smart compaction) for coding agents.** Long sessions keep small, cached prompts: every message goes into a local SQLite session store, older turns leave the prompt once it reaches your token limit, and the turn they precede carries a pointer to them.
 
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="docs/media/smart-compaction-dark.gif" />
-<img src="docs/media/smart-compaction.gif" alt="Smart compaction: older turns move into the session store, the cut turn carries a pointer, smart_compact_search recovers a detail." width="720" />
-</picture>
+<img src="docs/media/smarter-compact-demo.gif" alt="How it works: the prompt fills, turns 1–4 move to the session store, a search pulls a line back. Then a Claude Code session: the agent reads three log files, edits code and runs tests; the prompt crosses 95k and Smarter Compact moves 31 messages to the session store (97k to 51k); later the agent answers a question about the trimmed logs with smart_compact_sql and smart_compact_get (illustrative session); then the benchmark savings chart, 72% average." width="720" />
 </p>
 
 The agent searches the store with `smart_compact_search`, `smart_compact_sql`, and `smart_compact_get` when it needs a detail back. The cut stays put on later requests, so the prompt cache keeps hitting.
 
 **Learn more:** [Smart compaction](https://bcmyguest.github.io/smarter-compact/context-management.html) (benchmarks and how it trims) · [Context proxy & port](https://bcmyguest.github.io/smarter-compact/context-proxy.html) · [Context store](https://bcmyguest.github.io/smarter-compact/context-store.html)
 
-**Benchmarks:** In seed-matched [ContextBench](https://github.com/RulinShao/ContextBench) (Context Language Models, [arXiv:2609.37725](https://arxiv.org/abs/2609.37725); [Hugging Face dataset](https://huggingface.co/datasets/context-language-model/ContextBench)) log tasks on Haiku 5.5, smart compaction scored **0.469** higher than keep-everything (95% bootstrap interval 0.339–0.578; eight pairs from one task family, 0.329–0.639 when the bootstrap resamples task sizes; [deviations from the pre-registration](https://bcmyguest.github.io/smarter-compact/context-research.html#deviations-from-the-pre-registration)). Costs fell on every paired kv-store R4000 trial and every log-triage L6400 and L12800 trial. kv-store is a small ceiling test (all arms tie at R4000); the chart below is log-triage only. [Full tables and charts](https://bcmyguest.github.io/smarter-compact/context-management.html#benchmarks) · [methods](https://bcmyguest.github.io/smarter-compact/context-research.html).
+**Benchmarks:** In seed-matched [ContextBench](https://github.com/RulinShao/ContextBench) (Context Language Models, [arXiv:2609.37725](https://arxiv.org/abs/2609.37725); [Hugging Face dataset](https://huggingface.co/datasets/context-language-model/ContextBench)) runs on Haiku 5.5, smart compaction cost **72% less on average** than keep-everything across four task sizes (mean of the paired cost ratios; −87%, −19%, −89%, −94%, and the L1600 interval includes no saving). On the log tasks it also scored **0.469** higher (95% bootstrap interval 0.339–0.578; eight pairs from one task family, 0.329–0.639 when the bootstrap resamples task sizes; [deviations from the pre-registration](https://bcmyguest.github.io/smarter-compact/context-research.html#deviations-from-the-pre-registration)). kv-store is a small ceiling test (all arms tie at R4000). [Full tables and charts](https://bcmyguest.github.io/smarter-compact/context-management.html#benchmarks) · [methods](https://bcmyguest.github.io/smarter-compact/context-research.html).
 
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="docs/media/contextbench-quality-log-dark.png" />
-<img src="docs/media/contextbench-quality-log.png" alt="ContextBench log-triage: smart compaction at 1.00 on L12800 overall vs 0.35 for native (never compacted) and keep-everything; lookup and count panels" width="480" />
-</picture>
+<img src="docs/media/contextbench-savings.png" alt="Average cost saving 72%: paired cost of Smarter Compact relative to keep everything, kv-store R4000 −87%, log-triage L1600 −19% (not significant), L6400 −89%, L12800 −94%; log-task score +0.47" width="720" />
 </p>
 
 The stored text still uses the OpenMem wire format (`[smarter-compact: …]`, `<smarter-compact-recall>`). Memory recall on a trim is off unless you set `CONTEXT_COMPACTION_RECALL=1`.
@@ -54,6 +48,14 @@ smarter-compact enable claude
 ```
 
 Start a new `claude` session after `enable`. The marketplace install registers the search tools and the compact command. `enable` points `ANTHROPIC_BASE_URL` at `http://127.0.0.1:4101`, starts the LiteLLM proxy in the background when needed, and stores a key in `~/.config/smarter-compact/proxy.env` (mode 600). Session hooks also ensure the proxy is up. A previous base URL is saved in `~/.config/smarter-compact/proxy-backup.json` and restored by `smarter-compact disable claude`. Logs: `~/.config/smarter-compact/proxy.log`. Set `SMARTER_COMPACT_AUTO_PROXY=0` to disable auto-start.
+
+On Claude Code 2.1.275 or later you can install the plugin from inside Claude Code instead of running `plugins add`:
+
+```
+/plugin install smarter-compact --marketplace bcmyguest/smarter-compact
+```
+
+That adds the search tools, hooks and commands. Trimming still needs `smarter-compact enable claude`, which points Claude Code at the proxy.
 
 <details>
 <summary>Optional: install from a git clone</summary>

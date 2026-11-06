@@ -232,7 +232,7 @@ The +0.469 [0.339, 0.578] interval resamples the 8 log-triage pairs as if indepe
 
 Three seeds per cell, except keep-everything at L12800 (two). Across nine log pairs smart minus native-153k was +0.829 (pairs bootstrap [0.676, 0.958]; task-clustered [0.625, 0.981]); native-153k minus keep-everything was −0.349 over eight pairs ([−0.510, −0.182]). Reproduce with `python3 ci.py results-E/summary.json --metric reward_lenient --pool log-triage --ref e-native-153k`.
 
-Sonnet 5 has two paired log L6400 seeds in [`bench/results-S/summary.json`](https://github.com/bcmyguest/openmem/blob/main/bench/results-S/summary.json). Smart minus none score was +0.0625 [0.0417, 0.0833]; its cost ratio was 0.401 [0.361, 0.441]. The two smart trials cost $7.86 at list price against $19.85 for none. This supports the direction on that one task, with too few seeds for broad model claims.
+Sonnet 5 has two paired log L6400 seeds. Smart minus none score was +0.0625 [0.0417, 0.0833]; its cost ratio was 0.401 [0.361, 0.441]. The two smart trials cost $7.86 at list price against $19.85 for none. This supports the direction on that one task, with too few seeds for broad model claims.
 
 The coding-task replay used Haiku 4.5. Its `step2c` brief required changing strings pinned by existing exact-string tests while forbidding assertion edits; all four `step2c` trials therefore report `tests_rc=1`. Two of four smart-arm replays searched the session store once. This does not diagnose the earlier hour-long subagents, whose transcripts were not scored for scratchpad behavior. The decision-consistency trial set remains partial. Scratchpad read-path work is outside `main`, so no scratchpad benefit is claimed here.
 
