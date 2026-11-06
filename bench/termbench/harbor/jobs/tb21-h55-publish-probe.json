@@ -1,0 +1,67 @@
+{
+ "job_name": "tb21-h55-publish-probe",
+ "jobs_dir": "/tmp/opencode/tb21-h55-publish-probe",
+ "n_attempts": 1,
+ "n_concurrent": 4,
+ "n_concurrent_trials": 4,
+ "environment": {
+  "type": "docker",
+  "mounts": [
+   {
+    "type": "bind",
+    "source": "/home/brandonguest/smarter-compact",
+    "target": "/opt/smarter-compact"
+   },
+   {
+    "type": "bind",
+    "source": "/home/brandonguest/.claude/.credentials.json",
+    "target": "/opt/claude-creds/.credentials.json"
+   }
+  ]
+ },
+ "agents": [
+  {
+   "name": null,
+   "model_name": "anthropic/claude-haiku-5-5",
+   "import_path": "sc_agent_claude:ScClaudeClear",
+   "env": {
+    "CONTEXT_TRIM_AT_TOKENS": "40000",
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "195000",
+    "CONTEXT_CLEAR_KEEP_RESULTS": "10"
+   },
+   "kwargs": {}
+  },
+  {
+   "name": null,
+   "model_name": "anthropic/claude-haiku-5-5",
+   "import_path": "sc_agent_claude:ScClaudeServerClear",
+   "env": {
+    "CONTEXT_SERVER_CLEAR_TRIGGER_TOKENS": "40000",
+    "CONTEXT_SERVER_CLEAR_KEEP_TOOL_USES": "3",
+    "CONTEXT_SERVER_CLEAR_AT_LEAST_TOKENS": "5000",
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "195000"
+   },
+   "kwargs": {}
+  },
+  {
+   "name": null,
+   "model_name": "anthropic/claude-haiku-5-5",
+   "import_path": "sc_agent_claude:ScClaudeMask",
+   "env": {
+    "CONTEXT_TRIM_AT_TOKENS": "40000",
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "195000",
+    "CONTEXT_MASK_OBSERVATIONS": "1"
+   },
+   "kwargs": {}
+  }
+ ],
+ "datasets": [
+  {
+   "path": "/tmp/opencode/tb21/terminal-bench-2-1",
+   "task_names": [
+    "adaptive-rejection-sampler"
+   ]
+  }
+ ],
+ "agent_setup_timeout_multiplier": 3.0
+}

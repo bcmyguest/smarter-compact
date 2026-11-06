@@ -14,9 +14,10 @@ import json
 import os
 import sqlite3
 
-ARMS = ("Smart", "Mask", "Native")
+ARMS = ("Smart", "Mask", "Clear", "ServerClear", "Native")
 # Agent class -> arm label; any other ScClaude<Name> class reports as <Name> (NoStrip, Prose, Trim50, ...).
-ARM_LABELS = {"ScClaudeSmarterCompact": "Smart", "ScClaudeBaseline": "Native"}
+ARM_LABELS = {"ScClaudeSmarterCompact": "Smart", "ScClaudeMask": "Mask", "ScClaudeServerClear": "ServerClear",
+              "ScClaudeClear": "Clear", "ScClaudeBaseline": "Native"}
 
 
 def arm_of(trial):
@@ -25,8 +26,9 @@ def arm_of(trial):
 
 
 def arms_in(rows):
-    """ARMS first, then every other arm present, in first-seen order."""
-    return list(dict.fromkeys([*ARMS, *(r["arm"] for r in rows)]))
+    """The ARMS present first, then every other arm present, in first-seen order."""
+    present = [r["arm"] for r in rows]
+    return list(dict.fromkeys([*(a for a in ARMS if a in present), *present]))
 
 
 def stream_stats(path):

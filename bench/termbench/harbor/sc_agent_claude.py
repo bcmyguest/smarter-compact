@@ -43,7 +43,7 @@ TRIM_AT = os.environ.get("SC_TRIM_AT", "95000")
 ARM_ENV_KEYS = ("CONTEXT_TRIM_AT_TOKENS", "CONTEXT_TRIM_TO_FRACTION", "CONTEXT_STRIP_PROSE", "CONTEXT_PROGRESS_NOTE",
                 "CONTEXT_MASK_OBSERVATIONS", "CONTEXT_STANDING_INSTRUCTION", "CONTEXT_POINTER_TOOLS",
                 "CONTEXT_SERVER_CLEAR", "CONTEXT_SERVER_CLEAR_TRIGGER_TOKENS", "CONTEXT_SERVER_CLEAR_KEEP_TOOL_USES",
-                "CONTEXT_SERVER_CLEAR_AT_LEAST_TOKENS")
+                "CONTEXT_SERVER_CLEAR_AT_LEAST_TOKENS", "CONTEXT_CLEAR_KEEP_RESULTS")
 # A trim threshold no Terminal-Bench session reaches: the proxy runs, our trim never fires.
 TRIM_OFF = "10000000"
 # Job-level bind mount of the host ~/.claude/.credentials.json (read-only in practice; the
@@ -124,6 +124,8 @@ class ScClaudeSmarterCompact(ScClaudeBase):
     REQUIRES_PROXY_SETTINGS = ()
     # Proxy env that defines the arm; applied after the job's env so a job cannot undo it.
     FORCED_ENV = {}
+    # Proxy env the arm defaults to; the job's env overrides it.
+    DEFAULT_ENV = {}
 
     async def install(self, environment):
         await super().install(environment)
@@ -198,6 +200,7 @@ class ScClaudeSmarterCompact(ScClaudeBase):
                 "CONTEXT_TRIM_AT_TOKENS": TRIM_AT,
                 "SMARTER_COMPACT_STATE_DIR": STATE_DIR,
                 "SMARTER_COMPACT_AUTO_PROXY": "1",
+                **self.DEFAULT_ENV,
                 **{k: v for k, v in self.extra_env.items() if k in ARM_ENV_KEYS},
                 **self.FORCED_ENV,
             },
@@ -223,6 +226,14 @@ class ScClaudeCombined(ScClaudeSmarterCompact):
 
 class ScClaudeMask(ScClaudeSmarterCompact):
     """Keep older tool calls, mask their results (CONTEXT_MASK_OBSERVATIONS=1; wins over prose strip)."""
+
+
+class ScClaudeClear(ScClaudeSmarterCompact):
+    """Tool-result clearing: each trim masks every result but the newest N (CONTEXT_CLEAR_KEEP_RESULTS, default 10),
+    keeping every turn and call; turns drop only when that is not enough."""
+
+    REQUIRES_PROXY_SETTINGS = ("CONTEXT_CLEAR_KEEP_RESULTS",)
+    DEFAULT_ENV = {"CONTEXT_CLEAR_KEEP_RESULTS": "10"}
 
 
 class ScClaudeNoStrip(ScClaudeSmarterCompact):
