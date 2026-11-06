@@ -7,12 +7,13 @@
   :root {
     --bg: #0f1226;
     --panel: #171b36;
+    --line: #262b52;
     --grid: #232849;
     --ink: #eef0ff;
     --muted: #9aa0c8;
     --dim: #5d6390;
     --smart: #8b93ff;
-    --smart-glow: rgba(139, 147, 255, 0.35);
+    --smart-glow: rgba(139, 147, 255, 0.45);
     --keep: #f0a35e;
     --good: #6fdca6;
     --mono: "JetBrains Mono", monospace;
@@ -25,75 +26,76 @@
     -webkit-font-smoothing: antialiased;
   }
   body.gh { width: 1280px; height: 640px; }
-  .bgdots {
-    position: absolute; inset: 0;
+  #dots {
+    position: absolute; inset: -40px;
     background-image: radial-gradient(var(--grid) 1.2px, transparent 1.2px);
-    background-size: 28px 28px; opacity: 0.8;
+    background-size: 28px 28px;
   }
+  #vignette { position: absolute; inset: 0; background: radial-gradient(ellipse at 30% 40%, rgba(139,147,255,0.07), transparent 60%); }
   .layer { position: absolute; inset: 0; }
   .brand { position: absolute; left: 56px; top: 40px; display: flex; align-items: center; gap: 12px; }
-  .logo { width: 30px; height: 30px; border-radius: 8px; background: var(--smart); position: relative; box-shadow: 0 0 24px var(--smart-glow); }
+  .logo { width: 30px; height: 30px; border-radius: 8px; background: var(--smart); position: relative; }
   .logo::before, .logo::after { content: ""; position: absolute; left: 7px; right: 7px; height: 3px; border-radius: 2px; background: var(--bg); }
   .logo::before { top: 9px; } .logo::after { top: 17px; right: 13px; }
   .brand span { font-weight: 700; font-size: 20px; letter-spacing: -0.01em; }
   .tag { position: absolute; right: 56px; top: 44px; font-family: var(--mono); font-size: 15px; color: var(--muted); }
 
-  /* chart */
   #chartwrap { position: absolute; left: 56px; top: 104px; width: 760px; height: 440px; }
-  #chart { width: 100%; height: 100%; overflow: visible; }
-  .axis { stroke: var(--grid); stroke-width: 1.5; }
   .gridl { stroke: var(--grid); stroke-width: 1; stroke-dasharray: 3 6; }
+  .axis { stroke: var(--grid); stroke-width: 1.5; }
   .tick { fill: var(--dim); font-size: 14px; font-family: var(--mono); }
   .lineK { fill: none; stroke: var(--keep); stroke-width: 4; stroke-linejoin: round; stroke-linecap: round; }
-  .lineS { fill: none; stroke: var(--smart); stroke-width: 4; stroke-linejoin: round; stroke-linecap: round; filter: drop-shadow(0 0 8px var(--smart-glow)); }
+  .lineS { fill: none; stroke: var(--smart); stroke-width: 4; stroke-linejoin: round; stroke-linecap: round; }
   .lbl { font-size: 17px; font-weight: 700; }
-  .ylab { fill: var(--muted); font-size: 14px; }
 
-  /* side panel */
   #side { position: absolute; left: 852px; top: 104px; width: 292px; }
-  .meter { background: var(--panel); border-radius: 14px; padding: 16px 18px; margin-bottom: 14px; border: 1px solid #262b52; }
-  .meter h4 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; display: flex; align-items: center; gap: 8px; }
+  .meter { background: var(--panel); border-radius: 14px; padding: 16px 18px; margin-bottom: 14px; border: 1px solid var(--line); }
+  .meter h4, .db h4 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; display: flex; align-items: center; gap: 8px; }
   .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
-  .rows { margin-top: 10px; display: grid; grid-template-columns: 1fr auto; row-gap: 6px; font-size: 15px; color: var(--muted); }
-  .rows b { font-family: var(--mono); font-weight: 600; color: var(--ink); font-size: 18px; text-align: right; }
-  .db { background: var(--panel); border-radius: 14px; padding: 16px 18px; border: 1px dashed #3a4080; }
-  .db h4 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+  .rows { margin-top: 10px; display: grid; grid-template-columns: 1fr auto; row-gap: 6px; font-size: 15px; color: var(--muted); align-items: baseline; }
+  .rows b { font-family: var(--mono); font-weight: 600; color: var(--ink); font-size: 18px; text-align: right; display: inline-block; }
+  .bar { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: #0c0f22; margin-top: 4px; position: relative; overflow: hidden; }
+  .bar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; }
+  .db { background: var(--panel); border-radius: 14px; padding: 16px 18px; border: 1px dashed #3a4080; position: relative; }
   .db .path { font-family: var(--mono); font-size: 13px; color: var(--dim); margin-top: 4px; }
-  .stack { margin-top: 10px; height: 64px; position: relative; }
-  .chip { position: absolute; left: 0; height: 12px; border-radius: 4px; background: var(--smart); opacity: 0.75; }
-  .db .count { font-family: var(--mono); font-size: 15px; color: var(--ink); margin-top: 6px; }
+  .stack { margin-top: 12px; height: 58px; position: relative; }
+  .chip { position: absolute; height: 10px; border-radius: 3px; background: var(--smart); }
+  .db .count { font-family: var(--mono); font-size: 14.5px; color: var(--ink); margin-top: 8px; }
+  .fly { position: absolute; border-radius: 6px; background: var(--smart); }
+  .snip { position: absolute; font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--bg); background: var(--smart); padding: 3px 8px; border-radius: 6px; white-space: nowrap; }
 
-  /* flying turn card */
-  .fly { position: absolute; padding: 6px 10px; border-radius: 8px; background: #262b57; border: 1px solid var(--smart); font-family: var(--mono); font-size: 13px; color: var(--ink); white-space: nowrap; }
+  .intro { position: absolute; left: 0; right: 0; top: 0; bottom: 0; display: flex; flex-direction: column; justify-content: center; padding: 0 56px; }
+  .intro h1 { font-size: 58px; font-weight: 800; letter-spacing: -0.03em; line-height: 1.08; }
+  .intro h1 em { font-style: normal; color: var(--keep); }
+  .intro p { font-size: 22px; color: var(--muted); margin-top: 18px; }
 
-  /* question */
-  #qcard { position: absolute; left: 56px; top: 104px; width: 1088px; height: 440px; }
+  #qcard { position: absolute; left: 56px; top: 104px; width: 1088px; }
   .q { font-size: 34px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.25; }
   .q small { display: block; font-size: 16px; color: var(--muted); font-weight: 500; margin-bottom: 10px; letter-spacing: 0.04em; text-transform: uppercase; }
-  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 30px; }
-  .col { background: var(--panel); border-radius: 16px; padding: 24px 26px; border: 1px solid #262b52; min-height: 330px; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 28px; }
+  .col { background: var(--panel); border-radius: 16px; padding: 24px 26px; border: 1px solid var(--line); height: 330px; position: relative; overflow: hidden; }
   .col h5 { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
-  .code { margin-top: 16px; font-family: var(--mono); font-size: 17px; line-height: 1.7; color: #c9ccf2; background: #0c0f22; border-radius: 10px; padding: 14px 16px; white-space: pre; overflow: hidden; }
+  .wall { margin-top: 16px; height: 186px; border-radius: 10px; background: #0c0f22; position: relative; overflow: hidden; font-family: var(--mono); font-size: 11px; line-height: 15px; color: #4a4f78; padding: 0 12px; white-space: pre; }
+  .wall .hit { color: var(--keep); }
+  .scan { position: absolute; left: 0; right: 0; height: 26px; background: linear-gradient(180deg, transparent, rgba(240,163,94,0.18), transparent); }
+  .code { margin-top: 16px; font-family: var(--mono); font-size: 17px; line-height: 1.7; color: #c9ccf2; background: #0c0f22; border-radius: 10px; padding: 12px 16px; white-space: pre; height: 128px; }
   .code .k { color: var(--smart); } .code .s { color: var(--good); } .code .c { color: var(--dim); }
-  .verdict { margin-top: 16px; font-size: 18px; font-weight: 600; }
-  .ctx { margin-top: 16px; height: 168px; border-radius: 10px; background: repeating-linear-gradient(0deg, #2a2440 0 6px, #1d1a30 6px 12px); position: relative; overflow: hidden; }
-  .ctx .needle { position: absolute; left: 30%; width: 40%; height: 6px; background: var(--keep); border-radius: 3px; }
+  .result { margin-top: 12px; font-family: var(--mono); font-size: 15px; background: rgba(111,220,166,0.08); border: 1px solid rgba(111,220,166,0.35); color: var(--good); border-radius: 10px; padding: 10px 14px; display: flex; justify-content: space-between; }
+  .verdict { position: absolute; left: 26px; bottom: 22px; font-size: 18px; font-weight: 600; }
 
-  /* end card */
-  #end { position: absolute; inset: 0; }
   .headline { position: absolute; left: 56px; top: 104px; font-size: 48px; font-weight: 800; letter-spacing: -0.025em; line-height: 1.08; width: 1088px; }
   .headline em { font-style: normal; color: var(--smart); }
+  .headline .sub { font-size: 24px; font-weight: 500; color: var(--muted); letter-spacing: 0; margin-top: 14px; }
   .stats { position: absolute; left: 56px; top: 252px; width: 1088px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
-  .stat { background: var(--panel); border-radius: 16px; padding: 22px 24px; border: 1px solid #262b52; }
-  .stat .from { font-family: var(--mono); font-size: 20px; color: var(--keep); text-decoration: line-through; text-decoration-thickness: 2px; text-decoration-color: rgba(240,163,94,0.6); }
-  .stat .to { font-family: var(--mono); font-size: 46px; font-weight: 700; color: var(--ink); margin-top: 2px; letter-spacing: -0.02em; }
-  .stat .what { font-size: 16px; color: var(--muted); margin-top: 6px; line-height: 1.35; }
-  .install { position: absolute; left: 56px; top: 476px; font-family: var(--mono); font-size: 22px; background: #0c0f22; border: 1px solid #2c3260; border-radius: 12px; padding: 14px 20px; color: var(--ink); }
+  .stat { background: var(--panel); border-radius: 16px; padding: 22px 24px; border: 1px solid var(--line); position: relative; }
+  .from { font-family: var(--mono); font-size: 20px; color: var(--keep); position: relative; display: inline-block; }
+  .from s { position: absolute; left: -2px; top: 50%; height: 2px; background: rgba(240,163,94,0.85); }
+  .to { font-family: var(--mono); font-size: 46px; font-weight: 700; color: var(--ink); margin-top: 2px; letter-spacing: -0.02em; }
+  .what { font-size: 16px; color: var(--muted); margin-top: 6px; line-height: 1.35; }
+  .install { position: absolute; left: 56px; top: 476px; font-family: var(--mono); font-size: 22px; background: #0c0f22; border: 1px solid #2c3260; border-radius: 12px; padding: 14px 20px; color: var(--ink); white-space: pre; }
   .install .p { color: var(--good); margin-right: 10px; }
   .foot { position: absolute; left: 56px; right: 56px; bottom: 30px; font-size: 13.5px; color: var(--dim); line-height: 1.45; }
-  .repo { position: absolute; right: 56px; top: 500px; font-size: 18px; color: var(--muted); font-family: var(--mono); }
 
-  /* hero card */
   .hero-title { font-size: 56px; font-weight: 800; letter-spacing: -0.03em; line-height: 1.04; }
   .hero-title em { font-style: normal; color: var(--smart); }
   .hero-sub { margin-top: 22px; font-size: 21px; color: var(--muted); line-height: 1.45; }
@@ -101,143 +103,232 @@
 </style>
 </head>
 <body>
-<div class="bgdots"></div>
+<div id="dots"></div>
+<div id="vignette"></div>
 <div class="layer" id="root"></div>
 
 <script>
-const W = () => document.body.clientWidth, H = () => document.body.clientHeight;
 const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
 const ease = (x) => { x = clamp(x); return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2; };
+const easeOut = (x) => 1 - Math.pow(1 - clamp(x), 3);
+const back = (x) => { x = clamp(x); const c = 1.7; return 1 + (c + 1) * Math.pow(x - 1, 3) + c * Math.pow(x - 1, 2); };
 const seg = (t, a, b) => clamp((t - a) / (b - a));
+const lerp = (a, b, f) => a + (b - a) * f;
 
-// ---- Data (ContextBench log-triage L12800, Claude Haiku 5.5; docs/context-management.md) ----
+// ---- Data: ContextBench log-triage L12800, Claude Haiku 5.5 (docs/context-management.md) ----
 const PEAK_KEEP = 762, PEAK_SMART = 95, COST_KEEP = 6.07, COST_SMART = 0.38;
-const TRIM_AT = 95, TRIM_TO = 58;   // Haiku threshold 95k; drop-to level is schematic
-const STEPS = 160;
+// Run E trimmer settings: trim at 95k, cut to 0.3 of it (CONTEXT_TRIM_TO_FRACTION was 0.3 then).
+const TRIM_AT = 95, TRIM_TO = 28.5, START = 22;
 
-// Schematic prompt size per step. Keep-everything grows to its measured peak;
-// smart compaction climbs to the 95k threshold, trims, and climbs again.
-function series() {
-  const keep = [], smart = [], trims = [];
-  let s = 22;
-  for (let i = 0; i <= STEPS; i++) {
-    const k = 22 + (PEAK_KEEP - 22) * Math.pow(i / STEPS, 1.05);
-    keep.push(k);
-    if (i > 0) {
-      s += (PEAK_KEEP - 22) / STEPS * 1.0;
-      if (s >= TRIM_AT) { s = TRIM_TO + (s - TRIM_AT); trims.push(i); }
-    }
-    smart.push(Math.min(s, TRIM_AT));
+// Turns arrive as uneven chunks (log batches, tool results). Deterministic pseudo-random sizes,
+// scaled so keep-everything ends at its measured peak.
+function rng(seed) { return () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; }; }
+function build() {
+  const r = rng(7), raw = [];
+  for (let i = 0; i < 64; i++) raw.push(0.35 + r() * (r() < 0.15 ? 2.2 : 1));
+  const scale = (PEAK_KEEP - START) / raw.reduce((a, b) => a + b, 0);
+  const chunks = raw.map((v) => v * scale);
+  // per turn: keep before/after, smart before/after, and whether a trim fired before the turn landed
+  const turns = []; let k = START, s = START;
+  for (const c of chunks) {
+    let trimmed = 0, cutFrom = 0;
+    if (s + c > TRIM_AT) { cutFrom = s; trimmed = s - TRIM_TO; s = TRIM_TO; }
+    turns.push({ k0: k, k1: k + c, s0: s, s1: s + c, trimmed, cutFrom });
+    k += c; s += c;
   }
-  return { keep, smart, trims };
+  return turns;
 }
-const DATA = series();
-const cum = (arr) => { const out = [0]; for (let i = 1; i < arr.length; i++) out.push(out[i - 1] + arr[i]); return out; };
-const CUM_K = cum(DATA.keep), CUM_S = cum(DATA.smart);
+const TURNS = build();
+const NT = TURNS.length;
+const TRIM_IDX = TURNS.map((u, i) => (u.trimmed ? i : -1)).filter((i) => i >= 0);
+// cumulative prompt tokens for cost counters
+const cumK = [0], cumS = [0];
+TURNS.forEach((u, i) => { cumK.push(cumK[i] + u.k1); cumS.push(cumS[i] + u.s1); });
 
 const fmtK = (v) => `${Math.round(v)}k`;
 const fmt$ = (v) => `$${v.toFixed(2)}`;
+const brand = (extra = "") => `<div class="brand"><div class="logo"></div><span>Smarter Compact</span></div><div class="tag">${extra}</div>`;
 
-function brand(extra = "") {
-  return `<div class="brand"><div class="logo"></div><span>Smarter Compact</span></div>
-          <div class="tag">${extra}</div>`;
+// geometry
+const CW = 760, CH = 440, PL = 70, PB = 40, PT = 16, PR = 40, YMAX = 800;
+const X = (f) => PL + f * (CW - PL - PR);              // f = turn position 0..NT
+const Y = (v) => PT + (1 - v / YMAX) * (CH - PT - PB);
+// a turn draws as a short rise (the chunk landing) then a flat run (the agent working)
+const RISE = 0.7, DROP = 0.18;
+
+function pathUpTo(pos, which) {
+  let d = `M${X(0).toFixed(1)},${Y(START).toFixed(1)}`;
+  const n = Math.min(NT, Math.ceil(pos));
+  for (let i = 0; i < n; i++) {
+    const u = TURNS[i], fx = (j) => X(j / NT);
+    const local = clamp(pos - i);
+    const v0 = which === "k" ? u.k0 : u.s0, v1 = which === "k" ? u.k1 : u.s1;
+    if (which === "s" && u.trimmed) {
+      const dr = easeOut(clamp(local / DROP));
+      d += `L${fx(i).toFixed(1)},${Y(u.cutFrom).toFixed(1)}L${fx(i).toFixed(1)},${Y(lerp(u.cutFrom, u.s0, dr)).toFixed(1)}`;
+      if (local < DROP) continue;
+    }
+    const rise = clamp(local / RISE);
+    d += `L${fx(i + RISE * rise).toFixed(1)},${Y(lerp(v0, v1, ease(rise))).toFixed(1)}`;
+    if (local > RISE) d += `L${fx(i + local).toFixed(1)},${Y(v1).toFixed(1)}`;
+  }
+  return d;
+}
+function valueAt(pos, which) {
+  if (pos <= 0) return START;
+  const i = Math.min(NT - 1, Math.floor(pos)), u = TURNS[i];
+  const local = clamp(pos - i), v0 = which === "k" ? u.k0 : u.s0, v1 = which === "k" ? u.k1 : u.s1;
+  if (which === "s" && u.trimmed && local < DROP) return lerp(u.cutFrom, u.s0, easeOut(local / DROP));
+  return lerp(v0, v1, ease(clamp(local / RISE)));
 }
 
-// ---- Chart scene ----
-function chartScene(t, opts = {}) {
-  // progress of the session: 0..1
-  const p = opts.progress ?? ease(seg(t, 1.2, 8.6));
-  const n = Math.max(1, Math.round(p * STEPS));
-  const cw = 760, ch = 440, padL = 70, padB = 40, padT = 16, padR = 40;
-  const x = (i) => padL + (i / STEPS) * (cw - padL - padR);
-  const yMax = 800;
-  const y = (v) => padT + (1 - v / yMax) * (ch - padT - padB);
-  const path = (arr) => arr.slice(0, n + 1).map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("");
+const T_INTRO = 1.9, T_CHART = 10.2, T_Q = 4.8, T_END = 5.6;
+const CHART_A = 0.7, CHART_B = 9.0;   // session runs between these (chart-local seconds)
+const posAt = (u) => { const f = seg(u, CHART_A, CHART_B); return NT * (0.8 * f + 0.2 * ease(f)); };
+// chart-local time at which turn index i starts (inverse of posAt)
+function timeOfPos(p) { let lo = CHART_A, hi = CHART_B; for (let k = 0; k < 40; k++) { const m = (lo + hi) / 2; if (posAt(m) < p) lo = m; else hi = m; } return (lo + hi) / 2; }
+const TRIM_T = TRIM_IDX.map((i) => timeOfPos(i));
+
+function introScene(u) {
+  const a = easeOut(seg(u, 0.05, 0.6)), b = easeOut(seg(u, 0.45, 1.0));
+  return `${brand("")}
+    <div class="intro">
+      <h1 style="opacity:${a};transform:translateY(${(1 - a) * 18}px)">A long agent session hits <em style="font-variant-numeric:tabular-nums">${Math.round(762 * ease(seg(u, 0.15, 1.3)))}k tokens</em>.</h1>
+      <p style="opacity:${b};transform:translateY(${(1 - b) * 12}px)">Same task, same model. Keep everything, or trim and search.</p>
+    </div>`;
+}
+
+function chartScene(u, still = false) {
+  const pos = still ? NT : posAt(u);
+  const kv = valueAt(pos, "k"), sv = valueAt(pos, "s");
+  const draw = still ? 1 : easeOut(seg(u, 0, 0.5));
 
   let grid = "";
   for (const v of [0, 200, 400, 600, 800]) {
-    grid += `<line class="gridl" x1="${padL}" x2="${cw - padR}" y1="${y(v)}" y2="${y(v)}"/>`;
-    grid += `<text class="tick" x="${padL - 12}" y="${y(v) + 5}" text-anchor="end">${v}k</text>`;
+    grid += `<line class="gridl" x1="${PL}" x2="${CW - PR}" y1="${Y(v)}" y2="${Y(v)}" opacity="${draw}"/>`;
+    grid += `<text class="tick" x="${PL - 12}" y="${Y(v) + 5}" text-anchor="end" opacity="${draw}">${v}k</text>`;
   }
-  const kEnd = DATA.keep[n], sEnd = DATA.smart[n];
-  const trimLine = `<line x1="${padL}" x2="${cw - padR}" y1="${y(TRIM_AT)}" y2="${y(TRIM_AT)}" stroke="${"#8b93ff"}" stroke-opacity="0.35" stroke-dasharray="6 6"/>`;
+  // threshold flash when a trim fires
+  let flash = 0, lastTrim = -1;
+  TRIM_T.forEach((tt, j) => { if (u >= tt) lastTrim = j; flash = Math.max(flash, still ? 0 : Math.exp(-Math.max(0, u - tt) * 6) * (u >= tt ? 1 : 0)); });
+  const trimsDone = still ? TRIM_IDX.length : lastTrim + 1;
+
+  const kPath = pathUpTo(pos, "k"), sPath = pathUpTo(pos, "s");
+  const xHead = X(Math.min(pos, NT) / NT);
+  const area = (p, v) => `${p}L${xHead.toFixed(1)},${Y(0)}L${X(0)},${Y(0)}Z`;
+  const pulse = 6 + 3 * Math.sin(u * 7);
+  const near = xHead > CW - 270;
+  const lx = near ? xHead - 16 : xHead + 16, anchor = near ? "end" : "start";
+
+  // snip markers and flying slices
+  let marks = "", flies = "";
+  TRIM_IDX.forEach((i, j) => {
+    if (!still && u < TRIM_T[j]) return;
+    const x = X(i / NT), age = still ? 9 : u - TRIM_T[j];
+    const pop = back(seg(age, 0, 0.35));
+    marks += `<g opacity="${still ? 0.5 : lerp(1, 0.45, seg(age, 0.6, 1.4))}"><circle cx="${x}" cy="${Y(TRIM_AT)}" r="${4 * pop}" fill="var(--smart)"/></g>`;
+    if (!still && age < 0.75) {
+      // the trimmed slice detaches from the line and flies into the store
+      const f = easeOut(seg(age, 0.05, 0.75));
+      const sx = 56 + x, sy = 104 + Y(TURNS[i].cutFrom), h = (Y(TRIM_TO) - Y(TURNS[i].cutFrom));
+      const slot = j, ex = 870 + (slot % 6) * 42, ey = 104 + 274 + Math.floor(slot / 6) * 16;
+      flies += `<div class="fly" style="left:${lerp(sx - 5, ex, f)}px;top:${lerp(sy, ey, f) - 60 * Math.sin(Math.PI * f)}px;width:${lerp(10, 36, f)}px;height:${lerp(h, 10, f)}px;opacity:${1 - 0.3 * f};box-shadow:0 0 ${18 * (1 - f)}px var(--smart-glow)"></div>`;
+      if (age < 0.6) flies += `<div class="snip" style="left:${56 + x - 78}px;top:${104 + Y(TRIM_AT) + 10 + 6 * easeOut(seg(age, 0, 0.3))}px;opacity:${1 - seg(age, 0.35, 0.6)};transform:scale(${back(seg(age, 0, 0.25))})">✂ trim</div>`;
+    }
+  });
 
   const svg = `
-  <svg id="chart" viewBox="0 0 ${cw} ${ch}">
+  <svg viewBox="0 0 ${CW} ${CH}" style="width:100%;height:100%;overflow:visible">
+    <defs>
+      <linearGradient id="gk" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f0a35e" stop-opacity="0.22"/><stop offset="1" stop-color="#f0a35e" stop-opacity="0"/></linearGradient>
+      <linearGradient id="gs" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8b93ff" stop-opacity="0.35"/><stop offset="1" stop-color="#8b93ff" stop-opacity="0.02"/></linearGradient>
+      <filter id="glow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    </defs>
     ${grid}
-    <line class="axis" x1="${padL}" x2="${cw - padR}" y1="${y(0)}" y2="${y(0)}"/>
-    <text class="ylab" x="${padL}" y="${ch - 8}">agent steps →</text>
-    ${trimLine}
-    <text class="tick" x="${cw - padR}" y="${y(TRIM_AT) - 8}" text-anchor="end" fill="#8b93ff">trim at 95k</text>
-    <path class="lineK" d="${path(DATA.keep)}"/>
-    <path class="lineS" d="${path(DATA.smart)}"/>
-    <circle cx="${x(n)}" cy="${y(kEnd)}" r="6" fill="var(--keep)"/>
-    <circle cx="${x(n)}" cy="${y(sEnd)}" r="6" fill="var(--smart)"/>
-    <text class="lbl" x="${x(n) > cw - 260 ? x(n) - 14 : x(n) + 14}" text-anchor="${x(n) > cw - 260 ? "end" : "start"}" y="${y(kEnd) - 14}" fill="var(--keep)">Keep everything · ${fmtK(kEnd)}</text>
-    <text class="lbl" x="${x(n) > cw - 260 ? x(n) - 14 : x(n) + 14}" text-anchor="${x(n) > cw - 260 ? "end" : "start"}" y="${y(TRIM_AT) - 34}" fill="var(--smart)">Smarter Compact · ≤ 95k</text>
+    <line class="axis" x1="${PL}" x2="${CW - PR}" y1="${Y(0)}" y2="${Y(0)}"/>
+    <text x="${PL}" y="${CH - 8}" fill="var(--muted)" font-size="14">agent turns →</text>
+    <line x1="${PL}" x2="${CW - PR}" y1="${Y(TRIM_AT)}" y2="${Y(TRIM_AT)}" stroke="#8b93ff" stroke-opacity="${0.35 + 0.65 * flash}" stroke-width="${1 + 2 * flash}" stroke-dasharray="6 6"/>
+    <text class="tick" x="${CW - PR}" y="${Y(TRIM_AT) - 8}" text-anchor="end" fill="#8b93ff" opacity="${draw}">trim at 95k</text>
+    <path d="${area(kPath)}" fill="url(#gk)"/>
+    <path d="${area(sPath)}" fill="url(#gs)"/>
+    <path class="lineK" d="${kPath}"/>
+    <path class="lineS" d="${sPath}" filter="url(#glow)"/>
+    ${marks}
+    ${still ? "" : `<circle cx="${xHead}" cy="${Y(kv)}" r="${pulse + 6}" fill="var(--keep)" opacity="0.15"/>
+    <circle cx="${xHead}" cy="${Y(sv)}" r="${pulse + 6}" fill="var(--smart)" opacity="0.2"/>`}
+    <circle cx="${xHead}" cy="${Y(kv)}" r="6" fill="var(--keep)"/>
+    <circle cx="${xHead}" cy="${Y(sv)}" r="6" fill="var(--smart)"/>
+    <text class="lbl" x="${lx}" text-anchor="${anchor}" y="${Y(kv) - 16}" fill="var(--keep)" opacity="${draw}">Keep everything · ${fmtK(kv)}</text>
+    ${still ? `<text class="lbl" x="${CW - PR}" text-anchor="end" y="${Y(TRIM_AT) - 34}" fill="var(--smart)">Smarter Compact · ≤ 95k</text>` : ""}
   </svg>`;
 
-  const costK = COST_KEEP * CUM_K[n] / CUM_K[STEPS];
-  const costS = COST_SMART * CUM_S[n] / CUM_S[STEPS];
-  const trimsDone = DATA.trims.filter((i) => i <= n).length;
-  let chips = "";
-  for (let i = 0; i < trimsDone; i++) {
-    const row = i % 4, col = Math.floor(i / 4);
-    chips += `<div class="chip" style="top:${row * 16}px;left:${col * 34}px;width:28px"></div>`;
-  }
+  const done = Math.min(NT, Math.floor(pos));
+  const frac = clamp(pos - done);
+  const ck = done < NT ? cumK[done] + frac * TURNS[done].k1 : cumK[NT];
+  const cs = done < NT ? cumS[done] + frac * TURNS[done].s1 : cumS[NT];
+  const costK = COST_KEEP * ck / cumK[NT], costS = COST_SMART * cs / cumS[NT];
 
-  // flying card for the most recent trim
-  let fly = "";
-  const last = DATA.trims.filter((i) => i <= n).pop();
-  if (last !== undefined && opts.progress === undefined) {
-    const tTrim = 1.2 + inverseEase(last / STEPS) * (8.6 - 1.2);
-    const f = seg(t, tTrim, tTrim + 0.55);
-    if (f > 0 && f < 1) {
-      const sx = 56 + x(last), sy = 104 + y(TRIM_AT);
-      const ex = 870 + ((trimsDone - 1) >> 2) * 34, ey = 104 + 252 + ((trimsDone - 1) % 4) * 16;
-      const e = ease(f);
-      fly = `<div class="fly" style="left:${sx + (ex - sx) * e}px;top:${sy + (ey - sy) * e - 40 * Math.sin(Math.PI * e)}px;opacity:${1 - f * 0.4}">older turns → store</div>`;
-    }
+  let chips = "";
+  for (let j = 0; j < trimsDone; j++) {
+    const age = still ? 9 : u - TRIM_T[j] - 0.7;
+    const glow = age < 0.6 && age > 0 ? 1 - age / 0.6 : 0;
+    chips += `<div class="chip" style="left:${(j % 6) * 42}px;top:${Math.floor(j / 6) * 16}px;width:${36 * easeOut(clamp((age + 0.15) / 0.3))}px;box-shadow:0 0 ${14 * glow}px var(--smart-glow);opacity:${0.85 * clamp((age + 0.15) / 0.15)}"></div>`;
   }
+  const dbGlow = still ? 0 : Math.max(0, ...TRIM_T.map((tt) => { const a = u - tt - 0.7; return a > 0 && a < 0.6 ? 1 - a / 0.6 : 0; }));
+  const landed = still ? trimsDone : TRIM_T.filter((tt) => u - tt >= 0.7).length;
 
   return `
     ${brand("same task · same model")}
     <div id="chartwrap">${svg}</div>
-    <div id="side">
+    <div id="side" style="opacity:${draw};transform:translateX(${(1 - draw) * 20}px)">
       <div class="meter">
         <h4><span class="dot" style="background:var(--keep)"></span>Keep everything</h4>
-        <div class="rows"><span>prompt</span><b>${fmtK(kEnd)}</b><span>cost so far</span><b>${fmt$(costK)}</b></div>
+        <div class="rows"><span>prompt</span><b>${fmtK(kv)}</b>
+          <div class="bar"><i style="width:${kv / 8}%;background:var(--keep)"></i></div>
+          <span>cost so far</span><b>${fmt$(costK)}</b></div>
       </div>
       <div class="meter">
         <h4><span class="dot" style="background:var(--smart)"></span>Smarter Compact</h4>
-        <div class="rows"><span>prompt</span><b>${fmtK(sEnd)}</b><span>cost so far</span><b>${fmt$(costS)}</b></div>
+        <div class="rows"><span>prompt</span><b>${fmtK(sv)}</b>
+          <div class="bar"><i style="width:${sv / 8}%;background:var(--smart)"></i></div>
+          <span>cost so far</span><b>${fmt$(costS)}</b></div>
       </div>
-      <div class="db">
+      <div class="db" style="border-color:rgba(139,147,255,${0.4 + 0.6 * dbGlow});box-shadow:0 0 ${30 * dbGlow}px rgba(139,147,255,${0.25 * dbGlow})">
         <h4>Session store</h4>
         <div class="path">sessions/&lt;sid&gt;.db · SQLite</div>
         <div class="stack">${chips}</div>
-        <div class="count">${trimsDone} trims · every turn kept verbatim</div>
+        <div class="count">${landed} trim${landed === 1 ? "" : "s"} · every turn kept verbatim</div>
       </div>
     </div>
-    ${fly}
-    <div class="foot">Illustration of one log-triage session. Peak prompt and cost per trial are measured means: ContextBench L12800, Claude Haiku 5.5 (smart n = 3, keep everything n = 2).</div>`;
-}
-// invert the easeInOutCubic so fly-outs fire exactly when the line crosses the threshold
-function inverseEase(y) {
-  let lo = 0, hi = 1;
-  for (let k = 0; k < 40; k++) { const m = (lo + hi) / 2; if (ease(m) < y) lo = m; else hi = m; }
-  return (lo + hi) / 2;
+    ${flies}
+    <div class="foot">Illustration of one log-triage session. Peak prompt and cost per trial are measured means (ContextBench L12800, Claude Haiku 5.5; smart n = 3, keep everything n = 2). Trims follow that run's settings: at 95k, down to about 29k.</div>`;
 }
 
-// ---- Question scene ----
-function questionScene(t) {
-  const a = ease(seg(t, 0, 0.5)), b = ease(seg(t, 0.7, 1.3)), c = ease(seg(t, 1.6, 2.1)), d = ease(seg(t, 2.4, 2.9));
-  const typed = (s, f) => s.slice(0, Math.round(s.length * clamp(f)));
+const LOGWORDS = ["auth-svc", "billing", "gateway", "worker-3", "cache", "scheduler", "auth-svc", "db-pool"];
+const LEVELS = ["INFO ", "WARN ", "ERROR", "INFO ", "DEBUG"];
+function logLine(i) {
+  const r = rng(i * 31 + 5); r();
+  const svc = LOGWORDS[Math.floor(r() * LOGWORDS.length)], lvl = LEVELS[Math.floor(r() * LEVELS.length)];
+  const msg = r() < 0.18 ? "request timeout after 30000ms" : ["ok", "retry scheduled", "conn reused", "flush 42 rows", "cache miss", "lease renewed"][Math.floor(r() * 6)];
+  const hh = String(10 + (i >> 9) % 12).padStart(2, "0"), mm = String((i >> 3) % 60).padStart(2, "0"), ss = String((i * 7) % 60).padStart(2, "0");
+  const line = `${hh}:${mm}:${ss} ${lvl} ${svc.padEnd(10)} ${msg}`;
+  return svc === "auth-svc" && msg.includes("timeout") ? `<span class="hit">${line}</span>` : line;
+}
+
+function questionScene(u) {
+  const a = easeOut(seg(u, 0, 0.5)), b = easeOut(seg(u, 0.5, 1.0));
+  const typedF = seg(u, 1.0, 2.2);
   const sql = `SELECT count(*) FROM lines\n WHERE text LIKE '%auth-svc%'\n   AND text LIKE '%timeout%';`;
-  const sqlT = typed(sql, seg(t, 0.8, 1.9));
-  const sqlHtml = sqlT
-    .replace(/(SELECT|FROM|WHERE|AND|LIKE)/g, '<span class="k">$1</span>')
-    .replace(/('[^']*'?)/g, '<span class="s">$1</span>');
+  const sqlT = sql.slice(0, Math.round(sql.length * typedF));
+  const sqlHtml = sqlT.replace(/(SELECT|FROM|WHERE|AND|LIKE)/g, '<span class="k">$1</span>').replace(/('[^']*'?)/g, '<span class="s">$1</span>');
+  const caret = typedF < 1 || Math.floor(u * 3) % 2 ? "▍" : " ";
+  const res = back(seg(u, 2.45, 2.9));
+  const v = easeOut(seg(u, 2.9, 3.3));
+  // scrolling wall of log lines with a scan bar that never quite finishes
+  const scroll = u * 260, first = Math.floor(scroll / 15);
+  let wall = "";
+  for (let i = 0; i < 15; i++) wall += logLine(first + i) + "\n";
+  const scanY = 186 * (0.5 + 0.45 * Math.sin(u * 5));
   return `
     ${brand("same task · same model")}
     <div id="qcard">
@@ -245,85 +336,85 @@ function questionScene(t) {
         <small>Late in the session</small>
         “How many auth-svc timeouts were in the logs you read earlier?”
       </div>
-      <div class="cols">
-        <div class="col" style="opacity:${b}">
-          <h5><span class="dot" style="background:var(--keep)"></span>Keep everything</h5>
-          <div class="ctx">
-            ${Array.from({ length: 13 }, (_, i) => `<div class="needle" style="top:${8 + i * 12}px;left:${(i * 37) % 60 + 6}%;width:${10 + (i * 13) % 22}%;opacity:${0.25 + 0.08 * (i % 3)}"></div>`).join("")}
-          </div>
-          <div class="verdict" style="color:var(--keep);opacity:${d}">Count score at L12800: 0.00</div>
+      <div class="cols" style="opacity:${b};transform:translateY(${(1 - b) * 16}px)">
+        <div class="col">
+          <h5><span class="dot" style="background:var(--keep)"></span>Keep everything · ~760k tokens in context</h5>
+          <div class="wall"><div style="transform:translateY(${-(scroll % 15)}px)">${wall}</div><div class="scan" style="top:${scanY}px"></div></div>
+          <div class="verdict" style="color:var(--keep);opacity:${v}">Count score at L12800: 0.00</div>
         </div>
-        <div class="col" style="opacity:${b}">
-          <h5><span class="dot" style="background:var(--smart)"></span>Smarter Compact</h5>
+        <div class="col">
+          <h5><span class="dot" style="background:var(--smart)"></span>Smarter Compact · ≤ 95k in context</h5>
           <div class="code"><span class="c">smart_compact_sql</span>
-${sqlHtml}<span style="opacity:${(Math.floor(t * 3) % 2) && sqlT.length < sql.length ? 1 : 0}">▍</span></div>
-          <div class="verdict" style="color:var(--good);opacity:${c}">→ exact count from stored lines · score 1.00</div>
+${sqlHtml}<span style="color:var(--smart)">${typedF > 0 ? caret : ""}</span></div>
+          <div class="result" style="opacity:${clamp(res)};transform:translateY(${(1 - clamp(res)) * 10}px) scale(${0.96 + 0.04 * res})"><span>count(*) · 1 row</span><span>exact, from stored lines ✓</span></div>
+          <div class="verdict" style="color:var(--good);opacity:${v}">Count score at L12800: 1.00</div>
         </div>
       </div>
     </div>
-    <div class="foot" style="opacity:${d}">Means at ContextBench log-triage L12800, Claude Haiku 5.5. Lookup questions: keep everything 0.71, Smarter Compact 1.00. Query shown is an example.</div>`;
+    <div class="foot" style="opacity:${v}">Means at ContextBench log-triage L12800, Claude Haiku 5.5. Lookup questions: keep everything 0.71, Smarter Compact 1.00. Query and log lines shown are examples.</div>`;
 }
 
-// ---- End card ----
-function endScene(t, gh = false) {
-  const f = (a) => ease(seg(t, a, a + 0.5));
+function odo(from, to, f, fmt) { return fmt(lerp(from, to, ease(f))); }
+function endScene(u) {
+  const f = (a, d = 0.5) => easeOut(seg(u, a, a + d));
+  const stat = (i, from, to, fmt, what, ofmt) => {
+    const t0 = 0.45 + i * 0.25, cnt = seg(u, t0 + 0.2, t0 + 1.2), strike = easeOut(seg(u, t0 + 1.1, t0 + 1.45));
+    return `<div class="stat" style="opacity:${f(t0)};transform:translateY(${(1 - f(t0)) * 18}px)">
+      <div class="from">${ofmt}<s style="width:${strike * 104}%"></s></div>
+      <div class="to">${odo(from, to, cnt, fmt)}</div><div class="what">${what}</div></div>`;
+  };
+  const cmd = "npm install -g smarter-compact";
+  const typed = cmd.slice(0, Math.round(cmd.length * seg(u, 2.2, 3.1)));
+  const caret = Math.floor(u * 2.5) % 2 ? "▍" : " ";
   return `
     ${brand("github.com/bcmyguest/smarter-compact")}
-    <div class="headline" style="opacity:${f(0)}">Long agent sessions, <em>no summary.</em><div style="font-size:24px;font-weight:500;color:var(--muted);letter-spacing:0;margin-top:14px">Older turns go to a local SQLite store, verbatim. The agent searches them.</div></div>
+    <div class="headline" style="opacity:${f(0)};transform:translateY(${(1 - f(0)) * 14}px)">Every turn kept. <em>The prompt stays small.</em>
+      <div class="sub">Older turns move to local SQLite, verbatim. The agent searches them on demand.</div></div>
     <div class="stats">
-      <div class="stat" style="opacity:${f(0.35)}"><div class="from">762k</div><div class="to">95k</div><div class="what">peak prompt</div></div>
-      <div class="stat" style="opacity:${f(0.6)}"><div class="from">$6.07</div><div class="to">$0.38</div><div class="what">list-price cost per trial</div></div>
-      <div class="stat" style="opacity:${f(0.85)}"><div class="from">0.00</div><div class="to">1.00</div><div class="what">count-question score</div></div>
+      ${stat(0, 762, 95, (v) => `${Math.round(v)}k`, "peak prompt", "762k")}
+      ${stat(1, 6.07, 0.38, (v) => `$${v.toFixed(2)}`, "list-price cost per trial", "$6.07")}
+      ${stat(2, 0, 1, (v) => v.toFixed(2), "count-question score", "0.00")}
     </div>
-    <div class="install" style="opacity:${f(1.2)}"><span class="p">$</span>npm install -g smarter-compact</div>
-    <div class="foot" style="opacity:${f(1.2)}">ContextBench log-triage L12800, Claude Haiku 5.5, means over 3 runs (Smarter Compact) and 2 (keep everything); synthetic tasks, not coding sessions.
-Across all log sizes, eight seed-matched pairs: +0.47 score (95% CI 0.34–0.58). Cost saving is smallest at L1600 (0.81×, interval crosses 1).</div>`;
+    <div class="install" style="opacity:${f(2.0, 0.3)}"><span class="p">$</span>${typed}<span style="color:var(--good)">${caret}</span></div>
+    <div class="foot" style="opacity:${f(2.0)}">ContextBench log-triage L12800, Claude Haiku 5.5, means over 3 runs (Smarter Compact) and 2 (keep everything); synthetic tasks, not coding sessions. Across all log sizes, eight seed-matched pairs: +0.47 score (95% CI 0.34–0.58). Cost saving is smallest at L1600 (0.81×, interval crosses 1).</div>`;
 }
 
-// ---- Hero / social preview ----
-function heroScene(gh = false) {
+function heroScene(gh) {
   return `
     ${brand("Claude Code · Codex · OpenCode · Pi")}
     <div style="position:absolute;left:56px;top:${gh ? 128 : 140}px;width:600px">
-    <div class="hero-title">Context management <em>without an LLM&nbsp;summary</em></div>
-    <div class="hero-sub">Older turns leave the prompt and go to a <b>local SQLite store</b>, verbatim. The agent gets them back with <b>search and SQL</b>. The cut stays put, so the prompt cache keeps hitting.</div></div>
-    <div style="position:absolute;left:${gh ? 740 : 690}px;top:${gh ? 150 : 170}px;width:${gh ? 480 : 450}px;transform:scale(0.6);transform-origin:0 0">
-      <div style="position:relative;width:760px;height:440px">${miniChart()}</div>
+      <div class="hero-title">Long agent sessions. <em>Small, cached prompts.</em></div>
+      <div class="hero-sub">Older turns move to a <b>local SQLite store</b>, verbatim. The agent pulls them back with <b>search and SQL</b>, and the prompt cache keeps hitting.</div>
     </div>
+    <div style="position:absolute;left:${gh ? 720 : 670}px;top:${gh ? 130 : 150}px;width:760px;height:440px;transform:scale(0.66);transform-origin:0 0">${miniChart()}</div>
     <div class="install" style="top:${gh ? 488 : 520}px"><span class="p">$</span>npm install -g smarter-compact</div>`;
 }
 function miniChart() {
-  const cw = 760, ch = 440, padL = 70, padB = 40, padT = 16, padR = 40;
-  const x = (i) => padL + (i / STEPS) * (cw - padL - padR);
-  const y = (v) => padT + (1 - v / 800) * (ch - padT - padB);
-  const path = (arr) => arr.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("");
+  const k = pathUpTo(NT, "k"), s = pathUpTo(NT, "s");
   let grid = "";
-  for (const v of [0, 200, 400, 600, 800]) grid += `<line class="gridl" x1="${padL}" x2="${cw - padR}" y1="${y(v)}" y2="${y(v)}"/><text class="tick" x="${padL - 12}" y="${y(v) + 5}" text-anchor="end" style="font-size:20px">${v}k</text>`;
-  return `<svg viewBox="0 0 ${cw} ${ch}" style="width:760px;height:440px;overflow:visible">${grid}
-    <path class="lineK" d="${path(DATA.keep)}" style="stroke-width:6"/>
-    <path class="lineS" d="${path(DATA.smart)}" style="stroke-width:6"/>
-    <text x="${cw - padR}" y="${y(PEAK_KEEP) - 18}" text-anchor="end" fill="var(--keep)" style="font-size:26px;font-weight:700">Keep everything · 762k</text>
-    <text x="${cw - padR}" y="${y(PEAK_SMART) - 22}" text-anchor="end" fill="var(--smart)" style="font-size:26px;font-weight:700">Smarter Compact · 95k</text>
-    <text x="${padL}" y="${ch + 6}" fill="var(--muted)" style="font-size:20px">peak prompt per trial, log-triage L12800, Haiku 5.5 · line shape illustrative</text>
+  for (const v of [0, 200, 400, 600, 800]) grid += `<line class="gridl" x1="${PL}" x2="${CW - PR}" y1="${Y(v)}" y2="${Y(v)}"/><text class="tick" x="${PL - 12}" y="${Y(v) + 5}" text-anchor="end" style="font-size:20px">${v}k</text>`;
+  return `<svg viewBox="0 0 ${CW} ${CH}" style="width:760px;height:440px;overflow:visible">
+    <defs><linearGradient id="mk" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f0a35e" stop-opacity="0.22"/><stop offset="1" stop-color="#f0a35e" stop-opacity="0"/></linearGradient>
+    <linearGradient id="ms" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8b93ff" stop-opacity="0.35"/><stop offset="1" stop-color="#8b93ff" stop-opacity="0.02"/></linearGradient></defs>
+    ${grid}
+    <path d="${k}L${X(1)},${Y(0)}L${X(0)},${Y(0)}Z" fill="url(#mk)"/><path d="${s}L${X(1)},${Y(0)}L${X(0)},${Y(0)}Z" fill="url(#ms)"/>
+    <path class="lineK" d="${k}" style="stroke-width:6"/><path class="lineS" d="${s}" style="stroke-width:6"/>
+    <text x="${CW - PR}" y="${Y(PEAK_KEEP) - 18}" text-anchor="end" fill="var(--keep)" style="font-size:26px;font-weight:700">Keep everything · 762k</text>
+    <text x="${CW - PR}" y="${Y(PEAK_SMART) - 22}" text-anchor="end" fill="var(--smart)" style="font-size:26px;font-weight:700">Smarter Compact · 95k</text>
+    <text x="${PL}" y="${CH + 8}" fill="var(--muted)" style="font-size:20px">peak prompt per trial, log-triage L12800, Haiku 5.5 · line shape illustrative</text>
   </svg>`;
 }
 
-// ---- Timeline ----
-const T_CHART = 10.0, T_Q = 4.2, T_END = 5.0;
-window.DURATION = T_CHART + T_Q + T_END;
+window.DURATION = T_INTRO + T_CHART + T_Q + T_END;
 window.render = function (t) {
   const root = document.getElementById("root");
+  if (!window.STILL_BG) document.getElementById("dots").style.transform = `translate(${(-t * 6) % 28}px, ${(-t * 3) % 28}px)`;
   let html, op = 1;
-  if (t < T_CHART) {
-    html = chartScene(t);
-    op = Math.min(ease(seg(t, 0, 0.5)), 1 - ease(seg(t, T_CHART - 0.35, T_CHART)));
-  } else if (t < T_CHART + T_Q) {
-    const u = t - T_CHART;
-    html = questionScene(u);
-    op = Math.min(ease(seg(u, 0, 0.3)), 1 - ease(seg(u, T_Q - 0.35, T_Q)));
-  } else {
-    html = endScene(t - T_CHART - T_Q);
-  }
+  const fade = (u, d) => Math.min(easeOut(seg(u, 0, 0.3)), 1 - ease(seg(u, d - 0.3, d)));
+  if (t < T_INTRO) { html = introScene(t); op = fade(t, T_INTRO); }
+  else if (t < T_INTRO + T_CHART) { const u = t - T_INTRO; html = chartScene(u); op = fade(u, T_CHART); }
+  else if (t < T_INTRO + T_CHART + T_Q) { const u = t - T_INTRO - T_CHART; html = questionScene(u); op = fade(u, T_Q); }
+  else { const u = t - T_INTRO - T_CHART - T_Q; html = endScene(u); op = easeOut(seg(u, 0, 0.3)); }
   root.innerHTML = html;
   root.style.opacity = op;
 };
@@ -333,9 +424,11 @@ window.card = function (name) {
   if (name === "hero") root.innerHTML = heroScene(false);
   if (name === "gh") { document.body.classList.add("gh"); root.innerHTML = heroScene(true); }
   if (name === "results") root.innerHTML = endScene(99);
-  if (name === "chart") root.innerHTML = chartScene(0, { progress: 1 });
+  if (name === "chart") root.innerHTML = chartScene(99, true);
 };
+window.TRIMS = TRIM_IDX.length;
 const q = new URLSearchParams(location.search);
+window.STILL_BG = q.has("stillbg");
 if (q.get("card")) window.card(q.get("card")); else window.render(+(q.get("t") || 0));
 </script>
 </body>

@@ -1,9 +1,9 @@
 const { chromium } = require('playwright');
 (async () => {
-  const [,, file, out, fps] = process.argv;
+  const [,, file, out, fps, query = ''] = process.argv;
   const b = await chromium.launch();
   const p = await b.newPage({ viewport: { width: 1200, height: 675 }, deviceScaleFactor: 1.6 });
-  await p.goto('file://' + file);
+  await p.goto('file://' + file + (query ? '?' + query : ''));
   await p.evaluate(() => document.fonts.ready);
   const dur = await p.evaluate(() => window.DURATION);
   const n = Math.round(dur * fps);
