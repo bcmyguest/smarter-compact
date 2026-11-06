@@ -1,0 +1,107 @@
+/* Starlight overrides: typeface and palette (tokens.css). */
+:root {
+  --sl-font: 'DM Sans', system-ui, sans-serif;
+  --sl-content-width: 46rem;
+}
+
+/* SVG diagrams are drawn for a light canvas unless a dark twin exists. */
+.sl-markdown-content img[src$='.svg']:not(.sc-diagram-dark) {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/*
+ * Figures. docs/*.md centers images with GitHub's <p align="center">; the docs build turns that into
+ * <figure class="sc-figure sc-figure--KIND"> (site/scripts/lib/docs.mjs pictureToDuo). Each kind keeps
+ * a width near the size its image is drawn at, centered, so no image blows up to the full column.
+ */
+.sl-markdown-content .sc-figure {
+  --sc-figure-w: 100%;
+  max-width: var(--sc-figure-w);
+  margin: 2rem auto;
+  padding: 0;
+}
+.sl-markdown-content .sc-figure--chart {
+  --sc-figure-w: 45rem; /* charts are drawn 720 px wide */
+}
+.sl-markdown-content .sc-figure--animation {
+  --sc-figure-w: 45rem; /* smart-compaction GIF, 720 px */
+}
+.sl-markdown-content .sc-figure--pair {
+  display: grid;
+  gap: 1rem;
+  --sc-figure-w: 46rem;
+}
+@media (min-width: 40rem) {
+  .sl-markdown-content .sc-figure--pair {
+    grid-template-columns: 1fr 1fr;
+    align-items: start;
+  }
+  .sl-markdown-content .sc-figure--pair figcaption {
+    grid-column: 1 / -1;
+  }
+}
+.sl-markdown-content .sc-figure > * {
+  margin: 0;
+}
+.sl-markdown-content .sc-figure img {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 0;
+  border-radius: 0.75rem;
+}
+.sl-markdown-content .sc-figure-img {
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.08), 0 8px 24px -12px rgb(0 0 0 / 0.25);
+}
+.sl-markdown-content .sc-figure figcaption {
+  margin-top: 0.75rem;
+  color: var(--sl-color-gray-3);
+  font-size: var(--sl-text-sm);
+  line-height: 1.5;
+  text-align: center;
+}
+.sl-markdown-content .sc-figure figcaption code {
+  font-size: 0.9em;
+}
+
+/* Light/dark pair: show the one that matches the theme. */
+.sl-markdown-content .sc-diagram-duo {
+  margin: 1.5rem 0;
+}
+.sl-markdown-content .sc-figure .sc-diagram-duo {
+  margin: 0;
+}
+.sl-markdown-content .sc-diagram-duo img {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 0;
+  border-radius: 0.75rem;
+}
+.sl-markdown-content .sc-diagram-duo .sc-diagram-dark {
+  display: none;
+}
+:root[data-theme='dark'] .sl-markdown-content .sc-diagram-duo .sc-diagram-light {
+  display: none;
+}
+:root[data-theme='dark'] .sl-markdown-content .sc-diagram-duo .sc-diagram-dark {
+  display: block;
+  outline: 1px solid var(--sl-color-gray-5);
+  outline-offset: -1px;
+}
+
+/* The home-page demo video. */
+.sl-markdown-content video {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+  border-radius: 0.75rem;
+}
+
+.sl-markdown-content table {
+  display: block;
+  overflow-x: auto;
+}

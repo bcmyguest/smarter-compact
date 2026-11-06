@@ -1,0 +1,34 @@
+# Semantic color tokens for the docs. scripts/gen-theme.mjs
+# turns this into src/styles/tokens.css (color tokens and the Starlight palette).
+theme:
+  semantic:
+    light:
+      canvas: '#f5f5f9'
+      panel: '#ffffff'
+      panel-raised: '#f9f9fd'
+      ink: '#1b1d2a'
+      muted: '#555b72'
+      line: '#e1e3ee'
+      brand: '#4651a6'
+      brand-soft: '#e8eaf9'
+      selected: '#d9ddf5'
+      hover: '#eff0fa'
+      source: '#2f3987'
+      code: '#f1f2f9'
+      warning: '#774708'
+      danger: '#8d3834'
+    dark:
+      canvas: '#0f1118'
+      panel: '#171a25'
+      panel-raised: '#1e2231'
+      ink: '#eceef7'
+      muted: '#b4b9d0'
+      line: '#343a54'
+      brand: '#aab4f6'
+      brand-soft: '#262d55'
+      selected: '#2d3568'
+      hover: '#272e47'
+      source: '#c6cdfb'
+      code: '#131622'
+      warning: '#f0cc83'
+      danger: '#ffb7b1'
