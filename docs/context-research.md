@@ -330,6 +330,27 @@ Does the agent still follow a rule after a trim drops the turn that stated it? C
 
 Recall brought the rule back in all 10 runs. The one violation without the sentence edited the test after the rule appeared in a search result; the one miss with it special-cased the input in `src/pricing.py` and did not report the conflict. At n=5 the sentence changes how the agent searches (4 of 5 against 1 of 5 by `role="user"`), not measurably whether it obeys. The setup favours recall: the rule sits two turns back and most queries ("test suite failing") surface it as neighbouring context. Cost $7.94 (Claude Code `total_cost_usd`).
 
+## Cache after a cut, with thinking (2026-11-05)
+
+**Question.** Does the proxy's cut invalidate Anthropic's prompt cache when the session carries extended thinking blocks? Probe: [bench/probe/cache-thinking/](../bench/probe/cache-thinking/README.md). Claude Code 2.1.280, `claude-haiku-5-5` through a proxy from this tree at `CONTEXT_TRIM_AT_TOKENS=55000`; ten `claude -p --resume` turns per session, each turn after the first reading one 5K-token file. n = 2 sessions, 2 cuts each, 4 cuts. Only Haiku 5.5 was run.
+
+Main-thread `usage` events around each cut (`trimmed`: 0 whole, 2 new cut, 1 carries the cut; tokens provider-reported):
+
+| Session | Cut | Before (read / write) | Cut request (read / write) | Next (read / write) | Next + 1 (read / write) |
+| --- | --- | --- | --- | --- | --- |
+| `think` | 1 (call 8 of 28) | 53,717 / 231 | 41,966 / 3,029 | 44,995 / 966 | 45,961 / 49 |
+| `think` | 2 (call 20) | 54,392 / 50 | 41,966 / 3,038 | 45,004 / 932 | 45,936 / 198 |
+| `nothink` | 1 (call 8 of 20) | 53,062 / 142 | 41,970 / 3,033 | 45,003 / 589 | 45,592 / 2,611 |
+| `nothink` | 2 (call 16) | 53,598 / 195 | 41,970 / 3,039 | 45,009 / 689 | 45,698 / 2,615 |
+
+Uncached `input_tokens` were 2 to 4 on every row.
+
+**Result.** With thinking blocks in the history, a cut did not invalidate the whole cache. On the cut request the cache read fell to 41,966 to 41,970 tokens, the prefix that ends before the messages (the first request of each session read or wrote 44,942 to 44,948 tokens, tools, system and the first user turn), and the request wrote about 3,030 tokens: the kept messages and the pointer. The next request read 45,003 to 45,009 tokens, so the cut request's prefix was cached and reused, and writes returned to the per-turn level. A cut cost one write of about 3K tokens here, against about 12K tokens of messages no longer sent on each later request.
+
+**Inconclusive part: thinking off.** Both sessions ran with thinking. The `nothink` settings (`alwaysThinkingEnabled: false`, `MAX_THINKING_TOKENS=0`) left thinking on: Claude Code's transcripts hold 11 (`think`) and 12 (`nothink`) signed thinking blocks with empty display text. One check call with `CLAUDE_CODE_DISABLE_THINKING=1` returned no thinking block; it also read 0 cached tokens and wrote 43,494, so turning thinking off appears to change the cached prefix itself (one call, not measured further). The probe now sets that variable for `nothink`; the thinking-off arm has not been rerun, so the on/off comparison is open.
+
+Cost $1.90 by Claude Code's `total_cost_usd` estimate (`think` $0.98, `nothink` $0.59, check call about $0.33 from its token counts), on subscription credentials.
+
 ## Limitations
 
 - The primary run E uses Haiku 5.5 and two or three seeds per cell. Sonnet has two paired seeds on one task. Earlier run B baselines have one or two seeds per cell.
