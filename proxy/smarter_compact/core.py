@@ -336,18 +336,20 @@ def choose_gap(adapter, items, cut, after, first, fits):
     return best
 
 
-def render(adapter, items, cut, note, first=None, gap=None, strip=None, prose=False, shown=None):
+def render(adapter, items, cut, note, first=None, gap=None, strip=None, prose=False, shown=None, clear=None):
     """The kept items (kept_indices) in order, the cut turn carrying the note, with signed reasoning stripped from
     kept assistant items before `strip` (default: the latest assistant run; see strip_reasoning), and with prose
-    their tool call/result pairs too (prose_ids), or with prose == "mask" those results masked instead.
-    shown, when given, gets the strip_reasoning index map."""
+    their tool call/result pairs too (prose_ids), or with prose == "mask" those results masked instead; every tool
+    result before `clear` is masked too (CONTEXT_CLEAR_KEEP_RESULTS). shown, when given, gets the strip_reasoning
+    index map."""
     if cut is None:
         if shown is not None:
             shown.update(enumerate(items))
         return items
     keep = kept_indices(adapter, items, cut, gap, first)
     run = latest_run_start(adapter, items)
-    return strip_reasoning(adapter, items, keep, run if strip is None else min(strip, run), cut, note, prose, shown)
+    return strip_reasoning(adapter, items, keep, run if strip is None else min(strip, run), cut, note, prose, shown,
+                           clear, first)
 
 
 def latest_run_start(adapter, items):
@@ -360,7 +362,7 @@ def latest_run_start(adapter, items):
     return last
 
 
-def strip_reasoning(adapter, items, keep, bound, cut, note, prose=False, shown=None):
+def strip_reasoning(adapter, items, keep, bound, cut, note, prose=False, shown=None, clear=None, first=None):
     """The kept items, the cut turn carrying the note, with signed reasoning removed from assistant items before
     `bound`.
 
@@ -372,6 +374,9 @@ def strip_reasoning(adapter, items, keep, bound, cut, note, prose=False, shown=N
 
     With prose, the prose_ids pairs go too and adjacent stripped items of one role merge into one message. With
     prose == "mask", each prose_ids tool_use stays and its tool_result content becomes MASK_PLACEHOLDER.
+
+    Every tool_result of a kept item before `clear` (the first user turn and pinned items aside) also becomes
+    MASK_PLACEHOLDER; its tool_use and the item's other blocks stay (_cleared).
 
     shown, when given, maps the index of every item that reaches the view to its stripped form (no note, unmerged).
     """
@@ -394,6 +399,7 @@ def strip_reasoning(adapter, items, keep, bound, cut, note, prose=False, shown=N
                 if x is None:
                     continue
                 region = True
+        x = _cleared(adapter, x, j, clear, first)
         if shown is not None:
             shown[j] = x
         if j == cut:
@@ -404,6 +410,50 @@ def strip_reasoning(adapter, items, keep, bound, cut, note, prose=False, shown=N
         out.append(x)
         mergeable = region
     return out
+
+
+def _cleared(adapter, x, j, clear, first):
+    """x with every tool_result masked when items[j] sits before the clear bound; x itself otherwise."""
+    if clear is None or j >= clear or j == first or adapter.is_pinned(x):
+        return x
+    return adapter.masked_results(x, adapter.result_ids(x), MASK_PLACEHOLDER)
+
+
+def _clears_more(adapter, items, keep, old, new, first):
+    """Whether bound new masks a result of a kept item that bound old leaves whole."""
+    return new is not None and any(_cleared(adapter, items[j], j, new, first) is not items[j]
+                                   for j in keep if old is None or j >= old)
+
+
+def _trim_sizes(adapter, items, cut, mode, clear, first):
+    """request_chars per item after prose stripping or masking (mode) and clearing before `clear`."""
+    sizes = [request_chars(x) for x in items]
+    if mode:
+        _prose_sizes(adapter, items, cut, sizes, mode)
+    for j in range(clear or 0):
+        x = _cleared(adapter, items[j], j, clear, first)
+        if x is not items[j]:
+            sizes[j] = min(sizes[j], request_chars(x))
+    return sizes
+
+
+def clear_bound(adapter, items, keep_results):
+    """Index of the item holding the keep_results-th newest tool result: it and every later item keep their results,
+    earlier ones are cleared. None when no earlier item holds a result to clear."""
+    seen = 0
+    for j in range(len(items) - 1, -1, -1):
+        seen += len(adapter.result_ids(items[j]) - {None})
+        if seen >= keep_results:
+            return j if any(adapter.result_ids(items[i]) - {None} for i in range(j)) else None
+    return None
+
+
+def _next_clear(adapter, items, keep_results, clear):
+    """The clear bound a trim now records: the newer of the current one and clear_bound; None when clearing is off."""
+    if keep_results <= 0 or not hasattr(adapter, "masked_results"):
+        return None
+    bounds = [b for b in (clear, clear_bound(adapter, items, keep_results)) if b is not None]
+    return max(bounds) if bounds else None
 
 
 def _prose_region(adapter, items, keep, bound, cut, mode=True):
@@ -655,7 +705,7 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, http,
         state = store.load_trim(sid)
         threads = state["threads"]
         thread = threads.get(root)
-        cut, gap, strip, note = None, None, None, None
+        cut, gap, strip, note, clear = None, None, None, None, None
         if thread:
             cut_fp = thread.get("cut_fp")
             cut = _locate_cut(adapter, items, thread)
@@ -670,38 +720,51 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, http,
                 if thread.get("strip_fp"):
                     # From 0: a trim on the last user turn records strip as the reply before the cut.
                     strip = _locate(items, thread.get("strip"), thread["strip_fp"])
+                if thread.get("clear_fp"):
+                    clear = _locate(items, thread.get("clear"), thread["clear_fp"])
         shown = {}
         mode = region_mode(settings)
-        view = render(adapter, items, cut, note, first, gap, strip, mode, shown)
+        view = render(adapter, items, cut, note, first, gap, strip, mode, shown, clear)
         force = store.force_requested(sid)
         ratio = settings.chars_per_token if settings.chars_per_token > 0 else DEFAULT_CHARS_PER_TOKEN
         base_chars = request_chars(*context)
         tokens = estimate_prompt_tokens(base_chars + request_chars(view), state.get("usage"), root, ratio)
         trim_at = settings.trim_at_for(request["model"])
         if force or tokens >= trim_at:
-            new_cut = choose_cut(adapter, items, -1 if cut is None else cut, first)
+            new_clear = _next_clear(adapter, items, settings.clear_keep_results, clear)
+            target = trim_at * settings.trim_to_fraction
+            new_cut, new_gap = None, None
+            if new_clear is not None and first is not None:
+                # Clearing first: the current cut, or the first user turn (dropping nothing), with the newer bound.
+                anchor, anchor_gap = (cut, gap) if cut is not None else (first, None)
+                sizes = _trim_sizes(adapter, items, anchor, mode, new_clear, first)
+                chars = base_chars + sum(sizes[j] for j in kept_indices(adapter, items, anchor, anchor_gap, first))
+                if estimate_prompt_tokens(chars, state.get("usage"), root, ratio) < target:
+                    new_cut, new_gap = anchor, anchor_gap
             if new_cut is None:
-                new_cut = cut if cut is not None else last_turn_index(adapter, items)
-            new_gap = None
-            if new_cut is not None:
-                sizes = [request_chars(x) for x in items]
-                if mode:
-                    _prose_sizes(adapter, items, new_cut, sizes, mode)
-                target = trim_at * settings.trim_to_fraction
+                new_cut = choose_cut(adapter, items, -1 if cut is None else cut, first)
+                if new_cut is None:
+                    new_cut = cut if cut is not None else last_turn_index(adapter, items)
+                if new_cut is not None:
+                    sizes = _trim_sizes(adapter, items, new_cut, mode, new_clear, first)
 
-                def fits(g):
-                    chars = base_chars + sum(sizes[j] for j in kept_indices(adapter, items, new_cut, g, first))
-                    return estimate_prompt_tokens(chars, state.get("usage"), root, ratio) < target
+                    def fits(g):
+                        chars = base_chars + sum(sizes[j] for j in kept_indices(adapter, items, new_cut, g, first))
+                        return estimate_prompt_tokens(chars, state.get("usage"), root, ratio) < target
 
-                after = gap if new_cut == cut and gap is not None else new_cut + 1
-                new_gap = choose_gap(adapter, items, new_cut, after, first, fits)
-                if new_gap is None and new_cut == cut:
-                    new_gap = gap
+                    after = gap if new_cut == cut and gap is not None else new_cut + 1
+                    new_gap = choose_gap(adapter, items, new_cut, after, first, fits)
+                    if new_gap is None and new_cut == cut:
+                        new_gap = gap
             dropped = len(_droppable(adapter, items, new_cut, new_gap, first)) if new_cut is not None else 0
             moved = bool(dropped) and (new_cut, new_gap) != (cut, gap)
+            if new_cut is not None and not moved:
+                # A newer clear bound alone moves the trim when it masks a result the current bound left whole.
+                moved = _clears_more(adapter, items, kept_indices(adapter, items, new_cut, new_gap, first), clear,
+                                     new_clear, first)
             if moved:
                 new_strip, new_shown = latest_run_start(adapter, items), {}
-                bare = render(adapter, items, new_cut, "", first, new_gap, new_strip, mode, new_shown)
+                bare = render(adapter, items, new_cut, "", first, new_gap, new_strip, mode, new_shown, new_clear)
                 if not force and settings.trim_min_gain_tokens > 0:
                     # A cut freeing fewer estimated tokens (pointer note not counted) waits for a bigger one.
                     freed = tokens - estimate_prompt_tokens(base_chars + request_chars(bare), state.get("usage"), root, ratio)
@@ -709,13 +772,18 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, http,
             if moved:
                 # The pointer counts every message absent from the view: dropped, or emptied by the strip.
                 dropped = len(items) - len(new_shown)
-                note = _build_note(adapter, items, new_cut, sid, dropped, store, settings, http,
-                                 recall_tool_names(request_tool_names(data)))
-                if settings.progress_note:
-                    note = _with_progress(adapter, items, new_cut, new_gap, first, settings, note)
-                if mode == "mask" and any(x is not items[j] and MASK_PLACEHOLDER in str(x.get("content"))
-                                          for j, x in new_shown.items()):
-                    note = f"{note}\n{mask_text(sid, recall_tool_names(request_tool_names(data)))}"
+                names = recall_tool_names(request_tool_names(data))
+                masked = (mode == "mask" or new_clear is not None) and any(
+                    x is not items[j] and MASK_PLACEHOLDER in str(x.get("content")) for j, x in new_shown.items())
+                if dropped or not masked:
+                    note = _build_note(adapter, items, new_cut, sid, dropped, store, settings, http, names)
+                    if settings.progress_note:
+                        note = _with_progress(adapter, items, new_cut, new_gap, first, settings, note)
+                    if masked:
+                        note = f"{note}\n{mask_text(sid, names)}"
+                else:
+                    # Clearing alone drops no message: the note only says how to fetch a cleared result back.
+                    note = f"[smarter-compact: session {sid}] {mask_text(sid, names)}"
                 threads.pop(root, None)
                 threads[root] = {"cut": new_cut, "cut_fp": fingerprint(items[new_cut]), "note": note,
                                  "format": adapter.name, "updated": _utc_now()}
@@ -726,14 +794,16 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, http,
                 strip = new_strip
                 if strip < len(items):
                     threads[root].update(strip=strip, strip_fp=fingerprint(items[strip]))
+                if new_clear is not None:
+                    threads[root].update(clear=new_clear, clear_fp=fingerprint(items[new_clear]))
                 while len(threads) > MAX_THREADS:
                     threads.pop(next(iter(threads)))
                 store.save_trim(sid, state)
                 if force:
                     store.clear_force(sid)
                 shown = {}
-                view = render(adapter, items, new_cut, note, first, new_gap, strip, mode, shown)
-                cut, gap = new_cut, new_gap
+                view = render(adapter, items, new_cut, note, first, new_gap, strip, mode, shown, new_clear)
+                cut, gap, clear = new_cut, new_gap, new_clear
                 after = estimate_prompt_tokens(base_chars + request_chars(view), state.get("usage"), root, ratio)
                 trim = {"tokens_before": tokens, "tokens_after": after, "dropped": dropped}
             elif thread and cut is None:

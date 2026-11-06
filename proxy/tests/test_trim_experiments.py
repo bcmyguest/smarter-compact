@@ -14,6 +14,7 @@ from test_context_proxy import BIG, Base, anth_history, anth_request  # noqa: E4
 from smarter_compact import Settings  # noqa: E402
 from smarter_compact.adapters import AnthropicAdapter  # noqa: E402
 from smarter_compact.core import MASK_PLACEHOLDER  # noqa: E402
+from smarter_compact.tokens import request_chars  # noqa: E402
 
 # Step k of the in-flight turn: (tool name, input, result text, is_error).
 STEPS = [
@@ -276,6 +277,112 @@ class MaskObservationsTests(Base):
         view = self.mask(in_flight_turn(), trim_at_tokens=1)
         self.assertNotIn(MASK_PLACEHOLDER, json.dumps(view))
         self.assertNotIn("Older tool outputs", view[2]["content"][0]["text"])
+
+
+
+HUGE = "\n" + "x" * 20000
+
+
+def full_tokens(msgs):
+    """The request's estimated tokens at chars_per_token=1.0: what the trim threshold is compared with."""
+    data = anth_request(msgs)
+    return request_chars(data["system"], data["tools"], msgs)
+
+
+class ClearResultsTests(Base):
+    def clear(self, msgs, sid="sid-1", keep=2, **kw):
+        kw.setdefault("chars_per_token", 1.0)
+        return self.run_req(anth_request(copy.deepcopy(msgs), sid=sid), clear_keep_results=keep, **kw)["messages"]
+
+    def test_off_by_default(self):
+        self.assertEqual(Settings().clear_keep_results, 0)
+        self.assertEqual(Settings.from_env({}).clear_keep_results, 0)
+        self.assertEqual(Settings.from_env({"CONTEXT_CLEAR_KEEP_RESULTS": "10"}).clear_keep_results, 10)
+        self.assertEqual(Settings.from_env({"CONTEXT_CLEAR_KEEP_RESULTS": "-3"}).clear_keep_results, 0)
+        self.assertEqual(Settings.from_env({"CONTEXT_CLEAR_KEEP_RESULTS": "x"}).clear_keep_results, 0)
+        msgs = in_flight_turn(HUGE)
+        view = self.run_req(anth_request(copy.deepcopy(msgs)), trim_at_tokens=full_tokens(msgs),
+                            chars_per_token=1.0)["messages"]
+        self.assertNotIn(MASK_PLACEHOLDER, json.dumps(view))
+        self.assertLess(len(view), len(msgs))
+
+    def test_clears_all_but_newest_n_and_keeps_every_turn_and_call(self):
+        msgs = in_flight_turn(HUGE)
+        view = self.clear(msgs, trim_at_tokens=full_tokens(msgs))
+        # No message dropped: same roles in the same order, every call still paired with its result.
+        self.assertEqual([m["role"] for m in view], [m["role"] for m in msgs])
+        self.assertEqual(ids_in(view, "tool_use", "id"), ids_in(msgs, "tool_use", "id"))
+        self.assertEqual(ids_in(view, "tool_use", "id"), ids_in(view, "tool_result", "tool_use_id"))
+        results = results_in(view)
+        # The 2 newest results stay; every older one longer than the placeholder is cleared.
+        self.assertEqual((results["sL"], results["s4"]), ("ok", "contents" + HUGE))
+        for k in ("tu0", "tu1", "s0", "s1", "s2", "s3"):
+            self.assertEqual(results[k], MASK_PLACEHOLDER, k)
+        texts = [b.get("text") for m in view if isinstance(m.get("content"), list) for b in m["content"]]
+        self.assertIn("step 3", texts)
+        # The note rides on the first user turn and names recovery, not a drop.
+        note = view[0]["content"][0]["text"]
+        self.assertIn("Older tool outputs", note)
+        self.assertNotIn("earlier messages are NOT", note)
+        self.assertEqual(view[0]["content"][1:], msgs[0]["content"])
+
+    def test_drops_turns_only_when_clearing_is_not_enough(self):
+        # Short results: clearing frees almost nothing, so the trim also drops old turns.
+        msgs = in_flight_turn(LONG)
+        view = self.clear(msgs, trim_at_tokens=full_tokens(msgs))
+        self.assertLess(len(view), len(msgs))
+        self.assertIn("earlier messages are NOT", view[2]["content"][0]["text"])
+        self.assertIn("Older tool outputs", view[2]["content"][0]["text"])
+        kept = results_in(view)
+        self.assertEqual((kept["sL"], kept["s4"]), ("ok", "contents" + LONG))
+        self.assertEqual(kept["s3"], MASK_PLACEHOLDER)
+
+    def test_sticky_prefix_across_requests(self):
+        msgs = in_flight_turn(HUGE)
+        first = self.clear(msgs, trim_at_tokens=full_tokens(msgs))
+        more = msgs + [{"role": "assistant", "content": [{"type": "tool_use", "id": "sM", "name": "Bash",
+                                                          "input": {"command": "pwd"}}]},
+                       {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "sM",
+                                                     "content": "later" + HUGE}]}]
+        second = self.clear(more, trim_at_tokens=BIG)
+        self.assertEqual(json.dumps(second[:len(first)]), json.dumps(first))
+        # Results newer than the bound stay whole until the next trim.
+        self.assertEqual(results_in(second)["sM"], "later" + HUGE)
+        third = self.clear(more, trim_at_tokens=BIG)
+        self.assertEqual(json.dumps(third), json.dumps(second))
+
+    def test_next_trim_advances_the_bound(self):
+        msgs = in_flight_turn(HUGE)
+        self.clear(msgs, trim_at_tokens=full_tokens(msgs))
+        more = msgs + [{"role": "assistant", "content": [{"type": "tool_use", "id": "sM", "name": "Bash",
+                                                          "input": {"command": "pwd"}}]},
+                       {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "sM",
+                                                     "content": "later" + HUGE}]}]
+        sent = self.clear(more, trim_at_tokens=BIG)
+        # Over the threshold again: clearing s4 alone fits under the target, so nothing drops.
+        view = self.clear(more, trim_at_tokens=full_tokens(sent), trim_to_fraction=0.9)
+        results = results_in(view)
+        self.assertEqual(len(view), len(more))
+        self.assertEqual((results["sM"], results["sL"]), ("later" + HUGE, "ok"))
+        self.assertEqual(results["s4"], MASK_PLACEHOLDER)
+
+    def test_signed_thinking_stripped_before_the_edit(self):
+        msgs = in_flight_turn(HUGE)
+        view = self.clear(msgs, trim_at_tokens=full_tokens(msgs))
+        sigs = [b.get("signature") for m in view if isinstance(m.get("content"), list) for b in m["content"]
+                if b.get("type") == "thinking"]
+        # The history's thinking (SIG0, SIG1) goes; the latest run's stays.
+        self.assertEqual(sigs, ["SIGL=="])
+        self.assertEqual(json.dumps(view[-2:]), json.dumps(msgs[-2:]))
+
+    def test_store_keeps_full_results(self):
+        msgs = in_flight_turn(HUGE)
+        self.clear(msgs, trim_at_tokens=full_tokens(msgs))
+        out = [r["text"] for r in self.db_rows("sid-1", "in_context = 0 AND kind = 'tool_result'")]
+        self.assertIn("built" + HUGE, out)
+        self.assertNotIn("contents" + HUGE, out)
+        kept = [r["text"] for r in self.db_rows("sid-1", "in_context = 1 AND kind = 'tool_use'")]
+        self.assertIn("make build", " ".join(kept))
 
 
 class ProgressNoteTests(Base):
