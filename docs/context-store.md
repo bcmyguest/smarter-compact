@@ -47,7 +47,7 @@ Sources 3 (legacy form), 4 and 5 cover clients Smarter Compact does not wire yet
 
 A trim keeps, in their original order:
 
-- pinned messages before the cut (Chat and Responses `system` / `developer` messages, OpenCode 2 `system` messages; Anthropic keeps `system` outside the message list);
+- pinned messages before the cut (Anthropic `system` messages, which Claude Code uses for its environment, model id and deferred-tool list; Chat and Responses `system` / `developer` messages; OpenCode 2 `system` messages). Pinned messages are not written to the store;
 - the **first real user turn**, verbatim: Anthropic, the first `user` message that is not only `tool_result` blocks; Chat, the first `user` message; Responses, the first user `message` item; OpenCode 2, the first `user` message that is not only `tool-result` parts. It usually states the task, so every trim keeps it ahead of the pointer;
 - the **reply before the cut**: the agent message just before the cut turn, when it is a final reply (an assistant message with no tool calls; Responses, a `message` item), so the cut turn reads as an answer to it;
 - the cut turn, with the pointer block prepended;
