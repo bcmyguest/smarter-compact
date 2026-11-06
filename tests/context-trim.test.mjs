@@ -23,6 +23,13 @@ import {
 
 const SID = "sess-1";
 
+test("thinking signatures do not count toward the request size", () => {
+  // A 180 KB signature on 59k thinking tokens added nothing to the next prompt (Terminal-Bench probe).
+  assert.equal(requestChars({ type: "thinking", thinking: "", signature: "s".repeat(180000) }),
+    "typethinkingthinkingsignature".length);
+  assert.equal(requestChars({ type: "redacted_thinking", data: "d".repeat(9000) }), "typeredacted_thinkingdata".length);
+});
+
 test("the pointer states what was removed, denies a summary, and names both tools", () => {
   const note = pointerText(SID, 3);
   assert.match(note, /^\[smarter-compact: continuing session sess-1; 3 earlier messages are NOT in your context\./);

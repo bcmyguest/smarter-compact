@@ -144,6 +144,8 @@ export const TRIM_NEW = 2;
 /** Part types whose payload is binary; each is charged a flat 6400 characters (about 1600 tokens). */
 const BINARY_BLOCK_TYPES = new Set(["image", "document", "input_image", "input_file", "image_url", "file", "media"]);
 const BINARY_BLOCK_CHARS = 6400;
+/** Encrypted payloads of thinking blocks: their length tracks the thinking, which the API may drop or keep. */
+const OPAQUE_KEYS = { thinking: "signature", redacted_thinking: "data" };
 /** Bounds on an observed chars-per-token ratio, and usage samples kept per session; same as the proxy. */
 const MIN_CHARS_PER_TOKEN = 1.0;
 const MAX_CHARS_PER_TOKEN = 8.0;
@@ -217,7 +219,8 @@ function chars(value) {
   if (ArrayBuffer.isView(value)) return BINARY_BLOCK_CHARS;
   if (typeof value === "object") {
     if (BINARY_BLOCK_TYPES.has(value.type)) return BINARY_BLOCK_CHARS;
-    return Object.entries(value).reduce((sum, [k, v]) => sum + k.length + chars(v), 0);
+    const opaque = OPAQUE_KEYS[value.type];
+    return Object.entries(value).reduce((sum, [k, v]) => sum + k.length + (k === opaque ? 0 : chars(v)), 0);
   }
   return String(value).length;
 }
