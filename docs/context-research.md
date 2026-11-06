@@ -259,6 +259,8 @@ Per-trial scoring stays inside the chain: in the flat run it cost 26s median on 
 
 Confound to state in any result: chaining lets the `none` arm recall an earlier task's fix, which biases *toward* keep-everything. A smart arm that ties or wins under that bias is the strong result. Gate before spending: `max_prompt_tokens` must rise task over task, the session must resume across containers, and a spot-check of one deferred score must confirm the reset left each patch valid.
 
+**Seeded plan (not run).** [`run-chain-seeds.sh`](../bench/swebench/run-chain-seeds.sh) runs the chain-django8 set (first 8 django ids of `hard45.json`) as one chain per arm (`none`, `smart`) per seed, seeds 1–3 by default; `--chain-seed` shuffles each repo's order, the same for both arms, and each seed has its own run id. Trim at 40K: the flat `hard45-cairn-40k` smart arm trimmed one or two times on 6 of these 8 tasks, and chained django peaks grew about 15K per task (`chain-smoke-5`: 27,092 → 42,868 → 57,747), so each 8-task chain should cross 40K at least three times. The gate is `trims` ≥ 3 per smart chain in `chain_report.py`.
+
 ## Terminal-Bench 2.1: trim-shape arms (2026-11-05)
 
 Claude Code on `claude-haiku-5-5` through Harbor ([`bench/termbench/harbor`](../bench/termbench/harbor)), smarter-compact trimming at 95K, Claude Code's own auto-compact window at 195K. Four arms, one trial each on eight long Terminal-Bench 2.1 tasks; each arm is a `sc_agent_claude` class whose env sets the knobs. The first job (`tb21-h55-arms`) lost 24 of 32 trials to an expired OAuth token; those 24 were rerun as `tb21-h55-arms-r3`. Baseline columns are the same tasks from `tb21-h55-rerun`, default settings.
