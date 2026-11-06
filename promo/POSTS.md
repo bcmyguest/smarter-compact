@@ -1,22 +1,22 @@
-# Reddit launch
+# Reddit launch: r/ClaudeAI
 
-Start with Reddit. Assets are in `promo/out/` (rebuild with `promo/build.sh`).
+One subreddit, one post. Assets are in `promo/out/` (rebuild with `promo/build.sh`).
 
 **Before posting:** publish a new npm version. npm still serves 0.3.2, and the post tells people to `npm install`.
 
 ## What to upload
 
-Upload **`smarter-compact-demo.mp4`** as a native Reddit video post. Reddit plays MP4 smoothly and autoplays it in the feed; a GIF gets re-encoded and looks worse. Put the text below in the body (video posts allow a body on most subs) or as your first comment if the sub doesn't.
+Post **`terminal-demo.mp4`** as a native video. It shows a Claude Code session the way readers know it: three prompts, the trim when the context crosses 95k, then a question about logs that already left the prompt, answered with `smart_compact_sql` and `smart_compact_get`. It ends on the 72% average. Reddit autoplays MP4 in the feed; a GIF gets re-encoded and looks worse.
 
-Use `card-results-2400x1350.png` if a sub only allows image posts.
+Put the body below in the post. Then add `card-results-2400x1350.png` (the savings bars) as your first comment, for the people who want the chart.
 
-## Where, in order
+Keep `smarter-compact-demo.mp4` (the graphs video) for X and LinkedIn later.
 
-1. **r/ClaudeAI**: the biggest audience for Claude Code users. Use the project/showcase flair, and check the self-promotion rules on the day.
-2. **r/ClaudeCode**: smaller, more technical. Post a day later and lead with the Claude Code setup.
-3. **r/LocalLLaMA**: only if you lead with the mechanism (SQLite + FTS5, MCP tools, LiteLLM proxy) and the methods link. This crowd punishes marketing tone.
+## Posting
 
-Post on a weekday morning US time, and stay around for the first two hours to answer questions. Early replies decide whether it climbs.
+- Use the project/showcase flair and check r/ClaudeAI's self-promotion rules on the day.
+- Post on a weekday morning, US time.
+- Stay around for the first two hours and answer every question. Early replies decide whether it climbs.
 
 ## Title options
 
@@ -25,8 +25,6 @@ Post on a weekday morning US time, and stay around for the first two hours to an
 - **Long Claude Code sessions with small, cached prompts: older turns go to SQLite, the agent searches them when it needs a detail**
 
 ## Body
-
-The video follows the same order as the post: what it does, one example session, then the average saving.
 
 > I built Smarter Compact to keep long coding-agent sessions fast and cheap without losing anything.
 >

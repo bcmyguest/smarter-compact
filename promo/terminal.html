@@ -1,0 +1,206 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Smarter Compact terminal demo</title>
+<style>
+  :root {
+    --bg: #0f1226; --panel: #171b36; --line: #262b52; --grid: #232849;
+    --ink: #eef0ff; --muted: #9aa0c8; --dim: #5d6390;
+    --smart: #8b93ff; --smart-glow: rgba(139, 147, 255, 0.45);
+    --keep: #f0a35e; --good: #6fdca6; --mono: "JetBrains Mono", monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--bg); }
+  body { width: 1200px; height: 675px; overflow: hidden; position: relative; font-family: Inter, sans-serif; color: var(--ink); -webkit-font-smoothing: antialiased; }
+  #dots { position: absolute; inset: -40px; background-image: radial-gradient(var(--grid) 1.2px, transparent 1.2px); background-size: 28px 28px; }
+  #vignette { position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 40%, rgba(139,147,255,0.08), transparent 60%); }
+  .layer { position: absolute; inset: 0; }
+  .brand { position: absolute; left: 56px; top: 34px; display: flex; align-items: center; gap: 12px; }
+  .logo { width: 28px; height: 28px; border-radius: 8px; background: var(--smart); position: relative; }
+  .logo::before, .logo::after { content: ""; position: absolute; left: 7px; right: 7px; height: 3px; border-radius: 2px; background: var(--bg); }
+  .logo::before { top: 8px; } .logo::after { top: 16px; right: 12px; }
+  .brand span { font-weight: 700; font-size: 19px; }
+  .tag { position: absolute; right: 56px; top: 38px; font-family: var(--mono); font-size: 14px; color: var(--muted); }
+
+  .term { position: absolute; left: 56px; top: 84px; width: 1088px; height: 512px; background: #0a0c1b; border: 1px solid #262b52; border-radius: 14px; overflow: hidden; box-shadow: 0 30px 80px rgba(0,0,0,0.45); }
+  .bar { height: 38px; display: flex; align-items: center; gap: 8px; padding: 0 16px; border-bottom: 1px solid #1c2042; background: #0e1124; }
+  .bar i { width: 11px; height: 11px; border-radius: 50%; background: #2a2f57; display: inline-block; }
+  .bar span { margin-left: 12px; font-family: var(--mono); font-size: 13px; color: var(--dim); }
+  .view { position: absolute; left: 0; right: 0; top: 38px; bottom: 44px; overflow: hidden; }
+  .content { position: absolute; left: 24px; right: 24px; top: 14px; }
+  .row { overflow: hidden; }
+  .prompt { font-family: var(--mono); font-size: 16px; color: var(--ink); font-weight: 600; padding: 6px 12px; background: #151938; border-left: 3px solid var(--muted); border-radius: 4px; margin-top: 6px; }
+  .prompt .gt { color: var(--muted); margin-right: 10px; }
+  .tool { font-family: var(--mono); font-size: 14.5px; color: #c9ccf2; padding: 3px 0 0 2px; white-space: pre; }
+  .tool .b { margin-right: 8px; }
+  .tool .arg { color: var(--dim); }
+  .out { font-family: var(--mono); font-size: 14px; color: var(--dim); padding: 2px 0 0 26px; white-space: pre; }
+  .say { font-size: 16px; line-height: 1.45; color: #d9dbf5; padding: 6px 0 2px 2px; }
+  .say b { color: var(--ink); }
+  .trim { margin: 8px 0 2px; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--smart); background: rgba(139,147,255,0.10); font-family: var(--mono); font-size: 14.5px; color: var(--ink); }
+  .trim b { color: var(--smart); }
+  .ptr { font-family: var(--mono); font-size: 12.5px; color: #6d74b8; padding: 2px 0 0 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sql { font-family: var(--mono); font-size: 14px; line-height: 1.55; color: #c9ccf2; background: #11142c; border-radius: 8px; padding: 8px 12px; margin: 4px 0 0 26px; white-space: pre; }
+  .sql .k { color: var(--smart); } .sql .s { color: var(--good); }
+  .res { font-family: var(--mono); font-size: 14.5px; color: var(--good); padding: 3px 0 0 26px; white-space: pre; }
+  .status { position: absolute; left: 0; right: 0; bottom: 0; height: 44px; border-top: 1px solid #1c2042; background: #0e1124; display: flex; align-items: center; gap: 22px; padding: 0 18px; font-family: var(--mono); font-size: 13.5px; color: var(--muted); }
+  .gauge { width: 220px; height: 8px; border-radius: 4px; background: #1b1f40; position: relative; }
+  .gauge i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; }
+  .gauge u { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--smart); opacity: 0.8; }
+  .foot { position: absolute; left: 56px; right: 56px; bottom: 26px; font-size: 13.5px; color: var(--dim); line-height: 1.45; }
+
+  .headline { position: absolute; left: 56px; top: 150px; font-size: 54px; font-weight: 800; letter-spacing: -0.03em; line-height: 1.06; width: 1088px; }
+  .headline em { font-style: normal; color: var(--smart); }
+  .sub { font-size: 24px; font-weight: 500; color: var(--muted); letter-spacing: 0; margin-top: 18px; line-height: 1.4; }
+  .sub b { color: var(--ink); font-weight: 700; }
+  .install { position: absolute; left: 56px; top: 420px; font-family: var(--mono); font-size: 22px; background: #0c0f22; border: 1px solid #2c3260; border-radius: 12px; padding: 14px 20px; color: var(--ink); white-space: pre; }
+  .install .p { color: var(--good); margin-right: 10px; }
+</style>
+</head>
+<body>
+<div id="dots"></div>
+<div id="vignette"></div>
+<div class="layer" id="root"></div>
+<script>
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+const ease = (x) => { x = clamp(x); return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2; };
+const easeOut = (x) => 1 - Math.pow(1 - clamp(x), 3);
+const seg = (t, a, b) => clamp((t - a) / (b - a));
+const lerp = (a, b, f) => a + (b - a) * f;
+const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+// Prompt size by time (k tokens). Trim at 95k, down to about half (CONTEXT_TRIM_TO_FRACTION 0.53).
+const LIMIT = 95, TRIM_T = 8.35, STORED = 31;
+const CTX = [[0, 18], [1.8, 18], [2.1, 39], [2.6, 58], [3.1, 76], [3.6, 82], [4.4, 84], [6.9, 86], [7.3, 89], [7.7, 97],
+  [TRIM_T, 97], [TRIM_T + 0.6, 51], [9.6, 53], [12.6, 54], [13.4, 56], [14.2, 58], [15.2, 60]];
+function ctxAt(t) {
+  for (let i = 1; i < CTX.length; i++) if (t < CTX[i][0]) { const [a, va] = CTX[i - 1], [b, vb] = CTX[i]; return lerp(va, vb, ease((t - a) / (b - a))); }
+  return CTX[CTX.length - 1][1];
+}
+
+// Script: [start, kind, payload, height px]
+const SID = "a41c";
+const SCRIPT = [
+  [0.3, "prompt", "Find what's causing the 502s in auth-svc. The last 3 days of logs are in logs/.", 44, 1.3],
+  [1.8, "tool", ["Read", "logs/auth-svc-2026-11-03.log"], 24],
+  [2.3, "tool", ["Read", "logs/auth-svc-2026-11-04.log"], 24],
+  [2.8, "tool", ["Read", "logs/auth-svc-2026-11-05.log"], 24],
+  [3.3, "tool", ["Grep", '"502|timeout" logs/'], 24],
+  [3.9, "say", "The 502s start at <b>14:02 on Nov 4</b>, right after a deploy. auth-svc calls to db-pool time out after 30 s; the pool is capped at 10 connections.", 58],
+  [5.1, "prompt", "Raise the pool size, add a retry with backoff, and run the tests.", 44, 1.1],
+  [6.5, "tool", ["Edit", "config/db.yaml"], 24],
+  [6.9, "tool", ["Edit", "src/db/pool.ts"], 24],
+  [7.3, "tool", ["Bash", "npm test"], 24],
+  [7.75, "out", "✓ 214 passed", 22],
+  [TRIM_T, "trim", "", 46],
+  [TRIM_T + 0.5, "ptr", `[smarter-compact: continuing session ${SID}; ${STORED} earlier messages are NOT in your context. They were delivered to you and later removed to fit your context window …]`, 20],
+  [9.1, "say", "Tests pass. Pool raised to 40, with a jittered retry (3 attempts).", 34],
+  [10.2, "prompt", "How many auth-svc timeouts were there on Nov 4 before the deploy?", 44, 1.2],
+  [11.7, "tool", ["smart_compact_sql", ""], 24],
+  [11.9, "sql", "SELECT count(*) FROM lines\n WHERE text LIKE '2026-11-04T%' AND text < '2026-11-04T14:02'\n   AND text LIKE '%auth-svc%timeout%';", 76],
+  [13.0, "res", "→ 37", 22],
+  [13.4, "tool", ["smart_compact_get", "line 412"], 24],
+  [13.7, "res", "→ 2026-11-04T13:58:11Z ERROR auth-svc db-pool timeout after 30000ms (pool 10/10 busy)", 22],
+  [14.3, "say", "<b>37 timeouts</b> on Nov 4 before the 14:02 deploy, clustering whenever the pool hit 10/10 busy (e.g. 13:58:11). Counted from the stored log lines, which left the prompt three turns ago.", 58],
+];
+const T_TERM = 17.4, T_END = 4.6;
+
+function rowHtml(item, t) {
+  const [t0, kind, p, , typeDur] = item;
+  const age = t - t0;
+  if (kind === "prompt") {
+    const n = Math.round(p.length * clamp(age / typeDur));
+    const caret = n < p.length || Math.floor(t * 2.5) % 2 ? "▍" : "";
+    return `<div class="prompt"><span class="gt">&gt;</span>${esc(p.slice(0, n))}<span style="color:var(--muted)">${age < typeDur + 0.6 ? caret : ""}</span></div>`;
+  }
+  if (kind === "tool") {
+    const smart = p[0].startsWith("smart_");
+    const spin = age < 0.32;
+    const dot = spin ? "◐◓◑◒"[Math.floor(age * 14) % 4] : "●";
+    const color = smart ? "var(--smart)" : spin ? "var(--muted)" : "var(--good)";
+    return `<div class="tool"><span class="b" style="color:${color}">${dot}</span><span style="color:${smart ? "var(--smart)" : "#c9ccf2"};font-weight:${smart ? 700 : 500}">${p[0]}</span> <span class="arg">${esc(p[1])}</span></div>`;
+  }
+  if (kind === "out") return `<div class="out" style="color:var(--good)">${esc(p)}</div>`;
+  if (kind === "say") {
+    // reveal word by word
+    const words = p.split(" "), n = Math.round(words.length * clamp(age / 0.9));
+    return `<div class="say">${words.slice(0, n).join(" ")}</div>`;
+  }
+  if (kind === "trim") {
+    const f = easeOut(clamp(age / 0.6));
+    const from = 97, to = Math.round(lerp(97, 51, f)), moved = Math.round(STORED * f);
+    return `<div class="trim" style="box-shadow:0 0 ${24 * Math.exp(-age * 2.5)}px var(--smart-glow)"><b>✂ smarter-compact</b>  prompt ${from}k → ${to}k · ${moved} messages moved to sessions/${SID}.db, searchable</div>`;
+  }
+  if (kind === "ptr") return `<div class="ptr">${esc(p)}</div>`;
+  if (kind === "sql") {
+    const n = Math.round(p.length * clamp(age / 0.9));
+    const h = esc(p.slice(0, n)).replace(/(SELECT|FROM|WHERE|AND|LIKE)/g, '<span class="k">$1</span>').replace(/('[^']*'?)/g, '<span class="s">$1</span>');
+    return `<div class="sql">${h}</div>`;
+  }
+  if (kind === "res") {
+    const n = Math.round(p.length * clamp(age / 0.35));
+    return `<div class="res">${esc(p.slice(0, n))}</div>`;
+  }
+  return "";
+}
+
+function terminalScene(t) {
+  let rows = "", H = 0;
+  for (const item of SCRIPT) {
+    const age = t - item[0];
+    if (age < 0) continue;
+    const a = easeOut(clamp(age / 0.22));
+    H += item[3] * a;
+    rows += `<div class="row" style="height:${item[3] * a}px;opacity:${a}">${rowHtml(item, t)}</div>`;
+  }
+  const VIEW = 512 - 38 - 44 - 22;
+  const offset = Math.max(0, H - VIEW);
+  const ctx = ctxAt(t);
+  const stored = t < TRIM_T ? 0 : Math.round(STORED * easeOut(clamp((t - TRIM_T) / 0.6)));
+  const over = ctx > LIMIT;
+  const flash = t >= TRIM_T ? Math.exp(-(t - TRIM_T) * 3) : 0;
+  const f = easeOut(seg(t, 0, 0.4));
+  return `
+    <div class="brand"><div class="logo"></div><span>Smarter Compact</span></div>
+    <div class="tag">in a Claude Code session</div>
+    <div class="term" style="opacity:${f};transform:translateY(${(1 - f) * 16}px)">
+      <div class="bar"><i></i><i></i><i></i><span>~/payments-api · claude</span></div>
+      <div class="view"><div class="content" style="transform:translateY(${-offset}px)">${rows}</div></div>
+      <div class="status" style="box-shadow:inset 0 0 ${30 * flash}px rgba(139,147,255,${0.35 * flash})">
+        <span>context</span>
+        <div class="gauge"><i style="width:${Math.min(100, ctx / 120 * 100)}%;background:${over ? "var(--keep)" : "var(--smart)"}"></i><u style="left:${LIMIT / 120 * 100}%"></u></div>
+        <span style="color:var(--ink);min-width:118px">${Math.round(ctx)}k / ${LIMIT}k</span>
+        <span>session store</span><span style="color:${stored ? "var(--smart)" : "var(--ink)"}">${stored} messages</span>
+      </div>
+    </div>
+    <div class="foot">Illustrative session: the prompts, files and numbers are examples. The trim, the note left in the prompt and the tools are Smarter Compact's own.</div>`;
+}
+
+function endScene(u) {
+  const f = (a, d = 0.5) => easeOut(seg(u, a, a + d));
+  const cmd = "npm install -g smarter-compact";
+  const typed = cmd.slice(0, Math.round(cmd.length * seg(u, 1.4, 2.2)));
+  const caret = Math.floor(u * 2.5) % 2 ? "▍" : " ";
+  return `
+    <div class="brand"><div class="logo"></div><span>Smarter Compact</span></div>
+    <div class="tag">github.com/bcmyguest/smarter-compact</div>
+    <div class="headline" style="opacity:${f(0)};transform:translateY(${(1 - f(0)) * 14}px)">Every turn kept. <em>The prompt stays small.</em>
+      <div class="sub" style="opacity:${f(0.5)}"><b>${Math.round(72 * ease(seg(u, 0.6, 1.8)))}% lower cost on average</b> across four benchmark task sizes,<br>and better answers on the log tasks.</div></div>
+    <div class="install" style="opacity:${f(1.2, 0.3)}"><span class="p">$</span>${typed}<span style="color:var(--good)">${caret}</span></div>
+    <div class="foot" style="opacity:${f(1.6)}">ContextBench synthetic tasks, Claude Haiku 5.5, seed-matched against keeping everything; mean of four paired cost ratios. Per size: −87%, −19% (not significant), −89%, −94%. Log-task score +0.47 (95% CI 0.34–0.58).</div>`;
+}
+
+window.DURATION = T_TERM + T_END;
+window.render = function (t) {
+  const root = document.getElementById("root");
+  if (!window.STILL_BG) document.getElementById("dots").style.transform = `translate(${(-t * 6) % 28}px, ${(-t * 3) % 28}px)`;
+  if (t < T_TERM) { root.innerHTML = terminalScene(t); root.style.opacity = 1 - ease(seg(t, T_TERM - 0.35, T_TERM)); }
+  else { const u = t - T_TERM; root.innerHTML = endScene(u); root.style.opacity = easeOut(seg(u, 0, 0.3)); }
+};
+const q = new URLSearchParams(location.search);
+window.STILL_BG = q.has("stillbg");
+window.render(+(q.get("t") || 0));
+</script>
+</body>
+</html>
