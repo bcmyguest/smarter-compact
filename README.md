@@ -4,26 +4,20 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![GitHub](https://img.shields.io/badge/github-bcmyguest%2Fsmarter--compact-blue)](https://github.com/bcmyguest/smarter-compact)
 
-**Context management (smart compaction)** keeps long coding-agent sessions under a token limit without an LLM summary. Every message goes into a local SQLite session store; older turns leave the context and the turn they precede carries a pointer to them.
+**Context management (smart compaction) for coding agents.** Long sessions keep small, cached prompts: every message goes into a local SQLite session store, older turns leave the prompt once it reaches your token limit, and the turn they precede carries a pointer to them.
 
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="docs/media/smart-compaction-dark.gif" />
-<img src="docs/media/smart-compaction.gif" alt="Smart compaction: older turns move into the session store, the cut turn carries a pointer, smart_compact_search recovers a detail." width="720" />
-</picture>
+<img src="docs/media/smarter-compact-demo.gif" alt="A Claude Code session: the agent reads three log files, edits code and runs tests; the prompt crosses 95k and Smarter Compact moves 31 messages to the session store (97k to 51k); later the agent answers a question about the trimmed logs with smart_compact_sql and smart_compact_get. Illustrative session." width="720" />
 </p>
 
 The agent searches the store with `smart_compact_search`, `smart_compact_sql`, and `smart_compact_get` when it needs a detail back. The cut stays put on later requests, so the prompt cache keeps hitting.
 
 **Learn more:** [Smart compaction](https://bcmyguest.github.io/smarter-compact/context-management.html) (benchmarks and how it trims) · [Context proxy & port](https://bcmyguest.github.io/smarter-compact/context-proxy.html) · [Context store](https://bcmyguest.github.io/smarter-compact/context-store.html)
 
-**Benchmarks:** In seed-matched [ContextBench](https://github.com/RulinShao/ContextBench) log tasks on Haiku 5.5, smart compaction scored **0.469** higher than keep-everything (95% bootstrap interval 0.339–0.578; eight pairs). Costs fell at R4000, L6400, and L12800. kv-store is a small ceiling test (all arms tie at R4000); the chart below is log-triage only. [Full tables and charts](https://bcmyguest.github.io/smarter-compact/context-management.html#benchmarks) · [methods](https://bcmyguest.github.io/smarter-compact/context-research.html).
+**Benchmarks:** In seed-matched [ContextBench](https://github.com/RulinShao/ContextBench) runs on Haiku 5.5, smart compaction cost **72% less on average** than keep-everything across four task sizes (mean of the paired cost ratios; −87%, −19%, −89%, −94%, and the L1600 interval includes no saving). On the log tasks it also scored **0.469** higher (95% bootstrap interval 0.339–0.578; eight pairs). kv-store is a small ceiling test (all arms tie at R4000). [Full tables and charts](https://bcmyguest.github.io/smarter-compact/context-management.html#benchmarks) · [methods](https://bcmyguest.github.io/smarter-compact/context-research.html).
 
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="docs/media/contextbench-quality-log-dark.png" />
-<img src="docs/media/contextbench-quality-log.png" alt="ContextBench log-triage: smart compaction at 1.00 on L12800 overall vs 0.35 for native and keep-everything; lookup and count panels" width="480" />
-</picture>
+<img src="docs/media/contextbench-savings.png" alt="Average cost saving 72%: paired cost of Smarter Compact relative to keep everything, kv-store R4000 −87%, log-triage L1600 −19% (not significant), L6400 −89%, L12800 −94%; log-task score +0.47" width="720" />
 </p>
 
 The stored text still uses the OpenMem wire format (`[smarter-compact: …]`, `<smarter-compact-recall>`). Memory recall on a trim is off unless you set `CONTEXT_COMPACTION_RECALL=1`.

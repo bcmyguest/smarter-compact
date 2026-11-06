@@ -72,6 +72,12 @@ Wall time per trial is longer with smart compaction (527 s vs 479 s for native c
 ### Cost and prompt cache
 
 <p align="center">
+<img src="media/contextbench-savings.png" alt="Average cost saving 72%: paired cost of Smarter Compact relative to keep everything, kv-store R4000 −87%, log-triage L1600 −19% (not significant), L6400 −89%, L12800 −94%" width="720" />
+</p>
+
+Paired cost ratios (Smarter Compact ÷ keep everything, seed-matched) were 0.130 at kv R4000, 0.811 at L1600, 0.109 at L6400 and 0.062 at L12800. Their mean is 0.28: a **72% average saving** across the four sizes. The L1600 interval crosses 1, so that size shows no reliable saving; the [research page](context-research.md) gives each interval.
+
+<p align="center">
 <picture>
 <source media="(prefers-color-scheme: dark)" srcset="media/contextbench-cost-dark.png" />
 <img src="media/contextbench-cost.png" alt="List-price cost per trial by task size" width="720" />
