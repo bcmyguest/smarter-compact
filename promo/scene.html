@@ -1,0 +1,342 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Smarter Compact promo scene</title>
+<style>
+  :root {
+    --bg: #0f1226;
+    --panel: #171b36;
+    --grid: #232849;
+    --ink: #eef0ff;
+    --muted: #9aa0c8;
+    --dim: #5d6390;
+    --smart: #8b93ff;
+    --smart-glow: rgba(139, 147, 255, 0.35);
+    --keep: #f0a35e;
+    --good: #6fdca6;
+    --mono: "JetBrains Mono", monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--bg); }
+  body {
+    width: 1200px; height: 675px; overflow: hidden; position: relative;
+    font-family: Inter, sans-serif; color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+  }
+  body.gh { width: 1280px; height: 640px; }
+  .bgdots {
+    position: absolute; inset: 0;
+    background-image: radial-gradient(var(--grid) 1.2px, transparent 1.2px);
+    background-size: 28px 28px; opacity: 0.8;
+  }
+  .layer { position: absolute; inset: 0; }
+  .brand { position: absolute; left: 56px; top: 40px; display: flex; align-items: center; gap: 12px; }
+  .logo { width: 30px; height: 30px; border-radius: 8px; background: var(--smart); position: relative; box-shadow: 0 0 24px var(--smart-glow); }
+  .logo::before, .logo::after { content: ""; position: absolute; left: 7px; right: 7px; height: 3px; border-radius: 2px; background: var(--bg); }
+  .logo::before { top: 9px; } .logo::after { top: 17px; right: 13px; }
+  .brand span { font-weight: 700; font-size: 20px; letter-spacing: -0.01em; }
+  .tag { position: absolute; right: 56px; top: 44px; font-family: var(--mono); font-size: 15px; color: var(--muted); }
+
+  /* chart */
+  #chartwrap { position: absolute; left: 56px; top: 104px; width: 760px; height: 440px; }
+  #chart { width: 100%; height: 100%; overflow: visible; }
+  .axis { stroke: var(--grid); stroke-width: 1.5; }
+  .gridl { stroke: var(--grid); stroke-width: 1; stroke-dasharray: 3 6; }
+  .tick { fill: var(--dim); font-size: 14px; font-family: var(--mono); }
+  .lineK { fill: none; stroke: var(--keep); stroke-width: 4; stroke-linejoin: round; stroke-linecap: round; }
+  .lineS { fill: none; stroke: var(--smart); stroke-width: 4; stroke-linejoin: round; stroke-linecap: round; filter: drop-shadow(0 0 8px var(--smart-glow)); }
+  .lbl { font-size: 17px; font-weight: 700; }
+  .ylab { fill: var(--muted); font-size: 14px; }
+
+  /* side panel */
+  #side { position: absolute; left: 852px; top: 104px; width: 292px; }
+  .meter { background: var(--panel); border-radius: 14px; padding: 16px 18px; margin-bottom: 14px; border: 1px solid #262b52; }
+  .meter h4 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; display: flex; align-items: center; gap: 8px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .rows { margin-top: 10px; display: grid; grid-template-columns: 1fr auto; row-gap: 6px; font-size: 15px; color: var(--muted); }
+  .rows b { font-family: var(--mono); font-weight: 600; color: var(--ink); font-size: 18px; text-align: right; }
+  .db { background: var(--panel); border-radius: 14px; padding: 16px 18px; border: 1px dashed #3a4080; }
+  .db h4 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+  .db .path { font-family: var(--mono); font-size: 13px; color: var(--dim); margin-top: 4px; }
+  .stack { margin-top: 10px; height: 64px; position: relative; }
+  .chip { position: absolute; left: 0; height: 12px; border-radius: 4px; background: var(--smart); opacity: 0.75; }
+  .db .count { font-family: var(--mono); font-size: 15px; color: var(--ink); margin-top: 6px; }
+
+  /* flying turn card */
+  .fly { position: absolute; padding: 6px 10px; border-radius: 8px; background: #262b57; border: 1px solid var(--smart); font-family: var(--mono); font-size: 13px; color: var(--ink); white-space: nowrap; }
+
+  /* question */
+  #qcard { position: absolute; left: 56px; top: 104px; width: 1088px; height: 440px; }
+  .q { font-size: 34px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.25; }
+  .q small { display: block; font-size: 16px; color: var(--muted); font-weight: 500; margin-bottom: 10px; letter-spacing: 0.04em; text-transform: uppercase; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 30px; }
+  .col { background: var(--panel); border-radius: 16px; padding: 24px 26px; border: 1px solid #262b52; min-height: 330px; }
+  .col h5 { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+  .code { margin-top: 16px; font-family: var(--mono); font-size: 17px; line-height: 1.7; color: #c9ccf2; background: #0c0f22; border-radius: 10px; padding: 14px 16px; white-space: pre; overflow: hidden; }
+  .code .k { color: var(--smart); } .code .s { color: var(--good); } .code .c { color: var(--dim); }
+  .verdict { margin-top: 16px; font-size: 18px; font-weight: 600; }
+  .ctx { margin-top: 16px; height: 168px; border-radius: 10px; background: repeating-linear-gradient(0deg, #2a2440 0 6px, #1d1a30 6px 12px); position: relative; overflow: hidden; }
+  .ctx .needle { position: absolute; left: 30%; width: 40%; height: 6px; background: var(--keep); border-radius: 3px; }
+
+  /* end card */
+  #end { position: absolute; inset: 0; }
+  .headline { position: absolute; left: 56px; top: 104px; font-size: 48px; font-weight: 800; letter-spacing: -0.025em; line-height: 1.08; width: 1088px; }
+  .headline em { font-style: normal; color: var(--smart); }
+  .stats { position: absolute; left: 56px; top: 252px; width: 1088px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  .stat { background: var(--panel); border-radius: 16px; padding: 22px 24px; border: 1px solid #262b52; }
+  .stat .from { font-family: var(--mono); font-size: 20px; color: var(--keep); text-decoration: line-through; text-decoration-thickness: 2px; text-decoration-color: rgba(240,163,94,0.6); }
+  .stat .to { font-family: var(--mono); font-size: 46px; font-weight: 700; color: var(--ink); margin-top: 2px; letter-spacing: -0.02em; }
+  .stat .what { font-size: 16px; color: var(--muted); margin-top: 6px; line-height: 1.35; }
+  .install { position: absolute; left: 56px; top: 476px; font-family: var(--mono); font-size: 22px; background: #0c0f22; border: 1px solid #2c3260; border-radius: 12px; padding: 14px 20px; color: var(--ink); }
+  .install .p { color: var(--good); margin-right: 10px; }
+  .foot { position: absolute; left: 56px; right: 56px; bottom: 30px; font-size: 13.5px; color: var(--dim); line-height: 1.45; }
+  .repo { position: absolute; right: 56px; top: 500px; font-size: 18px; color: var(--muted); font-family: var(--mono); }
+
+  /* hero card */
+  .hero-title { font-size: 56px; font-weight: 800; letter-spacing: -0.03em; line-height: 1.04; }
+  .hero-title em { font-style: normal; color: var(--smart); }
+  .hero-sub { margin-top: 22px; font-size: 21px; color: var(--muted); line-height: 1.45; }
+  .hero-sub b { color: var(--ink); font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="bgdots"></div>
+<div class="layer" id="root"></div>
+
+<script>
+const W = () => document.body.clientWidth, H = () => document.body.clientHeight;
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+const ease = (x) => { x = clamp(x); return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2; };
+const seg = (t, a, b) => clamp((t - a) / (b - a));
+
+// ---- Data (ContextBench log-triage L12800, Claude Haiku 5.5; docs/context-management.md) ----
+const PEAK_KEEP = 762, PEAK_SMART = 95, COST_KEEP = 6.07, COST_SMART = 0.38;
+const TRIM_AT = 95, TRIM_TO = 58;   // Haiku threshold 95k; drop-to level is schematic
+const STEPS = 160;
+
+// Schematic prompt size per step. Keep-everything grows to its measured peak;
+// smart compaction climbs to the 95k threshold, trims, and climbs again.
+function series() {
+  const keep = [], smart = [], trims = [];
+  let s = 22;
+  for (let i = 0; i <= STEPS; i++) {
+    const k = 22 + (PEAK_KEEP - 22) * Math.pow(i / STEPS, 1.05);
+    keep.push(k);
+    if (i > 0) {
+      s += (PEAK_KEEP - 22) / STEPS * 1.0;
+      if (s >= TRIM_AT) { s = TRIM_TO + (s - TRIM_AT); trims.push(i); }
+    }
+    smart.push(Math.min(s, TRIM_AT));
+  }
+  return { keep, smart, trims };
+}
+const DATA = series();
+const cum = (arr) => { const out = [0]; for (let i = 1; i < arr.length; i++) out.push(out[i - 1] + arr[i]); return out; };
+const CUM_K = cum(DATA.keep), CUM_S = cum(DATA.smart);
+
+const fmtK = (v) => `${Math.round(v)}k`;
+const fmt$ = (v) => `$${v.toFixed(2)}`;
+
+function brand(extra = "") {
+  return `<div class="brand"><div class="logo"></div><span>Smarter Compact</span></div>
+          <div class="tag">${extra}</div>`;
+}
+
+// ---- Chart scene ----
+function chartScene(t, opts = {}) {
+  // progress of the session: 0..1
+  const p = opts.progress ?? ease(seg(t, 1.2, 8.6));
+  const n = Math.max(1, Math.round(p * STEPS));
+  const cw = 760, ch = 440, padL = 70, padB = 40, padT = 16, padR = 40;
+  const x = (i) => padL + (i / STEPS) * (cw - padL - padR);
+  const yMax = 800;
+  const y = (v) => padT + (1 - v / yMax) * (ch - padT - padB);
+  const path = (arr) => arr.slice(0, n + 1).map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("");
+
+  let grid = "";
+  for (const v of [0, 200, 400, 600, 800]) {
+    grid += `<line class="gridl" x1="${padL}" x2="${cw - padR}" y1="${y(v)}" y2="${y(v)}"/>`;
+    grid += `<text class="tick" x="${padL - 12}" y="${y(v) + 5}" text-anchor="end">${v}k</text>`;
+  }
+  const kEnd = DATA.keep[n], sEnd = DATA.smart[n];
+  const trimLine = `<line x1="${padL}" x2="${cw - padR}" y1="${y(TRIM_AT)}" y2="${y(TRIM_AT)}" stroke="${"#8b93ff"}" stroke-opacity="0.35" stroke-dasharray="6 6"/>`;
+
+  const svg = `
+  <svg id="chart" viewBox="0 0 ${cw} ${ch}">
+    ${grid}
+    <line class="axis" x1="${padL}" x2="${cw - padR}" y1="${y(0)}" y2="${y(0)}"/>
+    <text class="ylab" x="${padL}" y="${ch - 8}">agent steps →</text>
+    ${trimLine}
+    <text class="tick" x="${cw - padR}" y="${y(TRIM_AT) - 8}" text-anchor="end" fill="#8b93ff">trim at 95k</text>
+    <path class="lineK" d="${path(DATA.keep)}"/>
+    <path class="lineS" d="${path(DATA.smart)}"/>
+    <circle cx="${x(n)}" cy="${y(kEnd)}" r="6" fill="var(--keep)"/>
+    <circle cx="${x(n)}" cy="${y(sEnd)}" r="6" fill="var(--smart)"/>
+    <text class="lbl" x="${x(n) > cw - 260 ? x(n) - 14 : x(n) + 14}" text-anchor="${x(n) > cw - 260 ? "end" : "start"}" y="${y(kEnd) - 14}" fill="var(--keep)">Keep everything · ${fmtK(kEnd)}</text>
+    <text class="lbl" x="${x(n) > cw - 260 ? x(n) - 14 : x(n) + 14}" text-anchor="${x(n) > cw - 260 ? "end" : "start"}" y="${y(TRIM_AT) - 34}" fill="var(--smart)">Smarter Compact · ≤ 95k</text>
+  </svg>`;
+
+  const costK = COST_KEEP * CUM_K[n] / CUM_K[STEPS];
+  const costS = COST_SMART * CUM_S[n] / CUM_S[STEPS];
+  const trimsDone = DATA.trims.filter((i) => i <= n).length;
+  let chips = "";
+  for (let i = 0; i < trimsDone; i++) {
+    const row = i % 4, col = Math.floor(i / 4);
+    chips += `<div class="chip" style="top:${row * 16}px;left:${col * 34}px;width:28px"></div>`;
+  }
+
+  // flying card for the most recent trim
+  let fly = "";
+  const last = DATA.trims.filter((i) => i <= n).pop();
+  if (last !== undefined && opts.progress === undefined) {
+    const tTrim = 1.2 + inverseEase(last / STEPS) * (8.6 - 1.2);
+    const f = seg(t, tTrim, tTrim + 0.55);
+    if (f > 0 && f < 1) {
+      const sx = 56 + x(last), sy = 104 + y(TRIM_AT);
+      const ex = 870 + ((trimsDone - 1) >> 2) * 34, ey = 104 + 252 + ((trimsDone - 1) % 4) * 16;
+      const e = ease(f);
+      fly = `<div class="fly" style="left:${sx + (ex - sx) * e}px;top:${sy + (ey - sy) * e - 40 * Math.sin(Math.PI * e)}px;opacity:${1 - f * 0.4}">older turns → store</div>`;
+    }
+  }
+
+  return `
+    ${brand("same task · same model")}
+    <div id="chartwrap">${svg}</div>
+    <div id="side">
+      <div class="meter">
+        <h4><span class="dot" style="background:var(--keep)"></span>Keep everything</h4>
+        <div class="rows"><span>prompt</span><b>${fmtK(kEnd)}</b><span>cost so far</span><b>${fmt$(costK)}</b></div>
+      </div>
+      <div class="meter">
+        <h4><span class="dot" style="background:var(--smart)"></span>Smarter Compact</h4>
+        <div class="rows"><span>prompt</span><b>${fmtK(sEnd)}</b><span>cost so far</span><b>${fmt$(costS)}</b></div>
+      </div>
+      <div class="db">
+        <h4>Session store</h4>
+        <div class="path">sessions/&lt;sid&gt;.db · SQLite</div>
+        <div class="stack">${chips}</div>
+        <div class="count">${trimsDone} trims · every turn kept verbatim</div>
+      </div>
+    </div>
+    ${fly}
+    <div class="foot">Illustration of one log-triage session. Peak prompt and cost per trial are measured means: ContextBench L12800, Claude Haiku 5.5 (smart n = 3, keep everything n = 2).</div>`;
+}
+// invert the easeInOutCubic so fly-outs fire exactly when the line crosses the threshold
+function inverseEase(y) {
+  let lo = 0, hi = 1;
+  for (let k = 0; k < 40; k++) { const m = (lo + hi) / 2; if (ease(m) < y) lo = m; else hi = m; }
+  return (lo + hi) / 2;
+}
+
+// ---- Question scene ----
+function questionScene(t) {
+  const a = ease(seg(t, 0, 0.5)), b = ease(seg(t, 0.7, 1.3)), c = ease(seg(t, 1.6, 2.1)), d = ease(seg(t, 2.4, 2.9));
+  const typed = (s, f) => s.slice(0, Math.round(s.length * clamp(f)));
+  const sql = `SELECT count(*) FROM lines\n WHERE text LIKE '%auth-svc%'\n   AND text LIKE '%timeout%';`;
+  const sqlT = typed(sql, seg(t, 0.8, 1.9));
+  const sqlHtml = sqlT
+    .replace(/(SELECT|FROM|WHERE|AND|LIKE)/g, '<span class="k">$1</span>')
+    .replace(/('[^']*'?)/g, '<span class="s">$1</span>');
+  return `
+    ${brand("same task · same model")}
+    <div id="qcard">
+      <div class="q" style="opacity:${a};transform:translateY(${(1 - a) * 14}px)">
+        <small>Late in the session</small>
+        “How many auth-svc timeouts were in the logs you read earlier?”
+      </div>
+      <div class="cols">
+        <div class="col" style="opacity:${b}">
+          <h5><span class="dot" style="background:var(--keep)"></span>Keep everything</h5>
+          <div class="ctx">
+            ${Array.from({ length: 13 }, (_, i) => `<div class="needle" style="top:${8 + i * 12}px;left:${(i * 37) % 60 + 6}%;width:${10 + (i * 13) % 22}%;opacity:${0.25 + 0.08 * (i % 3)}"></div>`).join("")}
+          </div>
+          <div class="verdict" style="color:var(--keep);opacity:${d}">Count score at L12800: 0.00</div>
+        </div>
+        <div class="col" style="opacity:${b}">
+          <h5><span class="dot" style="background:var(--smart)"></span>Smarter Compact</h5>
+          <div class="code"><span class="c">smart_compact_sql</span>
+${sqlHtml}<span style="opacity:${(Math.floor(t * 3) % 2) && sqlT.length < sql.length ? 1 : 0}">▍</span></div>
+          <div class="verdict" style="color:var(--good);opacity:${c}">→ exact count from stored lines · score 1.00</div>
+        </div>
+      </div>
+    </div>
+    <div class="foot" style="opacity:${d}">Means at ContextBench log-triage L12800, Claude Haiku 5.5. Lookup questions: keep everything 0.71, Smarter Compact 1.00. Query shown is an example.</div>`;
+}
+
+// ---- End card ----
+function endScene(t, gh = false) {
+  const f = (a) => ease(seg(t, a, a + 0.5));
+  return `
+    ${brand("github.com/bcmyguest/smarter-compact")}
+    <div class="headline" style="opacity:${f(0)}">Long agent sessions, <em>no summary.</em><div style="font-size:24px;font-weight:500;color:var(--muted);letter-spacing:0;margin-top:14px">Older turns go to a local SQLite store, verbatim. The agent searches them.</div></div>
+    <div class="stats">
+      <div class="stat" style="opacity:${f(0.35)}"><div class="from">762k</div><div class="to">95k</div><div class="what">peak prompt</div></div>
+      <div class="stat" style="opacity:${f(0.6)}"><div class="from">$6.07</div><div class="to">$0.38</div><div class="what">list-price cost per trial</div></div>
+      <div class="stat" style="opacity:${f(0.85)}"><div class="from">0.00</div><div class="to">1.00</div><div class="what">count-question score</div></div>
+    </div>
+    <div class="install" style="opacity:${f(1.2)}"><span class="p">$</span>npm install -g smarter-compact</div>
+    <div class="foot" style="opacity:${f(1.2)}">ContextBench log-triage L12800, Claude Haiku 5.5, means over 3 runs (Smarter Compact) and 2 (keep everything); synthetic tasks, not coding sessions.
+Across all log sizes, eight seed-matched pairs: +0.47 score (95% CI 0.34–0.58). Cost saving is smallest at L1600 (0.81×, interval crosses 1).</div>`;
+}
+
+// ---- Hero / social preview ----
+function heroScene(gh = false) {
+  return `
+    ${brand("Claude Code · Codex · OpenCode · Pi")}
+    <div style="position:absolute;left:56px;top:${gh ? 128 : 140}px;width:600px">
+    <div class="hero-title">Context management <em>without an LLM&nbsp;summary</em></div>
+    <div class="hero-sub">Older turns leave the prompt and go to a <b>local SQLite store</b>, verbatim. The agent gets them back with <b>search and SQL</b>. The cut stays put, so the prompt cache keeps hitting.</div></div>
+    <div style="position:absolute;left:${gh ? 740 : 690}px;top:${gh ? 150 : 170}px;width:${gh ? 480 : 450}px;transform:scale(0.6);transform-origin:0 0">
+      <div style="position:relative;width:760px;height:440px">${miniChart()}</div>
+    </div>
+    <div class="install" style="top:${gh ? 488 : 520}px"><span class="p">$</span>npm install -g smarter-compact</div>`;
+}
+function miniChart() {
+  const cw = 760, ch = 440, padL = 70, padB = 40, padT = 16, padR = 40;
+  const x = (i) => padL + (i / STEPS) * (cw - padL - padR);
+  const y = (v) => padT + (1 - v / 800) * (ch - padT - padB);
+  const path = (arr) => arr.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("");
+  let grid = "";
+  for (const v of [0, 200, 400, 600, 800]) grid += `<line class="gridl" x1="${padL}" x2="${cw - padR}" y1="${y(v)}" y2="${y(v)}"/><text class="tick" x="${padL - 12}" y="${y(v) + 5}" text-anchor="end" style="font-size:20px">${v}k</text>`;
+  return `<svg viewBox="0 0 ${cw} ${ch}" style="width:760px;height:440px;overflow:visible">${grid}
+    <path class="lineK" d="${path(DATA.keep)}" style="stroke-width:6"/>
+    <path class="lineS" d="${path(DATA.smart)}" style="stroke-width:6"/>
+    <text x="${cw - padR}" y="${y(PEAK_KEEP) - 18}" text-anchor="end" fill="var(--keep)" style="font-size:26px;font-weight:700">Keep everything · 762k</text>
+    <text x="${cw - padR}" y="${y(PEAK_SMART) - 22}" text-anchor="end" fill="var(--smart)" style="font-size:26px;font-weight:700">Smarter Compact · 95k</text>
+    <text x="${padL}" y="${ch + 6}" fill="var(--muted)" style="font-size:20px">peak prompt per trial, log-triage L12800, Haiku 5.5 · line shape illustrative</text>
+  </svg>`;
+}
+
+// ---- Timeline ----
+const T_CHART = 10.0, T_Q = 4.2, T_END = 5.0;
+window.DURATION = T_CHART + T_Q + T_END;
+window.render = function (t) {
+  const root = document.getElementById("root");
+  let html, op = 1;
+  if (t < T_CHART) {
+    html = chartScene(t);
+    op = Math.min(ease(seg(t, 0, 0.5)), 1 - ease(seg(t, T_CHART - 0.35, T_CHART)));
+  } else if (t < T_CHART + T_Q) {
+    const u = t - T_CHART;
+    html = questionScene(u);
+    op = Math.min(ease(seg(u, 0, 0.3)), 1 - ease(seg(u, T_Q - 0.35, T_Q)));
+  } else {
+    html = endScene(t - T_CHART - T_Q);
+  }
+  root.innerHTML = html;
+  root.style.opacity = op;
+};
+window.card = function (name) {
+  const root = document.getElementById("root");
+  root.style.opacity = 1;
+  if (name === "hero") root.innerHTML = heroScene(false);
+  if (name === "gh") { document.body.classList.add("gh"); root.innerHTML = heroScene(true); }
+  if (name === "results") root.innerHTML = endScene(99);
+  if (name === "chart") root.innerHTML = chartScene(0, { progress: 1 });
+};
+const q = new URLSearchParams(location.search);
+if (q.get("card")) window.card(q.get("card")); else window.render(+(q.get("t") || 0));
+</script>
+</body>
+</html>
