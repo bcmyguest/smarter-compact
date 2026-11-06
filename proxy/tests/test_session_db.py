@@ -7,6 +7,7 @@ import sqlite3
 import stat
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from contextlib import redirect_stderr
@@ -188,6 +189,36 @@ class StoreEveryMessageTests(DbBase):
                 pass
         self.run_req(history(1))
         self.assertEqual(self.query("SELECT count(*) FROM messages")[0][0], 4)
+
+    def test_event_from_another_thread_waits_for_a_running_sync(self):
+        # The proxy shares one SessionDB across threads; a usage event written mid-sync took sync's last_insert_rowid
+        # and its lines collided (IntegrityError at the lines insert, probe trial adaptive-rejection-sampler__d4PUepu).
+        self.path().parent.mkdir(parents=True)
+        db = sessiondb.open_session(self.path())
+        real, waited = db.conn, []
+
+        class Conn:
+            def __getattr__(self, name):
+                return getattr(real, name)
+
+            def execute(self, sql, *args):
+                cur = real.execute(sql, *args)
+                if sql.startswith("INSERT INTO messages") and not waited:
+                    t = threading.Thread(target=db.add_event, args=("usage", "t", "v"))
+                    t.start()
+                    t.join(0.3)
+                    waited.append(t)
+                    waited.append(t.is_alive())
+                return cur
+
+        db.conn = Conn()
+        rows = sessiondb.chain([{"role": "user", "kind": "text", "name": None, "text": "a\nb", "blob_id": None,
+                                 "keep": True}])
+        self.assertEqual(db.sync(rows, None, "t"), 1)
+        waited[0].join(5)
+        self.assertTrue(waited[1], "add_event ran inside another thread's sync transaction")
+        self.assertEqual(self.query("SELECT count(*) FROM events")[0][0], 1)
+        self.assertEqual(self.query("SELECT message_seq, line_no FROM lines"), [(1, 1), (1, 2)])
 
 
 class EventTests(DbBase):

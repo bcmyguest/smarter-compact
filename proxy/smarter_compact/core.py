@@ -860,9 +860,11 @@ def _is_claude(model):
 
 
 def applied_edits(response):
-    """Compact JSON of a response's context_management.applied_edits (Anthropic body, or LiteLLM's
-    provider_specific_fields), else None."""
-    for obj in (response, _field(response, "provider_specific_fields")):
+    """Compact JSON of a response's context_management.applied_edits (Anthropic body, LiteLLM's
+    provider_specific_fields, or those of a ModelResponse's first message), else None."""
+    choices = _field(response, "choices")
+    message = _field(choices[0], "message") if isinstance(choices, list) and choices else None
+    for obj in (response, _field(response, "provider_specific_fields"), _field(message, "provider_specific_fields")):
         edits = _field(_field(obj, "context_management"), "applied_edits") if obj is not None else None
         if isinstance(edits, list):
             return json.dumps(edits, separators=(",", ":"), sort_keys=True)

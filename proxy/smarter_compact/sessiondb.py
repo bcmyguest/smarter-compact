@@ -155,6 +155,8 @@ class SessionDB:
 
     def __init__(self, path):
         self.path = Path(path)
+        # One connection serves every proxy thread; a write from one must not land inside another's transaction.
+        self.lock = threading.RLock()
         self.conn = connect(self.path)
         self.identity = _identity(self.path)
         self._reset()
@@ -167,10 +169,11 @@ class SessionDB:
         self.data_version = None
 
     def close(self):
-        try:
-            self.conn.close()
-        except sqlite3.Error:
-            pass
+        with self.lock:
+            try:
+                self.conn.close()
+            except sqlite3.Error:
+                pass
 
     def _add(self, seq, thread, ck):
         n = self.counts.get((thread, ck), 0)
@@ -209,6 +212,10 @@ class SessionDB:
         already stored is left alone except for in_context: a row that leaves context records trimmed_at_seq (the
         cut row's seq, NULL without one) and trimmed_at; a row that returns clears both.
         """
+        with self.lock:
+            return self._sync(rows, cut_row, ts)
+
+    def _sync(self, rows, cut_row, ts):
         self._refresh()
         keys = self._keys(rows)
         index, flags = self.index, self.flags
@@ -272,7 +279,8 @@ class SessionDB:
     def add_event(self, kind, at, version, **fields):
         """Append one events row; fields are the other EVENT_COLUMNS (location, error, tokens_before, ...)."""
         values = {"at": at, "kind": kind, "version": version, **fields}
-        self.conn.execute(_INSERT_EVENT, tuple(values.get(c) for c in EVENT_COLUMNS))
+        with self.lock:
+            self.conn.execute(_INSERT_EVENT, tuple(values.get(c) for c in EVENT_COLUMNS))
 
 
 def open_session(path):

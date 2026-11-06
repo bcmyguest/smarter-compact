@@ -215,6 +215,16 @@ class ServerClearTests(UsageEventFlowTests):
                       self.settings())
         self.assertEqual(self.applied(), ['[{"cleared_input_tokens":50000,"cleared_tool_uses":8,"type":"clear_tool_uses_20250919"}]'])
 
+    def test_applied_edits_from_a_chat_shaped_response(self):
+        # LiteLLM 1.108.1 logs a non-streamed /v1/messages call as a ModelResponse: the edits sit on the message.
+        self.req(server_clear=True)
+        edits = [{"type": "clear_tool_uses_20250919", "cleared_tool_uses": 1, "cleared_input_tokens": 99}]
+        message = SimpleNamespace(provider_specific_fields={"citations": None, "context_management": {"applied_edits": edits}})
+        response = SimpleNamespace(usage={"prompt_tokens": 10, "completion_tokens": 2}, provider_specific_fields=None,
+                                   choices=[SimpleNamespace(message=message)])
+        process_usage({"litellm_call_id": "s1"}, response, self.settings())
+        self.assertEqual(self.applied(), ['[{"cleared_input_tokens":99,"cleared_tool_uses":1,"type":"clear_tool_uses_20250919"}]'])
+
     def test_applied_edits_from_a_stream_and_none_reported(self):
         self.req(server_clear=True)
         sse = ('event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},'
