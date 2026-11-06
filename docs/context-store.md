@@ -144,7 +144,7 @@ The writer appends one `events` row per trim and per fail-open it can attribute 
 | `kind` | `trim` (a new cut, including a `/smarter-compact` one) · `fail_open` (the rewrite raised; the request went upstream unmodified) · `usage` (a model call finished) |
 | `version` | The writer: `proxy:<12 hex>`, the first 12 hex of SHA-256 over `proxy/smarter_compact/*.py` (each file's name, NUL, bytes, NUL, sorted by name; `core.code_hash`, `proxyCodeVersion`), or `opencode:<package version>` for the OpenCode 2 plugin. Status compares the newest `proxy:` value with the checkout's hash to spot a proxy running old code |
 | `location`, `error` | Fail-open only: `<file>:<line>` (JS adds `:<column>`) and the exception type. Never message content |
-| `tokens_before`, `tokens_after` | Trim only: the writer's calibrated estimate ([token estimate](context-proxy.md#token-estimate)) of the request before and after the cut, not provider-billed counts |
+| `tokens_before`, `tokens_after` | Trim only: the writer's calibrated estimate ([token estimate](context-proxy.md#token-estimate)) of the request before and after the cut, not provider-billed counts. `tokens_after` still counts the thinking blocks the cut voids and drops, so status measures the saving as `tokens_before` minus the billed prompt of the next usage row with `trimmed` = 2 |
 | `dropped` | Trim only: messages absent from the trimmed view (the pointer's `<n>`) |
 | `model` | Usage only: the request's model (proxy: the `model` string sent to LiteLLM; OpenCode: `<providerID>/<modelID>`) |
 | `thread_root` | Usage only: fingerprint of the request's first row, as in `messages.thread` |

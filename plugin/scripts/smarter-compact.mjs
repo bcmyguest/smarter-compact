@@ -72,7 +72,7 @@ function status() {
   const lines = [
     `${PRODUCT_NAME}`,
     `store: ${stateParent()}`,
-    `sessions: ${summary.sessions}  trims: ${summary.trims}  tokens saved (estimated): ${summary.tokensSaved}`,
+    `sessions: ${summary.sessions}  trims: ${summary.trims}  tokens saved: ${summary.tokensSaved} (estimate before, billed after; ${summary.unmeasured} unmeasured)`,
     `messages: ${summary.messages}  out of context: ${summary.outOfContext}  fail-opens: ${summary.failOpens}`,
   ];
   if (summary.lastErrors.length) {

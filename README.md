@@ -144,7 +144,7 @@ After `npm install -g smarter-compact`, the command on your PATH is **`smarter-c
 
 | Command | Effect |
 | --- | --- |
-| `/smarter-compact:status` | Trims, estimated tokens saved, and fail-opens in the last day |
+| `/smarter-compact:status` | Trims, tokens saved (pre-trim estimate minus the billed prompt after the cut), and fail-opens in the last day |
 | `/smarter-compact:compact` | Trim on the next request. The hook writes `sessions/<id>.force` |
 | `smarter-compact plugins add <claude\|codex\|copilot>` | Add the bundled plugin marketplace to that CLI (Copilot: MCP only — no trim) |
 | `smarter-compact path` | Print the installed package root (for custom scripts) |

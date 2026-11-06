@@ -148,7 +148,7 @@ export const CONTEXT_STORE_MCP_TOOLS = [
     name: "context_status",
     title: "Context management health",
     description:
-      "Summarize context management over recent sessions from the session store: trims, estimated tokens saved, "
+      "Summarize context management over recent sessions from the session store: trims, tokens saved (pre-trim estimate minus the billed prompt after the cut), "
       + "fail-opens with their error type and location, the proxy code version (stale when it differs from the "
       + "checkout), and provider-reported prompt-cache usage (hit ratio, cache-creation tokens on requests that made a "
       + "new cut vs others, cache_control breakpoint counts). A fail-open means the request still succeeded but was sent untrimmed. Use this instead of docker "

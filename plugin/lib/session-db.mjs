@@ -335,7 +335,7 @@ function addUsage(u, r, layouts) {
     const at = r.breakpoint_at || "(none)";
     layouts.set(at, (layouts.get(at) || 0) + 1);
   }
-  if ([r.input_tokens, r.cache_read_tokens, r.cache_creation_tokens].some((v) => v === null || v === undefined)) return;
+  if (promptTokens(r) === null) return;
   u.withCacheCounts++;
   group.withCacheCounts++;
   u.inputTokens += r.input_tokens;
@@ -343,6 +343,12 @@ function addUsage(u, r, layouts) {
   u.cacheCreationTokens += r.cache_creation_tokens;
   u.outputTokens += r.output_tokens ?? 0;
   group.cacheCreationTokens += r.cache_creation_tokens;
+}
+
+/** A usage row's provider-reported prompt (uncached + cache read + cache write), or null when a count is missing. */
+function promptTokens(r) {
+  const counts = [r.input_tokens, r.cache_read_tokens, r.cache_creation_tokens];
+  return counts.some((v) => v === null || v === undefined) ? null : counts.reduce((a, b) => a + b, 0);
 }
 
 /** Append-only MCP tool telemetry under the context root (smart_compact_search / sql / get); rotated to `.1` at 5 MB. */
@@ -353,7 +359,10 @@ const TOP_SESSIONS = 5;
  * Summary of the events rows written in the last `hours` across `sessions/*.db` (only files modified in that
  * window are opened): trims, estimated tokens saved, fail-opens, the newest errors, row counts per version and the
  * newest version per writer (`latest.proxy`, `latest.opencode`).
- * Trim token figures are the writers' calibrated estimates, not provider-billed counts. `usage` sums the usage rows'
+ * A trim's saving is its calibrated pre-trim estimate (`tokensBefore`) minus the provider-reported prompt of the request
+ * that made the cut (the next usage row with trimmed = 2, `tokensAfter`); trims with no such row count in `unmeasured`
+ * and add to neither. The writers' post-trim estimate (tokens_after) is not used: thinking blocks the cut voids are
+ * dropped after it is taken. `usage` sums the usage rows'
  * provider-reported counts: cache hit ratio read / (read + creation + uncached input), cache-creation tokens on
  * requests that made a new cut (`newCut`) and on the rest (`other`), and the cache_control breakpoint counts
  * (`breakpoints`: count -> requests) and most common layouts (Anthropic route only).
@@ -361,7 +370,7 @@ const TOP_SESSIONS = 5;
 export function summarizeEvents(sessionsDir, { hours = EVENT_WINDOW_HOURS, now = Date.now() } = {}) {
   const sinceMs = now - hours * 3_600_000;
   const since = new Date(sinceMs).toISOString().replace(/\.\d{3}Z$/, "Z");
-  const out = { hours, since, sessions: 0, trims: 0, tokensBefore: 0, tokensAfter: 0, tokensSaved: 0, dropped: 0,
+  const out = { hours, since, sessions: 0, trims: 0, tokensBefore: 0, tokensAfter: 0, tokensSaved: 0, unmeasured: 0, dropped: 0,
     failOpens: 0, lastErrors: [], versions: {}, latest: {}, unreadable: 0, usage: emptyUsage(),
     messages: 0, inContext: 0, outOfContext: 0, withBlob: 0, topSessions: [] };
   const layouts = new Map();
@@ -384,6 +393,7 @@ export function summarizeEvents(sessionsDir, { hours = EVENT_WINDOW_HOURS, now =
       const sid = name.slice(0, -DB_SUFFIX.length);
       let sessionTrims = 0;
       let sessionDropped = 0;
+      let pending = null;
       for (const r of rows) {
         out.versions[r.version] = (out.versions[r.version] || 0) + 1;
         const writer = String(r.version).split(":")[0];
@@ -391,15 +401,24 @@ export function summarizeEvents(sessionsDir, { hours = EVENT_WINDOW_HOURS, now =
         if (r.kind === "trim") {
           out.trims++;
           sessionTrims++;
-          out.tokensBefore += r.tokens_before ?? 0;
-          out.tokensAfter += r.tokens_after ?? 0;
+          if (pending !== null) out.unmeasured++;
+          pending = r.tokens_before ?? 0;
           out.dropped += r.dropped ?? 0;
           sessionDropped += r.dropped ?? 0;
         } else if (r.kind === "fail_open") {
           out.failOpens++;
           errors.push({ at: r.at, session: sid, error: r.error, location: r.location, version: r.version });
-        } else if (r.kind === "usage") addUsage(out.usage, r, layouts);
+        } else if (r.kind === "usage") {
+          addUsage(out.usage, r, layouts);
+          const prompt = promptTokens(r);
+          if (pending !== null && r.trimmed === USAGE_NEW_CUT && prompt !== null) {
+            out.tokensBefore += pending;
+            out.tokensAfter += prompt;
+            pending = null;
+          }
+        }
       }
+      if (pending !== null) out.unmeasured++;
       let msg = { n: 0, inn: 0, out: 0, blobs: 0 };
       if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'messages'").get()) {
         msg = db.prepare("SELECT count(*) AS n, coalesce(sum(in_context = 1), 0) AS inn, "

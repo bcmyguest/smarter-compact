@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chain, dropSession, openSession } from "../plugin/lib/session-db.mjs";
+import { chain, dropSession, openSession, summarizeEvents } from "../plugin/lib/session-db.mjs";
 
 const TS = "2026-11-05T00:00:00Z";
 
@@ -53,4 +53,19 @@ test("repeated identical messages are both stored", () => {
   assert.equal(texts(file, "SELECT text FROM messages WHERE text = 'same'").length, 3);
   assert.equal(texts(file, "SELECT text FROM messages WHERE text = 'ok'").length, 2);
   dropSession(file);
+});
+
+test("a trim's saving is its estimate minus the billed prompt of the request that made the cut", () => {
+  const file = dbFile();
+  const s = openSession(file);
+  const usage = (trimmed, read) => ({ trimmed, input_tokens: 2, cache_read_tokens: read, cache_creation_tokens: 0 });
+  s.addEvent("usage", TS, "proxy:t", usage(0, 74_000));
+  s.addEvent("trim", TS, "proxy:t", { tokens_before: 98_000, tokens_after: 27_000, dropped: 3 });
+  s.addEvent("usage", TS, "proxy:t", usage(0, 91_000)); // an in-flight request that went up whole
+  s.addEvent("usage", TS, "proxy:t", usage(2, 31_000));
+  s.addEvent("trim", TS, "proxy:t", { tokens_before: 96_000, tokens_after: 20_000, dropped: 2 }); // never billed
+  dropSession(file);
+  const out = summarizeEvents(path.dirname(file), { now: Date.parse(TS) });
+  assert.deepEqual([out.trims, out.tokensBefore, out.tokensAfter, out.tokensSaved, out.unmeasured],
+    [2, 98_000, 31_002, 66_998, 1]);
 });
