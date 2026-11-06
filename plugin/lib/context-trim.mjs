@@ -172,7 +172,7 @@ export function trimSettings(env = process.env, home = env.HOME) {
     const value = float(name, fallback);
     return value > 0 && value < 1 ? value : fallback;
   };
-  const flag = (name) => !["0", "false", "no", "off"].includes(String(env[name] ?? "1").trim().toLowerCase());
+  const flag = (name, defaultVal = "1") => !["0", "false", "no", "off"].includes(String(env[name] ?? defaultVal).trim().toLowerCase());
   const overrides = parseTrimOverrides(env);
   return {
     enabled: flag("CONTEXT_PROXY_ENABLED"),
@@ -183,6 +183,12 @@ export function trimSettings(env = process.env, home = env.HOME) {
     trimFamilies: overrides.families,
     trimToFraction: fraction("CONTEXT_TRIM_TO_FRACTION", DEFAULT_TRIM_TO_FRACTION),
     trimMinGainTokens: int("CONTEXT_TRIM_MIN_GAIN_TOKENS", 0),
+    // Strip prose before the cut, masking wins (CONTEXT_STRIP_PROSE=1, default off).
+    stripProse: flag("CONTEXT_STRIP_PROSE", "0"),
+    // Mask tool results in the prose region, wins over stripProse (CONTEXT_MASK_OBSERVATIONS=0, default on).
+    maskObservations: flag("CONTEXT_MASK_OBSERVATIONS", "1"),
+    // Add a progress note listing edited files and build commands (CONTEXT_PROGRESS_NOTE=0, default on).
+    progressNote: flag("CONTEXT_PROGRESS_NOTE"),
     // Each trim first clears every tool result but the newest N, keeping all turns and calls; 0 is off.
     clearKeepResults: Math.max(int("CONTEXT_CLEAR_KEEP_RESULTS", 0), 0),
     compressOverTokens: int("CONTEXT_COMPRESS_OVER_TOKENS", DEFAULT_COMPRESS_OVER_TOKENS),
@@ -467,12 +473,12 @@ function toolNames(items) {
 /**
  * Database rows for every non-pinned message, chained (session-db chain); the proxy's stored_rows. Text comes
  * from the original messages, so a compressed tool result is stored in full with its blob_id. keep is false
- * for messages the view drops (keptIndices; every message when `dropAll`). Returns { rows, cutRow }, cutRow
- * being the index of the cut turn's first row or null.
+ * for rows the view does not carry: `view` maps each index that reaches the model to its sent form (render's
+ * shown), so a dropped message, a prose-stripped tool part and a masked result get false (rowsKept).
+ * Returns { rows, cutRow }, cutRow being the index of the cut turn's first row or null.
  */
-export function storedRows(original, items, cut, first, gap = null, dropAll = false, clear = null) {
+export function storedRows(original, items, cut, view) {
   const names = toolNames(items);
-  const kept = keptIndices(items, cut, gap, first);
   const rows = [];
   let cutRow = null;
   original.forEach((item, j) => {
@@ -480,24 +486,43 @@ export function storedRows(original, items, cut, first, gap = null, dropAll = fa
     const base = logRows(item, names);
     const shown = items[j] === item ? base : logRows(items[j], names);
     if (cut !== null && j === cut && base.length) cutRow = rows.length;
-    const keep = !dropAll && kept.has(j);
-    const sent = cleared(items[j], j, clear, first);
-    // A cleared result keeps its row count with changed text: that row is out of context.
-    const left = sent === items[j] ? shown : logRows(sent, names);
+    const keep = rowsKept(shown, view.get(j) ?? null, items[j], names);
     base.forEach(([role, kind, name, text], k) => {
       const blob = shown !== base && k < shown.length ? blobRef(shown[k][3]) : null;
-      rows.push({ role, kind, name, text, blob_id: blob, keep: keep && (left === shown || left[k]?.[3] === shown[k]?.[3]) });
+      rows.push({ role, kind, name, text, blob_id: blob, keep: k < keep.length && keep[k] });
     });
   });
   return { rows: rows.length ? chain(rows) : rows, cutRow };
 }
 
+const sameRow = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+
+/**
+ * Per row of item (shown = its rows), whether sent, the form the view carries (null: absent), still has it; reasoning
+ * rows of a sent message count as kept, so only dropping a message or its tool parts, or masking a result (same row
+ * count, changed text), clears the flag. Proxy _rows_kept.
+ */
+function rowsKept(shown, sent, item, names) {
+  if (sent === item) return shown.map(() => true);
+  if (sent === null) return shown.map(() => false);
+  const left = logRows(sent, names);
+  if (left.length === shown.length) return shown.map((row, k) => sameRow(left[k], row) || row[1] === "thinking");
+  const out = [];
+  let p = 0;
+  for (const row of shown) {
+    const hit = p < left.length && sameRow(left[p], row);
+    out.push(hit || row[1] === "thinking");
+    if (hit) p += 1;
+  }
+  return out;
+}
+
 /** Write the request's messages to sessions/<sid>.db; never throws (a database error is logged). */
-function storeMessages(store, sid, settings, original, items, cut, gap, first, ts, deps, dropAll = false, clear = null) {
+function storeMessages(store, sid, settings, original, items, cut, view, ts, deps) {
   let file = null;
   try {
     file = store.dbPath(sid);
-    const { rows, cutRow } = storedRows(original, items, cut, first, gap, dropAll, clear);
+    const { rows, cutRow } = storedRows(original, items, cut, view);
     if (!rows.length) return;
     const added = openSession(file).sync(rows, cutRow, ts);
     if (added && settings.embeddingModel) {
@@ -586,18 +611,78 @@ export function chooseGap(items, cut, after, first, fits) {
 
 /**
  * The kept messages (keptIndices) in order, the cut turn carrying the note, with signed reasoning stripped from
- * kept assistant messages before `strip` (default: the latest assistant run; see stripReasoning). `decorate(message)`
+ * kept assistant messages before `strip` (default: the latest assistant run; see withoutReasoning). `decorate(message)`
  * adds per-message parts at render time only; trimming, fingerprints and log rows always see the undecorated messages.
+ * `mode` (regionMode) also strips the proseIds tool pairs (true; adjacent stripped messages of one role merge) or
+ * masks their results ("mask"); every tool result before `clear` is masked too (cleared). `shown`, a Map when given,
+ * gets each index that reaches the view mapped to its sent form (no note, undecorated, unmerged). Proxy render.
  */
-export function render(items, cut, note, first = null, gap = null, decorate = (m) => m, strip = null, clear = null) {
-  if (cut === null) return items.map(decorate);
+export function render(items, cut, note, first = null, gap = null, decorate = (m) => m, strip = null, clear = null,
+  mode = false, shown = null) {
+  if (cut === null) {
+    if (shown) items.forEach((x, j) => shown.set(j, x));
+    return items.map(decorate);
+  }
   const keep = keptIndices(items, cut, gap, first);
   const run = latestRunStart(items);
-  return stripReasoning(items.flatMap((item, j) => {
-    if (!keep.has(j)) return [];
-    const x = cleared(item, j, clear, first);
-    return [{ message: j === cut ? prependNote(decorate(x), note) : decorate(x), j }];
-  }), strip === null ? run : Math.min(strip, run));
+  const bound = strip === null ? run : Math.min(strip, run);
+  const ids = mode ? proseIds(items, keep, bound, cut, mode) : new Set();
+  const out = [];
+  let mergeable = false;
+  for (let j = 0; j < items.length; j++) {
+    if (!keep.has(j)) continue;
+    let x = items[j];
+    let region = false;
+    if (j !== cut && j < bound) {
+      x = withoutReasoning(x);
+      if (x === null) continue;
+      if (ids.size && !isPinned(x) && mode === "mask") x = maskResults(x, ids);
+      else if (ids.size && !isPinned(x)) {
+        x = withoutToolCalls(x, ids);
+        if (x === null) continue;
+        region = true;
+      }
+    }
+    x = cleared(x, j, clear, first);
+    shown?.set(j, x);
+    if (j === cut) x = prependNote(decorate(x), note);
+    else {
+      x = decorate(x);
+      if (region && mergeable && out[out.length - 1]?.role === x.role) {
+        out[out.length - 1] = mergeMessages(out[out.length - 1], x);
+        continue;
+      }
+    }
+    out.push(x);
+    mergeable = region;
+  }
+  return out;
+}
+
+/** The message with each tool result whose id is in ids (every one when ids is null) and longer than MASK_PLACEHOLDER replaced by it; itself when none changes. */
+function maskResults(message, ids) {
+  const content = parts(message);
+  let next = null;
+  content.forEach((p, i) => {
+    if (p?.type !== "tool-result" || (ids && !ids.has(p.id)) || cpLen(resultText(p.result)) <= cpLen(MASK_PLACEHOLDER)) return;
+    next ??= [...content];
+    next[i] = { ...p, result: { type: p.result?.type === "error" ? "error" : "text", value: MASK_PLACEHOLDER } };
+  });
+  return next ? { ...message, content: next } : message;
+}
+
+/** The message without its tool-call and tool-result parts whose id is in ids: itself when it has none, null when nothing is left. */
+function withoutToolCalls(message, ids) {
+  if (!Array.isArray(message.content)) return message;
+  const kept = message.content.filter((p) => !((p?.type === "tool-call" || p?.type === "tool-result") && ids.has(p.id)));
+  if (kept.length === message.content.length) return message;
+  return kept.length ? { ...message, content: kept } : null;
+}
+
+/** One message holding a's parts then b's (same role). */
+function mergeMessages(a, b) {
+  const blocks = (m) => (typeof m.content === "string" ? [{ type: "text", text: m.content }] : parts(m));
+  return { ...a, content: [...blocks(a), ...blocks(b)] };
 }
 
 /**
@@ -606,14 +691,7 @@ export function render(items, cut, note, first = null, gap = null, decorate = (m
  */
 export function cleared(message, j, clear, first) {
   if (clear === null || j >= clear || j === first || isPinned(message)) return message;
-  const content = parts(message);
-  let next = null;
-  content.forEach((p, i) => {
-    if (p?.type !== "tool-result" || cpLen(resultText(p.result)) <= cpLen(MASK_PLACEHOLDER)) return;
-    next ??= [...content];
-    next[i] = { ...p, result: { type: "text", value: MASK_PLACEHOLDER } };
-  });
-  return next ? { ...message, content: next } : message;
+  return maskResults(message, null);
 }
 
 /**
@@ -662,17 +740,15 @@ export function isSignedReasoning(part) {
 }
 
 /**
- * The kept `{ message, j }` entries as messages, with signed reasoning parts removed from assistant messages whose
- * item index j is before `bound`; a message left with no parts is dropped. The trim records `bound` as the start of
- * the latest assistant run at that moment, so reasoning produced after the trim stays and the stripped prefix is
- * fixed until the next trim. Same rule as strip_reasoning in proxy/smarter_compact/core.py.
+ * The message without its signed reasoning parts when it is an assistant message: itself when it has none, null when
+ * nothing is left. render applies it before the strip bound, which the trim records as the start of the latest
+ * assistant run at that moment, so reasoning produced after the trim stays and the stripped prefix is fixed until the
+ * next trim. Same rule as strip_reasoning in proxy/smarter_compact/core.py.
  */
-export function stripReasoning(view, bound) {
-  return view.flatMap(({ message: x, j }) => {
-    if (j >= bound || x?.role !== "assistant" || !Array.isArray(x.content) || !x.content.some(isSignedReasoning)) return [x];
-    const content = x.content.filter((p) => !isSignedReasoning(p));
-    return content.length ? [{ ...x, content }] : [];
-  });
+export function withoutReasoning(x) {
+  if (x?.role !== "assistant" || !Array.isArray(x.content) || !x.content.some(isSignedReasoning)) return x;
+  const content = x.content.filter((p) => !isSignedReasoning(p));
+  return content.length ? { ...x, content } : null;
 }
 
 /** Index of the message with fingerprint `want` (idx when it still matches), searching from lo; null if absent. */
@@ -733,6 +809,137 @@ export function maskText(sid, names = LEGACY_RECALL_NAMES) {
     + `${names.search}(session_id="${sid}", query=<words from the call>); its output is the first tool_result `
     + `row of the same tool after that seq: ${names.sql}(session_id="${sid}", sql="SELECT text FROM messages `
     + "WHERE kind = 'tool_result' AND name = '<tool>' AND seq > <call seq> ORDER BY seq LIMIT 1\").";
+}
+
+// CONTEXT_PROGRESS_NOTE: the note's mechanical progress section, built from the trimmed tool calls (proxy core.py).
+const PROGRESS_NOTE_MAX_CHARS = 2000;
+const PROGRESS_MAX_FILES = 20;
+const PROGRESS_MAX_COMMANDS = 5;
+const PROGRESS_COMMAND_MAX_CHARS = 200;
+/**
+ * Lowercased tool name -> input keys naming the file it writes. Claude Code: Write/Edit/MultiEdit (file_path),
+ * NotebookEdit (notebook_path). OpenCode 2: write/edit (path; sessions migrated from v1 keep filePath). Pi: write/edit (path).
+ */
+const EDIT_TOOL_PATHS = new Map([
+  ["write", ["file_path", "filePath", "path"]], ["edit", ["file_path", "filePath", "path"]],
+  ["multiedit", ["file_path"]], ["notebookedit", ["notebook_path", "file_path"]],
+]);
+/** Lowercased shell tool names: Claude Code Bash, Pi bash, OpenCode 2 shell (v1 bash); each takes `command`. */
+const SHELL_TOOLS = new Set(["bash", "shell"]);
+// A shell command that builds or tests: a word of it starts one of these. Same as _BUILD_RE in proxy core.py.
+const BUILD_RE = new RegExp("(?:^|[\\s;&|(/])(?:py\\.?test|tox|nox|make|cmake|ctest|ninja|cargo (?:build|test|check)"
+  + "|go (?:build|test|vet)|(?:npm|yarn|pnpm)(?: run)? (?:test|build)|node --test|npx (?:jest|vitest|tsc)|jest|vitest|tsc"
+  + "|mvn|gradlew?|javac|gcc|g\\+\\+|clang|rustc|dotnet (?:build|test)|rspec|rake"
+  + "|python[0-9.]* -m (?:pytest|unittest|build))(?=\\s|$|;)");
+const EXIT_RE = /\bexit(?:ed with)?(?: code| status)?:? (-?\d+)/i;
+
+/** What a trim does to tool pairs in the prose region: "mask", true (strip) or false; masking wins. Proxy region_mode. */
+function regionMode(settings) {
+  return settings.maskObservations ? "mask" : Boolean(settings.stripProse);
+}
+
+/**
+ * Indices prose stripping (or masking) may touch: kept, unpinned, before bound, not the cut, and not the last such
+ * one (the message right before the latest run keeps its results). Proxy _prose_region.
+ */
+function proseRegion(items, keep, bound, cut, mode) {
+  const kept = [...keep].sort((a, b) => a - b);
+  // A mid-conversation system message must follow a user message, so stripping skips the message before one.
+  const beforeSystem = new Set();
+  if (mode !== "mask") {
+    for (let i = 0; i + 1 < kept.length; i++) if (items[kept[i + 1]]?.role === "system") beforeSystem.add(kept[i]);
+  }
+  return kept.filter((j) => j < bound && j !== cut && !beforeSystem.has(j) && !isPinned(items[j])).slice(0, -1);
+}
+
+/** Tool call ids whose tool-call and tool-result both sit in the prose region. Proxy prose_ids. */
+function proseIds(items, keep, bound, cut, mode) {
+  const region = proseRegion(items, keep, bound, cut, mode);
+  const calls = new Set(region.flatMap((j) => [...callIds(items[j])]));
+  return new Set(region.flatMap((j) => [...resultIds(items[j])]).filter((id) => calls.has(id)));
+}
+
+/** Shrink sizes (requestChars per message) to what prose stripping (or masking) leaves before the latest run. */
+function proseSizes(items, cut, sizes, mode) {
+  const keep = new Set(items.keys());
+  const bound = latestRunStart(items);
+  const ids = proseIds(items, keep, bound, cut, mode);
+  if (!ids.size) return;
+  for (const j of proseRegion(items, keep, bound, cut, mode)) {
+    const x = mode === "mask" ? maskResults(items[j], ids) : withoutToolCalls(items[j], ids);
+    sizes[j] = x === null ? 0 : requestChars(x);
+  }
+}
+
+/** requestChars per message after prose stripping or masking (mode) and clearing before `clear`. Proxy _trim_sizes. */
+function trimSizes(items, cut, mode, clear, first) {
+  const sizes = items.map((x) => requestChars(x));
+  if (mode) proseSizes(items, cut, sizes, mode);
+  for (let j = 0; j < (clear ?? 0); j++) {
+    const x = cleared(items[j], j, clear, first);
+    if (x !== items[j]) sizes[j] = Math.min(sizes[j], requestChars(x));
+  }
+  return sizes;
+}
+
+/** "exit N" from the result text, else failed/ok by its error type; "no result" when none was sent. */
+function commandStatus(result) {
+  if (!result) return "no result";
+  const found = EXIT_RE.exec(result.text || "");
+  if (found) return `exit ${found[1]}`;
+  return result.isError ? "failed" : "ok";
+}
+
+/**
+ * Files written or edited and the last build/test commands (with pass/fail when known) among the tool calls in
+ * items[indices]; "" when there are none. Tool names match case-insensitively. Proxy progress_text.
+ */
+function progressText(items, indices) {
+  const results = new Map();
+  for (const x of items) {
+    for (const p of parts(x)) {
+      if (p?.type === "tool-result") results.set(p.id, { isError: p.result?.type === "error", text: resultText(p.result) });
+    }
+  }
+  const files = new Map();
+  const commands = [];
+  for (const j of indices) {
+    for (const p of parts(items[j])) {
+      if (p?.type !== "tool-call") continue;
+      const name = typeof p.name === "string" ? p.name.toLowerCase() : "";
+      const args = isObject(p.input) ? p.input : {};
+      for (const key of EDIT_TOOL_PATHS.get(name) || []) {
+        if (typeof args[key] === "string" && args[key]) {
+          files.delete(args[key]);
+          files.set(args[key], true);
+          break;
+        }
+      }
+      const command = SHELL_TOOLS.has(name) ? args.command : null;
+      if (typeof command === "string" && BUILD_RE.test(command)) {
+        const words = command.split(/\s+/).filter(Boolean).join(" ");
+        commands.push([cpSlice(words, 0, PROGRESS_COMMAND_MAX_CHARS), results.get(p.id)]);
+      }
+    }
+  }
+  if (!files.size && !commands.length) return "";
+  const lines = ["Progress before this trim (from the removed tool calls):"];
+  if (files.size) lines.push(`Files written or edited (latest last): ${[...files.keys()].slice(-PROGRESS_MAX_FILES).join(", ")}`);
+  if (commands.length) {
+    lines.push("Last build/test commands (latest last):");
+    for (const [c, r] of commands.slice(-PROGRESS_MAX_COMMANDS)) lines.push(`- \`${c}\` -> ${commandStatus(r)}`);
+  }
+  return cpSlice(lines.join("\n"), 0, PROGRESS_NOTE_MAX_CHARS);
+}
+
+/** note plus the progress section for the messages this trim drops, prose-strips or masks; note alone when empty. */
+function withProgress(items, cut, gap, first, settings, note) {
+  const keep = keptIndices(items, cut, gap, first);
+  const sources = new Set([...items.keys()].filter((j) => !keep.has(j)));
+  const mode = regionMode(settings);
+  if (mode) for (const j of proseRegion(items, keep, latestRunStart(items), cut, mode)) sources.add(j);
+  const text = progressText(items, [...sources].sort((a, b) => a - b));
+  return text ? `${note}\n${text}` : note;
 }
 
 const utcNow = (now = new Date()) => now.toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -944,7 +1151,9 @@ async function trimSession(request, settings, deps, { original, sid, store, item
         if (thread.clear_fp) clear = locate(items, thread.clear, thread.clear_fp);
       }
     }
-    let rendered = render(items, cut, note, first, gap, decorate, strip, clear);
+    let shown = new Map();
+    const mode = regionMode(settings);
+    let rendered = render(items, cut, note, first, gap, decorate, strip, clear, mode, shown);
     const force = store.forceRequested(sid);
     const ratio = settings.charsPerToken > 0 ? settings.charsPerToken : DEFAULT_CHARS_PER_TOKEN;
     const toolNames = recallToolNames(request.tools);
@@ -954,7 +1163,6 @@ async function trimSession(request, settings, deps, { original, sid, store, item
     if (force || tokens >= trimAt) {
       const nextClearAt = nextClear(items, settings.clearKeepResults, clear);
       const target = trimAt * (settings.trimToFraction ?? DEFAULT_TRIM_TO_FRACTION);
-      const sizesFor = () => items.map((x, j) => Math.min(requestChars(x), requestChars(cleared(x, j, nextClearAt, first))));
       const under = (sizes, c, g) => {
         let chars = baseChars;
         for (const j of keptIndices(items, c, g, first)) chars += sizes[j];
@@ -965,33 +1173,39 @@ async function trimSession(request, settings, deps, { original, sid, store, item
       if (nextClearAt !== null && first !== null) {
         // Clearing first: the current cut, or the first user turn (dropping nothing), with the newer bound.
         const [anchor, anchorGap] = cut !== null ? [cut, gap] : [first, null];
-        if (under(sizesFor(), anchor, anchorGap)) [next, nextGap] = [anchor, anchorGap];
+        if (under(trimSizes(items, anchor, mode, nextClearAt, first), anchor, anchorGap)) [next, nextGap] = [anchor, anchorGap];
       }
       if (next === null) {
         next = chooseCut(items, cut === null ? -1 : cut, first);
         if (next === null) next = cut !== null ? cut : lastTurnIndex(items);
         if (next !== null) {
-          const sizes = sizesFor();
+          const sizes = trimSizes(items, next, mode, nextClearAt, first);
           const after = next === cut && gap !== null ? gap : next + 1;
           nextGap = chooseGap(items, next, after, first, (g) => under(sizes, next, g));
           if (nextGap === null && next === cut) nextGap = gap;
         }
       }
-      const dropped = next !== null ? droppable(items, next, nextGap, first).length : 0;
+      let dropped = next !== null ? droppable(items, next, nextGap, first).length : 0;
       let moved = dropped > 0 && (next !== cut || nextGap !== gap);
       // A newer clear bound alone moves the trim when it masks a result the current bound left whole.
       if (next !== null && !moved) moved = clearsMore(items, keptIndices(items, next, nextGap, first), clear, nextClearAt, first);
-      if (moved && !force && settings.trimMinGainTokens > 0) {
-        // A cut freeing fewer estimated tokens (pointer note not counted) waits for a bigger one.
-        const bare = render(items, next, "", first, nextGap, decorate, latestRunStart(items), nextClearAt);
-        moved = tokens - estimatePromptTokens(baseChars + requestChars(bare), state.usage, root, ratio) >= settings.trimMinGainTokens;
+      const nextShown = new Map();
+      if (moved) {
+        const bare = render(items, next, "", first, nextGap, decorate, latestRunStart(items), nextClearAt, mode, nextShown);
+        if (!force && settings.trimMinGainTokens > 0) {
+          // A cut freeing fewer estimated tokens (pointer note not counted) waits for a bigger one.
+          moved = tokens - estimatePromptTokens(baseChars + requestChars(bare), state.usage, root, ratio) >= settings.trimMinGainTokens;
+        }
       }
       if (moved) {
         const ts = utcNow(deps.now?.());
-        const masked = nextClearAt !== null
-          && [...keptIndices(items, next, nextGap, first)].some((j) => cleared(items[j], j, nextClearAt, first) !== items[j]);
+        // The pointer counts every message absent from the view: dropped, or emptied by the strip.
+        dropped = items.length - nextShown.size;
+        const masked = (mode === "mask" || nextClearAt !== null) && [...nextShown].some(([j, x]) => x !== items[j]
+          && JSON.stringify(x.content ?? null).includes(MASK_PLACEHOLDER));
         if (dropped || !masked) {
           note = await buildNote(items, next, sid, dropped, store, settings, deps, toolNames);
+          if (settings.progressNote) note = withProgress(items, next, nextGap, first, settings, note);
           if (masked) note = `${note}\n${maskText(sid, toolNames)}`;
         } else {
           // Clearing alone drops no message: the note only says how to fetch a cleared result back.
@@ -1007,7 +1221,8 @@ async function trimSession(request, settings, deps, { original, sid, store, item
         while (threads.size > MAX_THREADS) threads.delete(threads.keys().next().value);
         store.saveTrim(sid, state);
         if (force) store.clearForce(sid);
-        rendered = render(items, next, note, first, nextGap, decorate, strip, nextClearAt);
+        shown = new Map();
+        rendered = render(items, next, note, first, nextGap, decorate, strip, nextClearAt, mode, shown);
         cut = next;
         gap = nextGap;
         clear = nextClearAt;
@@ -1016,7 +1231,7 @@ async function trimSession(request, settings, deps, { original, sid, store, item
       } else if (thread && cut === null) store.saveTrim(sid, state);
     } else if (thread && cut === null) store.saveTrim(sid, state);
     const ts = utcNow(deps.now?.());
-    storeMessages(store, sid, settings, original, items, cut, gap, first, ts, deps, false, clear);
+    storeMessages(store, sid, settings, original, items, cut, shown, ts, deps);
     if (trim) recordEvent(store, sid, "trim", trim, ts);
     trimmed = trim ? TRIM_NEW : cut !== null ? TRIM_KEPT : TRIM_NONE;
     return rendered;
@@ -1083,7 +1298,7 @@ export async function compactionSummary(request, settings, deps = {}) {
     const state = store.loadTrim(sid);
     const thread = state.threads.get(root);
     // Compaction drops every message, the pinned first user turn included; no cut turn, so trimmed_at_seq is NULL.
-    storeMessages(store, sid, settings, original, items, null, null, first, utcNow(deps.now?.()), deps, true);
+    storeMessages(store, sid, settings, original, items, null, new Map(), utcNow(deps.now?.()), deps);
     const last = lastTurnIndex(items);
     const note = last !== null
       ? await buildNote(items, last, sid, roots.length, store, settings, deps, compactionToolNames)
