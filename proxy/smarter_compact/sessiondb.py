@@ -15,7 +15,7 @@ from pathlib import Path
 
 from .tokens import fingerprint
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 # Version 1, executed in order on an empty database. Same strings as SCHEMA in cli/coding-agent/session-db.mjs.
 SCHEMA = (
     "CREATE TABLE messages (seq INTEGER PRIMARY KEY, fingerprint TEXT NOT NULL UNIQUE, thread TEXT NOT NULL, "
@@ -46,10 +46,12 @@ MIGRATIONS = (
         "cache_creation_tokens INTEGER", "output_tokens INTEGER", "breakpoints INTEGER", "breakpoint_at TEXT"))),
     # Usage: the provider's applied context edits (Anthropic context_management.applied_edits) as compact JSON.
     (4, ("ALTER TABLE events ADD COLUMN applied_edits TEXT",)),
+    # Trims: the characters of agent scratchpad the note carried (CONTEXT_SCRATCHPAD); NULL with it off.
+    (5, ("ALTER TABLE events ADD COLUMN scratchpad_chars INTEGER",)),
 )
 EVENT_COLUMNS = ("at", "kind", "version", "location", "error", "tokens_before", "tokens_after", "dropped", "model",
                  "thread_root", "trimmed", "input_tokens", "cache_read_tokens", "cache_creation_tokens", "output_tokens",
-                 "breakpoints", "breakpoint_at", "applied_edits")
+                 "breakpoints", "breakpoint_at", "applied_edits", "scratchpad_chars")
 _INSERT_EVENT = f"INSERT INTO events ({', '.join(EVENT_COLUMNS)}) VALUES ({', '.join('?' * len(EVENT_COLUMNS))})"
 DB_SUFFIX = ".db"
 FILE_MODE = 0o600

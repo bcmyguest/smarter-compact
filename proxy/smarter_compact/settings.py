@@ -15,6 +15,7 @@ DEFAULT_TRIM_AT_TOKENS = 125000
 MODEL_TRIM_AT_TOKENS = (("haiku", 95000),)
 # A trim keeps older in-turn exchanges while the request stays under this fraction of trim_at_tokens (Haiku: ~50K).
 DEFAULT_TRIM_TO_FRACTION = 0.53
+DEFAULT_SCRATCHPAD_NUDGE_AT = 0.75
 DEFAULT_COMPRESS_OVER_TOKENS = 4000
 DEFAULT_TTL_DAYS = 30
 # OpenAI-compatible embeddings base URL (POST <url>/embeddings): Ollama on the host. compose.yaml sets the
@@ -126,6 +127,10 @@ class Settings:
     server_clear_at_least_tokens: int = DEFAULT_SERVER_CLEAR_AT_LEAST_TOKENS
     # Each new trim appends a mechanical progress note (edited files, build/test runs) (CONTEXT_PROGRESS_NOTE=0 turns it off).
     progress_note: bool = True
+    # Agent scratchpad: one nudge near the threshold, the pad injected into the next trim note (CONTEXT_SCRATCHPAD=1).
+    scratchpad: bool = False
+    # The nudge fires once the prompt passes this fraction of trim_at, 0 < x < 1 (CONTEXT_SCRATCHPAD_NUDGE_AT).
+    scratchpad_nudge_at: float = DEFAULT_SCRATCHPAD_NUDGE_AT
     compress_over_tokens: int = DEFAULT_COMPRESS_OVER_TOKENS
     # Characters per token for the trim estimate until the session reports usage (CONTEXT_CHARS_PER_TOKEN).
     chars_per_token: float = DEFAULT_CHARS_PER_TOKEN
@@ -177,6 +182,8 @@ class Settings:
             server_clear_at_least_tokens=max(_int(env, "CONTEXT_SERVER_CLEAR_AT_LEAST_TOKENS",
                                                   DEFAULT_SERVER_CLEAR_AT_LEAST_TOKENS), 0),
             progress_note=_flag(env, "CONTEXT_PROGRESS_NOTE"),
+            scratchpad=_flag(env, "CONTEXT_SCRATCHPAD", "0"),
+            scratchpad_nudge_at=_fraction(env, "CONTEXT_SCRATCHPAD_NUDGE_AT", DEFAULT_SCRATCHPAD_NUDGE_AT),
             compress_over_tokens=_int(env, "CONTEXT_COMPRESS_OVER_TOKENS", DEFAULT_COMPRESS_OVER_TOKENS),
             chars_per_token=_positive_float(env, "CONTEXT_CHARS_PER_TOKEN", DEFAULT_CHARS_PER_TOKEN),
             context_dir=root / "context",

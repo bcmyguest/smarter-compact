@@ -17,6 +17,7 @@ Root: `$SMARTER_COMPACT_STATE_DIR/context`, default `~/.local/share/smarter-comp
 | `sessions/<sid>.trim.json` | proxy | proxy | Proxy-private trim state (cut point, fingerprints, reported-usage samples for the token estimate, see [context-proxy.md](context-proxy.md#token-estimate)). Other components must not depend on its shape. |
 | `sessions/<sid>.db` (+ `-wal`, `-shm`) | proxy | MCP `smart_compact_search`, `smart_compact_sql`, shell `sqlite3` | [Session database](#session-database): every message of the session, in or out of context. The only store of record for message content. |
 | `blobs/<id>.txt` | proxy | MCP `smart_compact_get` | Full text of a compressed tool result, served back in 12,000-char pages. `id` = first 16 hex chars of SHA-256 of the UTF-8 content. |
+| `scratchpad/<sid>.md` | MCP `smart_compact_scratchpad` | proxy | The agent's pad (`CONTEXT_SCRATCHPAD=1`). The next trim copies it, capped at 4,000 characters, into the note and renames it `<sid>.<n>.md` (n the next free integer). |
 | `tool-calls.jsonl` | MCP `smart_compact_*` tools | `smarter-compact context stats` | One JSON line per search / sql / get call (`at`, `tool`, hit/row/char counts). Best-effort telemetry; not part of the session rewrite contract. Moves to `tool-calls.jsonl.1` at 5 MB, replacing the previous generation; stats read both. |
 | `.ttl-stamp` | proxy, MCP server | proxy, MCP server | Empty; its mtime records the last [retention](#retention) sweep |
 
@@ -75,9 +76,9 @@ A trim keeps the pinned first turn's and the reply's rows `in_context = 1`. `in_
 
 `sessions/<sid>.db` is a SQLite database, one per session, in WAL mode. The proxy (Python `sqlite3`, `proxy/smarter_compact/sessiondb.py`) and the OpenCode 2 plugin (`node:sqlite`, `cli/coding-agent/session-db.mjs`) write it; the MCP tools open it read-only. The file is created mode 600; SQLite gives `-wal` and `-shm` the same mode.
 
-### Schema (`PRAGMA user_version = 4`)
+### Schema (`PRAGMA user_version = 5`)
 
-A writer that finds `user_version = 0` creates these objects in one `BEGIN IMMEDIATE` transaction, in this order and with these exact statements (both writers share the strings, `SCHEMA` then `MIGRATIONS`; the parity test compares `sqlite_master`), then sets `user_version = 4`. A writer that finds an older version runs only the statements after it (version 2 creates the `events` table, version 3 adds its usage columns, version 4 `applied_edits`) in the same kind of transaction; rows already stored are untouched, and older events get `NULL` in the new columns. A writer that finds a newer version leaves the file alone and logs `UnsupportedSchema`; a reader skips it. Readers (`smart_compact_*`, `context_status`) accept versions 1 to 4; a version 1 file has no `events` table, a version 2 file has no usage columns, a version 3 file has no `applied_edits`. A schema change appends to `MIGRATIONS`, bumps `user_version` and changes this section first.
+A writer that finds `user_version = 0` creates these objects in one `BEGIN IMMEDIATE` transaction, in this order and with these exact statements (both writers share the strings, `SCHEMA` then `MIGRATIONS`; the parity test compares `sqlite_master`), then sets `user_version = 5`. A writer that finds an older version runs only the statements after it (version 2 creates the `events` table, version 3 adds its usage columns, version 4 `applied_edits`, version 5 `scratchpad_chars`) in the same kind of transaction; rows already stored are untouched, and older events get `NULL` in the new columns. A writer that finds a newer version leaves the file alone and logs `UnsupportedSchema`; a reader skips it. Readers (`smart_compact_*`, `context_status`) accept versions 1 to 5; a version 1 file has no `events` table, a version 2 file has no usage columns, a version 3 file has no `applied_edits`, a version 4 file has no `scratchpad_chars`. A schema change appends to `MIGRATIONS`, bumps `user_version` and changes this section first.
 
 ```sql
 CREATE TABLE messages (seq INTEGER PRIMARY KEY, fingerprint TEXT NOT NULL UNIQUE, thread TEXT NOT NULL,
@@ -103,6 +104,8 @@ ALTER TABLE events ADD COLUMN model TEXT;              -- then, in order: thread
 -- breakpoints INTEGER, breakpoint_at TEXT
 -- version 4
 ALTER TABLE events ADD COLUMN applied_edits TEXT;
+-- version 5
+ALTER TABLE events ADD COLUMN scratchpad_chars INTEGER;
 ```
 
 | Column | Values |
@@ -136,15 +139,16 @@ Rows that a later request no longer carries (a rewritten history) keep their las
 
 ### Events
 
-The writer appends one `events` row per trim and per fail-open it can attribute to the session, and one `usage` row per model call whose request it handled. `smarter-compact context status` and the `context_status` MCP tool summarize them across sessions; `smart_compact_sql` reads one session's rows. `smarter-compact context stats` adds MCP tool counts from the append-only `tool-calls.jsonl` next to `sessions/` (one JSON line per `smart_compact_search` / `smart_compact_sql` / `smart_compact_get` call) plus message and blob inventory for those sessions.
+The writer appends one `events` row per trim, per scratchpad nudge and per fail-open it can attribute to the session, and one `usage` row per model call whose request it handled. `smarter-compact context status` and the `context_status` MCP tool summarize them across sessions; `smart_compact_sql` reads one session's rows. `smarter-compact context stats` adds MCP tool counts from the append-only `tool-calls.jsonl` next to `sessions/` (one JSON line per `smart_compact_search` / `smart_compact_sql` / `smart_compact_get` call) plus message and blob inventory for those sessions.
 
 | Column | Values |
 | --- | --- |
 | `at` | ISO 8601 UTC without fractions |
-| `kind` | `trim` (a new cut, including a `/smarter-compact` one) · `fail_open` (the rewrite raised; the request went upstream unmodified) · `usage` (a model call finished) |
+| `kind` | `trim` (a new cut, including a `/smarter-compact` one) · `nudge` (the scratchpad nudge was added; `tokens_before` set) · `fail_open` (the rewrite raised; the request went upstream unmodified) · `usage` (a model call finished) |
 | `version` | The writer: `proxy:<12 hex>`, the first 12 hex of SHA-256 over `proxy/smarter_compact/*.py` (each file's name, NUL, bytes, NUL, sorted by name; `core.code_hash`, `proxyCodeVersion`), or `opencode:<package version>` for the OpenCode 2 plugin. Status compares the newest `proxy:` value with the checkout's hash to spot a proxy running old code |
 | `location`, `error` | Fail-open only: `<file>:<line>` (JS adds `:<column>`) and the exception type. Never message content |
 | `tokens_before`, `tokens_after` | Trim only: the writer's calibrated estimate ([token estimate](context-proxy.md#token-estimate)) of the request before and after the cut, not provider-billed counts. `tokens_after` still counts the thinking blocks the cut voids and drops, so status measures the saving as `tokens_before` minus the billed prompt of the next usage row with `trimmed` = 2 |
+| `scratchpad_chars` | Trim only, `CONTEXT_SCRATCHPAD=1`: characters of pad the note carried (`0` none); `NULL` with the flag off |
 | `dropped` | Trim only: messages absent from the trimmed view (the pointer's `<n>`) |
 | `model` | Usage only: the request's model (proxy: the `model` string sent to LiteLLM; OpenCode: `<providerID>/<modelID>`) |
 | `thread_root` | Usage only: fingerprint of the request's first row, as in `messages.thread` |

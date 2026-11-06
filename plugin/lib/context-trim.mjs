@@ -70,6 +70,10 @@ export const STANDING_MARKER = "Context management: to fit your context window";
 // Same as TOOL_SEARCH / CLAUDE_CODE_PREFIX in proxy/smarter_compact/core.py.
 const TOOL_SEARCH = "ToolSearch";
 const CLAUDE_CODE_PREFIX = "mcp__smarter-compact__";
+// CONTEXT_SCRATCHPAD: the pad's cap and tool name; same as SCRATCHPAD_MAX_CHARS / SCRATCHPAD_TOOL in proxy core.py.
+export const SCRATCHPAD_MAX_CHARS = 4000;
+const SCRATCHPAD_TOOL = "smart_compact_scratchpad";
+const SCRATCHPAD_TOOL_RE = /(?:^|[^a-z0-9])smart_compact_scratchpad$/;
 /** The names the recall tools actually have in a given request.
  *
  * Every harness namespaces MCP tools its own way, and the separator is not always `_`: OpenCode
@@ -101,16 +105,22 @@ export function recallToolNames(tools) {
     }
   }
   // Claude Code defers MCP tools behind ToolSearch: neither recall tool is in the request, and the bare name fails.
-  if (!offered.length && entries.some((t) => (typeof t === "string" ? t : t?.name) === TOOL_SEARCH)) {
+  const deferred = entries.some((t) => (typeof t === "string" ? t : t?.name) === TOOL_SEARCH);
+  const offeredPad = entries.map((t) => (typeof t === "string" ? t : t?.name))
+    .find((n) => typeof n === "string" && SCRATCHPAD_TOOL_RE.test(n));
+  const pad = offeredPad || (deferred ? `${CLAUDE_CODE_PREFIX}${SCRATCHPAD_TOOL}` : SCRATCHPAD_TOOL);
+  // The scratchpad tool, and how to load it when deferred ("" when offered or never loadable).
+  const scratchpad = { scratchpad: pad, scratchpadLoad: deferred && !offeredPad ? `${TOOL_SEARCH} with query "select:${pad}"` : "" };
+  if (!offered.length && deferred) {
     const search = `${CLAUDE_CODE_PREFIX}smart_compact_search`;
     const sql = `${CLAUDE_CODE_PREFIX}smart_compact_sql`;
-    return { search, sql, offered, seen: entries.length, load: `${TOOL_SEARCH} with query "select:${search},${sql}"` };
+    return { search, sql, offered, seen: entries.length, load: `${TOOL_SEARCH} with query "select:${search},${sql}"`, ...scratchpad };
   }
   const pick = (suffix) => offered.find((n) => n.endsWith(suffix)) || suffix;
   // `seen` tells a caller when a non-empty tool list yielded nothing: that is a shape or
   // separator we do not read, and it degrades to bare names — the same symptom as recall
   // never being installed at all, which is otherwise indistinguishable in the field.
-  return { search: pick("smart_compact_search"), sql: pick("smart_compact_sql"), offered, seen: entries.length, load: "" };
+  return { search: pick("smart_compact_search"), sql: pick("smart_compact_sql"), offered, seen: entries.length, load: "", ...scratchpad };
 }
 
 function availability(names) {
@@ -140,6 +150,8 @@ const FORMAT = "opencode2";
 export const TRIM_NONE = 0;
 export const TRIM_KEPT = 1;
 export const TRIM_NEW = 2;
+// The nudge fires once the prompt passes this fraction of the trim threshold; same as proxy settings.py.
+export const DEFAULT_SCRATCHPAD_NUDGE_AT = 0.75;
 /** Part types whose payload is binary; each is charged a flat 6400 characters (about 1600 tokens). */
 const BINARY_BLOCK_TYPES = new Set(["image", "document", "input_image", "input_file", "image_url", "file", "media"]);
 const BINARY_BLOCK_CHARS = 6400;
@@ -187,6 +199,9 @@ export function trimSettings(env = process.env, home = env.HOME) {
     maskObservations: flag("CONTEXT_MASK_OBSERVATIONS", "1"),
     // Add a progress note listing edited files and build commands (CONTEXT_PROGRESS_NOTE=0, default on).
     progressNote: flag("CONTEXT_PROGRESS_NOTE"),
+    // Agent scratchpad: one nudge near the threshold, the pad injected into the next trim note (CONTEXT_SCRATCHPAD=1).
+    scratchpad: flag("CONTEXT_SCRATCHPAD", "0"),
+    scratchpadNudgeAt: fraction("CONTEXT_SCRATCHPAD_NUDGE_AT", DEFAULT_SCRATCHPAD_NUDGE_AT),
     // Each trim first clears every tool result but the newest N, keeping all turns and calls; 0 is off.
     clearKeepResults: Math.max(int("CONTEXT_CLEAR_KEEP_RESULTS", 10), 0),
     compressOverTokens: int("CONTEXT_COMPRESS_OVER_TOKENS", DEFAULT_COMPRESS_OVER_TOKENS),
@@ -801,6 +816,42 @@ export function maskText(sid, names = LEGACY_RECALL_NAMES) {
     + "WHERE kind = 'tool_result' AND name = '<tool>' AND seq > <call seq> ORDER BY seq LIMIT 1\").";
 }
 
+/** The once-per-trim-cycle nudge to save task state; same text as scratchpad_nudge in proxy core.py. */
+export function scratchpadNudge(sid, names) {
+  const load = names.scratchpadLoad ? ` (load it first by calling ${names.scratchpadLoad})` : "";
+  return "<compact-scratchpad-nudge>Your context will be trimmed soon. If you have task state worth keeping (goal, "
+    + `decisions, facts learned, next steps), write it with ${names.scratchpad}(session_id="${sid}", `
+    + `command="create", file_text=...)${load}; at most ${SCRATCHPAD_MAX_CHARS} characters. It is shown to you `
+    + "after the trim, then cleared.</compact-scratchpad-nudge>";
+}
+
+/** The trim note's block carrying the agent's pad, capped at SCRATCHPAD_MAX_CHARS; proxy scratchpad_block. */
+export function scratchpadBlock(text) {
+  return `<compact-scratchpad>\n${text.slice(0, SCRATCHPAD_MAX_CHARS)}\n</compact-scratchpad>`;
+}
+
+/** The message with note appended: a text part on a user message, after a tool message's last text result; else null. */
+export function appendedNote(message, note) {
+  if (message?.role === "user") {
+    const content = typeof message.content === "string" ? [{ type: "text", text: message.content }] : parts(message);
+    return { ...message, content: [...content, { type: "text", text: note }] };
+  }
+  if (message?.role !== "tool") return null;
+  const content = parts(message);
+  const at = content.findLastIndex((p) => p?.type === "tool-result" && p.result?.type === "text" && typeof p.result.value === "string");
+  if (at < 0) return null;
+  const next = [...content];
+  next[at] = { ...content[at], result: { ...content[at].result, value: `${content[at].result.value}\n\n${note}` } };
+  return { ...message, content: next };
+}
+
+/** items with the nudge appended to item `at`; items itself when there is none to show. */
+function nudged(items, at, text) {
+  if (at === null || !text) return items;
+  const item = appendedNote(items[at], text);
+  return item === null ? items : [...items.slice(0, at), item, ...items.slice(at + 1)];
+}
+
 // CONTEXT_PROGRESS_NOTE: the note's mechanical progress section, built from the trimmed tool calls (proxy core.py).
 const PROGRESS_NOTE_MAX_CHARS = 2000;
 const PROGRESS_MAX_FILES = 20;
@@ -1003,6 +1054,18 @@ export class Store {
     return this.file(sid, ".db");
   }
 
+  /** The pad's text, the file then renamed to <sid>.<n>.md (n the next free integer); "" when missing or blank. */
+  takeScratchpad(sid) {
+    const dir = path.join(this.root, "scratchpad");
+    let text;
+    try { text = fs.readFileSync(path.join(dir, `${sid}.md`), "utf8"); } catch { return ""; }
+    if (!text.trim()) return "";
+    let n = 1;
+    while (fs.existsSync(path.join(dir, `${sid}.${n}.md`))) n += 1;
+    try { fs.renameSync(path.join(dir, `${sid}.md`), path.join(dir, `${sid}.${n}.md`)); } catch { /* injected anyway */ }
+    return text;
+  }
+
   writeBlob(id, text) {
     const file = path.join(this.blobs, `${id}.txt`);
     if (fs.existsSync(file)) return;
@@ -1107,7 +1170,9 @@ async function trimSession(request, settings, deps, { original, sid, store, item
     let strip = null;
     let note = null;
     let clear = null;
-    if (thread) {
+    const nudgeAt = thread?.nudge_fp ? locate(items, thread.nudge_at, thread.nudge_fp) : null;
+    // A thread holding only a scratchpad nudge has no cut to locate.
+    if (thread && (thread.cut_fp || !("nudge_fp" in thread))) {
       cut = locate(items, thread.cut, thread.cut_fp);
       if (cut === null) threads.delete(root);
       else {
@@ -1120,7 +1185,9 @@ async function trimSession(request, settings, deps, { original, sid, store, item
     }
     let shown = new Map();
     const mode = regionMode(settings);
-    let rendered = render(items, cut, note, first, gap, decorate, strip, clear, mode, shown);
+    // The items as sent: the recorded nudge stays on its item, byte-identical, until the next trim.
+    let sent = nudged(items, nudgeAt, threads.has(root) ? thread.nudge : null);
+    let rendered = render(sent, cut, note, first, gap, decorate, strip, clear, mode, shown);
     const force = store.forceRequested(sid);
     const ratio = settings.charsPerToken > 0 ? settings.charsPerToken : DEFAULT_CHARS_PER_TOKEN;
     const toolNames = recallToolNames(request.tools);
@@ -1178,6 +1245,8 @@ async function trimSession(request, settings, deps, { original, sid, store, item
           // Clearing alone drops no message: the note only says how to fetch a cleared result back.
           note = `[smarter-compact: session ${sid}] ${maskText(sid, toolNames)}`;
         }
+        const pad = settings.scratchpad ? store.takeScratchpad(sid) : "";
+        if (pad) note = `${note}\n${scratchpadBlock(pad)}`;
         threads.delete(root);
         const entry = { cut: next, cut_fp: fingerprint(items[next]), note, format: FORMAT, updated: ts };
         if (nextGap !== null) Object.assign(entry, { gap: nextGap, gap_fp: fingerprint(items[nextGap]) });
@@ -1195,11 +1264,31 @@ async function trimSession(request, settings, deps, { original, sid, store, item
         clear = nextClearAt;
         const after = estimatePromptTokens(baseChars + requestChars(rendered), state.usage, root, ratio);
         trim = { tokens_before: tokens, tokens_after: after, dropped };
-      } else if (thread && cut === null) store.saveTrim(sid, state);
-    } else if (thread && cut === null) store.saveTrim(sid, state);
+        if (settings.scratchpad) trim.scratchpad_chars = Math.min(pad.length, SCRATCHPAD_MAX_CHARS);
+        sent = items;
+      } else if (thread && cut === null && !threads.has(root)) store.saveTrim(sid, state);
+    } else if (thread && cut === null && !threads.has(root)) store.saveTrim(sid, state);
+    let nudge = null;
+    if (settings.scratchpad && !trim && !threads.get(root)?.nudge_fp && tokens >= trimAt * settings.scratchpadNudgeAt) {
+      const text = scratchpadNudge(sid, toolNames);
+      const last = items.length - 1;
+      if (nudged(items, last, text) !== items) {
+        // Recorded on the newest item, so every later request re-renders it unchanged.
+        const entry = threads.get(root) ?? { format: FORMAT, updated: utcNow(deps.now?.()) };
+        Object.assign(entry, { nudge: text, nudge_at: last, nudge_fp: fingerprint(items[last]) });
+        threads.set(root, entry);
+        while (threads.size > MAX_THREADS) threads.delete(threads.keys().next().value);
+        store.saveTrim(sid, state);
+        sent = nudged(items, last, text);
+        shown = new Map();
+        rendered = render(sent, cut, note, first, gap, decorate, strip, clear, mode, shown);
+        nudge = { tokens_before: tokens };
+      }
+    }
     const ts = utcNow(deps.now?.());
-    storeMessages(store, sid, settings, original, items, cut, shown, ts, deps);
+    storeMessages(store, sid, settings, original, sent, cut, shown, ts, deps);
     if (trim) recordEvent(store, sid, "trim", trim, ts);
+    if (nudge) recordEvent(store, sid, "nudge", nudge, ts);
     trimmed = trim ? TRIM_NEW : cut !== null ? TRIM_KEPT : TRIM_NONE;
     return rendered;
   });

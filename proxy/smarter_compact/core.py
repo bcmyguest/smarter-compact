@@ -58,6 +58,10 @@ PROGRESS_NOTE_MAX_CHARS = 2000
 PROGRESS_MAX_FILES = 20
 PROGRESS_MAX_COMMANDS = 5
 PROGRESS_COMMAND_MAX_CHARS = 200
+# CONTEXT_SCRATCHPAD: the pad's cap (the MCP tool's too), and its tool name with any namespace separator.
+SCRATCHPAD_MAX_CHARS = 4000
+SCRATCHPAD_TOOL = "smart_compact_scratchpad"
+_SCRATCHPAD_TOOL_RE = re.compile(r"(?:^|[^a-z0-9])smart_compact_scratchpad$")
 # Tool name -> input keys naming the file it writes (Claude Code's file tools).
 EDIT_TOOL_PATHS = {"Write": ("file_path",), "Edit": ("file_path",), "MultiEdit": ("file_path",),
                    "NotebookEdit": ("notebook_path", "file_path")}
@@ -83,15 +87,22 @@ def recall_tool_names(tools):
         if isinstance(name, str) and _RECALL_TOOL_RE.search(name):
             found.append(name)
         deferred = deferred or name == TOOL_SEARCH
+    pad = next((n for n in request_tool_names({"tools": tools}) if _SCRATCHPAD_TOOL_RE.search(n)), None)
+    if pad is None:
+        pad = CLAUDE_CODE_PREFIX + SCRATCHPAD_TOOL if deferred else SCRATCHPAD_TOOL
+    # The scratchpad tool, and how to load it when deferred ("" when offered or never loadable).
+    scratchpad = {"scratchpad": pad, "scratchpad_load": f'{TOOL_SEARCH} with query "select:{pad}"'
+                  if deferred and pad == CLAUDE_CODE_PREFIX + SCRATCHPAD_TOOL else ""}
     if not found and deferred:
         search, sql = CLAUDE_CODE_PREFIX + "smart_compact_search", CLAUDE_CODE_PREFIX + "smart_compact_sql"
         return {"search": search, "sql": sql, "offered": found,
-                "load": f'{TOOL_SEARCH} with query "select:{search},{sql}"'}
+                "load": f'{TOOL_SEARCH} with query "select:{search},{sql}"', **scratchpad}
 
     def pick(suffix):
         return next((n for n in found if n.endswith(suffix)), suffix)
 
-    return {"search": pick("smart_compact_search"), "sql": pick("smart_compact_sql"), "offered": found, "load": ""}
+    return {"search": pick("smart_compact_search"), "sql": pick("smart_compact_sql"), "offered": found, "load": "",
+            **scratchpad}
 
 
 def _availability(names):
@@ -226,6 +237,30 @@ def mask_text(sid, names=None):
         f'row of the same tool after that seq: {names["sql"]}(session_id="{sid}", sql="SELECT text FROM messages '
         f"WHERE kind = 'tool_result' AND name = '<tool>' AND seq > <call seq> ORDER BY seq LIMIT 1\")."
     )
+
+
+def scratchpad_nudge(sid, names):
+    """The once-per-trim-cycle nudge to save task state; fixed for a session and tool name (CONTEXT_SCRATCHPAD)."""
+    load = f" (load it first by calling {names['scratchpad_load']})" if names.get("scratchpad_load") else ""
+    return (
+        f"<compact-scratchpad-nudge>Your context will be trimmed soon. If you have task state worth keeping (goal, "
+        f"decisions, facts learned, next steps), write it with {names['scratchpad']}(session_id=\"{sid}\", "
+        f"command=\"create\", file_text=...){load}; at most {SCRATCHPAD_MAX_CHARS} characters. It is shown to you "
+        f"after the trim, then cleared.</compact-scratchpad-nudge>"
+    )
+
+
+def scratchpad_block(text):
+    """The trim note's block carrying the agent's pad, capped at SCRATCHPAD_MAX_CHARS."""
+    return f"<compact-scratchpad>\n{text[:SCRATCHPAD_MAX_CHARS]}\n</compact-scratchpad>"
+
+
+def _nudged(adapter, items, at, text):
+    """items with the nudge appended to item `at`; items itself when there is none to show."""
+    if at is None or not text:
+        return items
+    item = adapter.appended_note(items[at], text) if hasattr(adapter, "appended_note") else None
+    return items if item is None else [*items[:at], item, *items[at + 1:]]
 
 
 def add_standing_instruction(adapter, data):
@@ -651,7 +686,11 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
         threads = state["threads"]
         thread = threads.get(root)
         cut, gap, strip, note, clear = None, None, None, None, None
-        if thread:
+        nudge_at = None
+        if thread and thread.get("nudge_fp"):
+            nudge_at = _locate(items, thread.get("nudge_at"), thread["nudge_fp"])
+        # A thread holding only a scratchpad nudge has no cut to locate.
+        if thread and (thread.get("cut_fp") or "nudge_fp" not in thread):
             cut_fp = thread.get("cut_fp")
             cut = _locate_cut(adapter, items, thread)
             if cut is None:
@@ -669,7 +708,9 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                     clear = _locate(items, thread.get("clear"), thread["clear_fp"])
         shown = {}
         mode = region_mode(settings)
-        view = render(adapter, items, cut, note, first, gap, strip, mode, shown, clear)
+        # The items as sent: the recorded nudge stays on its item, byte-identical, until the next trim.
+        sent = _nudged(adapter, items, nudge_at, thread.get("nudge") if root in threads else None)
+        view = render(adapter, sent, cut, note, first, gap, strip, mode, shown, clear)
         force = store.force_requested(sid)
         ratio = settings.chars_per_token if settings.chars_per_token > 0 else DEFAULT_CHARS_PER_TOKEN
         base_chars = request_chars(*context)
@@ -729,6 +770,9 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                 else:
                     # Clearing alone drops no message: the note only says how to fetch a cleared result back.
                     note = f"[smarter-compact: session {sid}] {mask_text(sid, names)}"
+                pad = store.take_scratchpad(sid) if settings.scratchpad else ""
+                if pad:
+                    note = f"{note}\n{scratchpad_block(pad)}"
                 threads.pop(root, None)
                 threads[root] = {"cut": new_cut, "cut_fp": fingerprint(items[new_cut]), "note": note,
                                  "format": adapter.name, "updated": _utc_now()}
@@ -751,13 +795,32 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                 cut, gap, clear = new_cut, new_gap, new_clear
                 after = estimate_prompt_tokens(base_chars + request_chars(view), state.get("usage"), root, ratio)
                 trim = {"tokens_before": tokens, "tokens_after": after, "dropped": dropped}
-            elif thread and cut is None:
+                if settings.scratchpad:
+                    trim["scratchpad_chars"] = min(len(pad), SCRATCHPAD_MAX_CHARS)
+                sent = items
+            elif thread and cut is None and root not in threads:
                 store.save_trim(sid, state)
-        elif thread and cut is None:
+        elif thread and cut is None and root not in threads:
             store.save_trim(sid, state)
-        _store_messages(store, sid, adapter, original, items, cut, shown, settings)
+        nudge = None
+        if settings.scratchpad and not trim and not (threads.get(root) or {}).get("nudge_fp") \
+                and tokens >= trim_at * settings.scratchpad_nudge_at:
+            text = scratchpad_nudge(sid, recall_tool_names(request_tool_names(data)))
+            if _nudged(adapter, items, len(items) - 1, text) is not items:
+                # Recorded on the newest item, so every later request re-renders it unchanged.
+                entry = threads.setdefault(root, {"format": adapter.name, "updated": _utc_now()})
+                entry.update(nudge=text, nudge_at=len(items) - 1, nudge_fp=fingerprint(items[-1]))
+                while len(threads) > MAX_THREADS:
+                    threads.pop(next(iter(threads)))
+                store.save_trim(sid, state)
+                sent, shown = _nudged(adapter, items, len(items) - 1, text), {}
+                view = render(adapter, sent, cut, note, first, gap, strip, mode, shown, clear)
+                nudge = {"tokens_before": tokens}
+        _store_messages(store, sid, adapter, original, sent, cut, shown, settings)
         if trim:
             _record_event(store, sid, "trim", **trim)
+        if nudge:
+            _record_event(store, sid, "nudge", **nudge)
     request["trimmed"] = TRIM_NEW if trim else TRIM_KEPT if cut is not None else TRIM_NONE
 
     # Measured like the estimate, before the standing instruction, so calibration compares like with like.

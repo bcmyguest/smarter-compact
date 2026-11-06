@@ -295,6 +295,14 @@ class AnthropicAdapter:
         blocks = [{"type": "text", "text": content}] if isinstance(content, str) else list(content)
         return {**item, "content": [{"type": "text", "text": note}, *blocks]}
 
+    def appended_note(self, item, note):
+        """item with note as its last text block (CONTEXT_SCRATCHPAD nudge); None for an assistant message."""
+        if item.get("role") == "assistant":
+            return None
+        content = item.get("content")
+        blocks = [{"type": "text", "text": content}] if isinstance(content, str) else list(content or ())
+        return {**item, "content": [*blocks, {"type": "text", "text": note}]}
+
     def rows(self, item, names):
         role = item.get("role", "user")
         content = item.get("content")
@@ -406,6 +414,15 @@ class ChatAdapter:
             return {**item, "content": [{"type": "text", "text": note}, *content]}
         return {**item, "content": f"{note}\n\n{content or ''}"}
 
+    def appended_note(self, item, note):
+        """item with note after its content (CONTEXT_SCRATCHPAD nudge); None for an assistant message."""
+        if item.get("role") not in ("user", "tool"):
+            return None
+        content = item.get("content")
+        if isinstance(content, list):
+            return {**item, "content": [*content, {"type": "text", "text": note}]}
+        return {**item, "content": f"{content or ''}\n\n{note}"}
+
     def rows(self, item, names):
         role = item.get("role")
         out = []
@@ -512,6 +529,17 @@ class ResponsesAdapter:
         if isinstance(content, list):
             return {**item, "content": [{"type": "input_text", "text": note}, *content]}
         return {**item, "content": f"{note}\n\n{content or ''}"}
+
+    def appended_note(self, item, note):
+        """item with note after its content or string output (CONTEXT_SCRATCHPAD nudge); None for other items."""
+        if item.get("type") in _RESULT_TYPES and isinstance(item.get("output"), str):
+            return {**item, "output": f"{item['output']}\n\n{note}"}
+        if not self.is_turn_start(item):
+            return None
+        content = item.get("content")
+        if isinstance(content, list):
+            return {**item, "content": [*content, {"type": "input_text", "text": note}]}
+        return {**item, "content": f"{content or ''}\n\n{note}"}
 
     def rows(self, item, names):
         t = item.get("type", "message")

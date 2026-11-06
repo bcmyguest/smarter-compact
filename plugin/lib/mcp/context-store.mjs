@@ -46,6 +46,9 @@ const SQL_CELL_MAX_CHARS = 2000;
 const SQL_RESULT_MAX_CHARS = 30_000;
 const SQL_MAX_CHARS = 10_000;
 const STATUS_MAX_HOURS = 24 * 30;
+// CONTEXT_SCRATCHPAD: the pad's cap; the proxy injects at most this much (SCRATCHPAD_MAX_CHARS in core.py).
+export const SCRATCHPAD_MAX_CHARS = 4000;
+const SCRATCHPAD_COMMANDS = ["view", "create", "str_replace", "insert"];
 /** Words that may not appear outside string literals and quoted identifiers in smart_compact_sql. */
 const SQL_FORBIDDEN = new Set([
   "ATTACH", "DETACH", "PRAGMA", "INSERT", "UPDATE", "DELETE", "UPSERT", "CREATE", "DROP", "ALTER",
@@ -167,6 +170,41 @@ export const CONTEXT_STORE_MCP_TOOLS = [
 ];
 
 export const CONTEXT_STORE_TOOL_NAMES = new Set(CONTEXT_STORE_MCP_TOOLS.map((t) => t.name));
+
+export const SCRATCHPAD_MCP_TOOL = {
+  name: "smart_compact_scratchpad",
+  title: "Task scratchpad that survives context trims",
+  description:
+    "A small per-session notes file for task state (goal, decisions, facts learned, next steps), not for logs. "
+    + "It survives context trims: the next trim note shows it to you, then it is cleared. "
+    + `view returns numbered lines; create replaces the whole pad; str_replace needs old_str to occur exactly once; `
+    + `insert adds insert_text after line insert_line (0 = top). At most ${SCRATCHPAD_MAX_CHARS} characters.`,
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  inputSchema: {
+    type: "object",
+    properties: {
+      session_id: { type: "string", description: "Session id from the [smarter-compact: …] pointer or nudge" },
+      command: { type: "string", enum: SCRATCHPAD_COMMANDS },
+      file_text: { type: "string", description: "create: the pad's full text" },
+      old_str: { type: "string", description: "str_replace: text that occurs exactly once in the pad" },
+      new_str: { type: "string", description: "str_replace: its replacement (default empty)" },
+      insert_line: { type: "number", description: "insert: line number to insert after (0 = top)" },
+      insert_text: { type: "string", description: "insert: text to insert" },
+    },
+    required: ["session_id", "command"],
+    additionalProperties: false,
+  },
+};
+
+/** True when CONTEXT_SCRATCHPAD is on (default off), with the proxy's flag spelling. */
+export function scratchpadEnabled(env = process.env) {
+  return !["", "0", "false", "no", "off"].includes(String(env.CONTEXT_SCRATCHPAD ?? "").trim().toLowerCase());
+}
+
+/** The tools this server lists: the scratchpad only with CONTEXT_SCRATCHPAD on, so other tool lists stay unchanged. */
+export function contextStoreTools(env = process.env) {
+  return scratchpadEnabled(env) ? [...CONTEXT_STORE_MCP_TOOLS, SCRATCHPAD_MCP_TOOL] : CONTEXT_STORE_MCP_TOOLS;
+}
 
 /** `$SMARTER_COMPACT_STATE_DIR/context` (trimmed), read at call time; same resolver as the hooks. */
 export function contextRoot(env = process.env) {
@@ -678,6 +716,57 @@ function runSql(args, env, cwd) {
   return result;
 }
 
+/** `<root>/scratchpad/<sid>.md`, the file the proxy reads at the next trim (Store.take_scratchpad). */
+function scratchpadPath(env, sid) {
+  return path.join(contextRoot(env), "scratchpad", `${sid}.md`);
+}
+
+/** smart_compact_scratchpad: view/create/str_replace/insert on the session's pad, capped at SCRATCHPAD_MAX_CHARS. */
+function scratchpad(args, env) {
+  const sid = sanitizeSessionId(args.session_id);
+  const command = String(args.command ?? "");
+  if (!SCRATCHPAD_COMMANDS.includes(command)) throw new Error(`command must be one of ${SCRATCHPAD_COMMANDS.join(", ")}`);
+  const file = scratchpadPath(env, sid);
+  let text = "";
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch {
+    // no pad yet
+  }
+  const string = (key) => {
+    if (typeof args[key] !== "string") throw new Error(`${command} needs ${key} (a string)`);
+    return args[key];
+  };
+  let next;
+  if (command === "view") {
+    const lines = text ? text.split("\n").map((line, i) => `${String(i + 1).padStart(6)}\t${line}`).join("\n") : "";
+    return { session_id: sid, chars: text.length, max_chars: SCRATCHPAD_MAX_CHARS, text: lines };
+  } else if (command === "create") {
+    next = string("file_text");
+  } else if (command === "str_replace") {
+    const old = string("old_str");
+    const count = old ? text.split(old).length - 1 : 0;
+    if (count !== 1) throw new Error(`old_str must occur exactly once in the pad; it occurs ${count} times`);
+    next = text.replace(old, () => (typeof args.new_str === "string" ? args.new_str : ""));
+  } else {
+    const insert = string("insert_text");
+    const lines = text ? text.split("\n") : [];
+    const at = Number(args.insert_line);
+    if (!Number.isInteger(at) || at < 0 || at > lines.length) throw new Error(`insert_line must be an integer 0-${lines.length}`);
+    lines.splice(at, 0, insert);
+    next = lines.join("\n");
+  }
+  if (next.length > SCRATCHPAD_MAX_CHARS) {
+    throw new Error(`the pad would be ${next.length} characters, over the ${SCRATCHPAD_MAX_CHARS} cap (now ${text.length}); unchanged`);
+  }
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  const temporary = path.join(path.dirname(file), `.${sid}.md.${process.pid}.tmp`);
+  fs.writeFileSync(temporary, next, { mode: 0o600 });
+  fs.renameSync(temporary, file);
+  recordToolCall(contextRoot(env), { tool: SCRATCHPAD_MCP_TOOL.name, command, chars: next.length });
+  return { session_id: sid, command, chars: next.length, max_chars: SCRATCHPAD_MAX_CHARS };
+}
+
 function getBlob(args, env) {
   const id = String(args.id ?? "").trim();
   if (!BLOB_ID_RE.test(id)) throw new Error("id must be exactly 16 lowercase hex characters");
@@ -733,6 +822,7 @@ export async function callContextStoreTool(name, args = {}, opts = {}) {
   else if (name === "smart_compact_get") result = getBlob(args, env);
   else if (name === "smart_compact_sql") result = runSql(args, env, opts.cwd || process.cwd());
   else if (name === "context_status") return contextStatusTool(args, env);
+  else if (name === SCRATCHPAD_MCP_TOOL.name && scratchpadEnabled(env)) return scratchpad(args, env);
   else throw new Error(`unknown tool: ${name}`);
   // Telemetry for `smarter-compact context stats`; never affects the tool result.
   if (name === "smart_compact_search") {

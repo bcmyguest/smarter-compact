@@ -27,6 +27,7 @@ subscription* token. That is the explanation for "no Haiku usage on my API token
 authenticated as the subscription. A run here bills to whichever token is exported at launch.
 """
 
+import json
 import os
 import shlex
 from pathlib import Path
@@ -43,7 +44,8 @@ TRIM_AT = os.environ.get("SC_TRIM_AT", "95000")
 ARM_ENV_KEYS = ("CONTEXT_TRIM_AT_TOKENS", "CONTEXT_TRIM_TO_FRACTION", "CONTEXT_STRIP_PROSE", "CONTEXT_PROGRESS_NOTE",
                 "CONTEXT_MASK_OBSERVATIONS", "CONTEXT_STANDING_INSTRUCTION", "CONTEXT_POINTER_TOOLS",
                 "CONTEXT_SERVER_CLEAR", "CONTEXT_SERVER_CLEAR_TRIGGER_TOKENS", "CONTEXT_SERVER_CLEAR_KEEP_TOOL_USES",
-                "CONTEXT_SERVER_CLEAR_AT_LEAST_TOKENS", "CONTEXT_CLEAR_KEEP_RESULTS")
+                "CONTEXT_SERVER_CLEAR_AT_LEAST_TOKENS", "CONTEXT_CLEAR_KEEP_RESULTS", "CONTEXT_SCRATCHPAD",
+                "CONTEXT_SCRATCHPAD_NUDGE_AT")
 # A trim threshold no Terminal-Bench session reaches: the proxy runs, our trim never fires.
 TRIM_OFF = "10000000"
 # Job-level bind mount of the host ~/.claude/.credentials.json (read-only in practice; the
@@ -62,7 +64,7 @@ _NODE_RESOLVE = (
     'export PATH="$(dirname "$NODE_BIN"):$PATH"; echo "node at: $NODE_BIN ($(node --version))"; '
 )
 # Merges the recall MCP server into <CLAUDE_CONFIG_DIR>/.claude.json, pinned to the trial's store
-# and to the Node binary passed as argv[2].
+# and to the Node binary passed as argv[2]; an optional argv[3] JSON object adds server env.
 _MCP_REGISTER = f"""
 import json, os, sys
 p = sys.argv[1]
@@ -71,7 +73,8 @@ d.setdefault("mcpServers", {{}})["smarter-compact"] = {{
     "type": "stdio",
     "command": sys.argv[2],
     "args": ["{REPO}/plugin/lib/mcp/server.mjs"],
-    "env": {{"SMARTER_COMPACT_STATE_DIR": "{STATE_DIR}", "CONTEXT_COMPACTION_RECALL": "0"}},
+    "env": {{"SMARTER_COMPACT_STATE_DIR": "{STATE_DIR}", "CONTEXT_COMPACTION_RECALL": "0",
+            **(json.loads(sys.argv[3]) if len(sys.argv) > 3 else {{}})}},
 }}
 json.dump(d, open(p, "w"), indent=2)
 print("mcp-registered=ok")
@@ -131,6 +134,8 @@ class ScClaudeSmarterCompact(ScClaudeBase):
     FORCED_ENV = {}
     # Proxy env the arm defaults to; the job's env overrides it. Turn drops only: both masking modes are proxy defaults.
     DEFAULT_ENV = {"CONTEXT_MASK_OBSERVATIONS": "0", "CONTEXT_CLEAR_KEEP_RESULTS": "0"}
+    # Extra env for the recall MCP server process; empty keeps the registration as before.
+    MCP_ENV = {}
 
     async def install(self, environment):
         await super().install(environment)
@@ -144,7 +149,8 @@ class ScClaudeSmarterCompact(ScClaudeBase):
             # The plugin's MCP server loads from $HOME/.claude's marketplace, invisible under
             # CLAUDE_CONFIG_DIR; register it user-scoped there (Harbor writes this file only
             # when its own mcp_servers option is set).
-            f'python3 -c {shlex.quote(_MCP_REGISTER)} {dest}/.claude.json "$NODE_BIN" || '
+            f'python3 -c {shlex.quote(_MCP_REGISTER)} {dest}/.claude.json "$NODE_BIN"'
+            + (f" {shlex.quote(json.dumps(self.MCP_ENV))}" if self.MCP_ENV else "") + " || "
             "{ echo 'FATAL: recall MCP not registered'; exit 1; }; "
         ) if self.RECALL_TOOLS else (
             f"! grep -qs smarter-compact {dest}/.claude.json || "
@@ -273,3 +279,12 @@ class ScClaudeServerClear(ScClaudeSmarterCompact):
 class ScClaudeNativeLow(ScClaudeBaseline):
     """Claude Code's summarizing compaction at a lowered trigger (CLAUDE_CODE_AUTO_COMPACT_WINDOW x
     CLAUDE_AUTOCOMPACT_PCT_OVERRIDE in the job env), no proxy."""
+
+
+class ScClaudeScratchpad(ScClaudeSmarterCompact):
+    """The Smart arm plus the agent scratchpad (CONTEXT_SCRATCHPAD): a nudge before the trim, the pad in the trim note."""
+
+    REQUIRES_PROXY_SETTINGS = ("CONTEXT_SCRATCHPAD",)
+    FORCED_ENV = {"CONTEXT_SCRATCHPAD": "1"}
+    # The MCP server offers smart_compact_scratchpad only with the flag on.
+    MCP_ENV = {"CONTEXT_SCRATCHPAD": "1"}

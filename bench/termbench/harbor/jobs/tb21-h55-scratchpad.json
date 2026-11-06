@@ -1,0 +1,50 @@
+{
+  "job_name": "tb21-h55-scratchpad",
+  "jobs_dir": "/tmp/opencode/tb21-h55-scratchpad",
+  "n_attempts": 3,
+  "n_concurrent": 6,
+  "n_concurrent_trials": 6,
+  "environment": {
+    "type": "docker",
+    "mounts": [
+      {
+        "type": "bind",
+        "source": "/home/brandonguest/smarter-compact",
+        "target": "/opt/smarter-compact"
+      },
+      {
+        "type": "bind",
+        "source": "/home/brandonguest/.claude/.credentials.json",
+        "target": "/opt/claude-creds/.credentials.json"
+      }
+    ]
+  },
+  "agents": [
+    {
+      "name": null,
+      "model_name": "anthropic/claude-haiku-5-5",
+      "import_path": "sc_agent_claude:ScClaudeScratchpad",
+      "env": {
+        "CONTEXT_TRIM_AT_TOKENS": "95000",
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "195000"
+      },
+      "kwargs": {}
+    }
+  ],
+  "datasets": [
+    {
+      "path": "/tmp/opencode/tb21/terminal-bench-2-1",
+      "task_names": [
+        "schemelike-metacircular-eval",
+        "make-mips-interpreter",
+        "make-doom-for-mips",
+        "path-tracing-reverse",
+        "regex-chess",
+        "fix-ocaml-gc",
+        "adaptive-rejection-sampler",
+        "path-tracing"
+      ]
+    }
+  ],
+  "agent_setup_timeout_multiplier": 3.0
+}

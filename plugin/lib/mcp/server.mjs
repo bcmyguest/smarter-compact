@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
  * MCP server for the session store: smart_compact_search, smart_compact_sql,
- * smart_compact_get, context_status. Stdio, NDJSON or Content-Length.
+ * smart_compact_get, context_status, and smart_compact_scratchpad with CONTEXT_SCRATCHPAD on. Stdio, NDJSON or Content-Length.
  */
 import os from "node:os";
 import { ensureProductEnv, PRODUCT_NAME } from "../brand.mjs";
-import { CONTEXT_STORE_MCP_TOOLS, callContextStoreTool, startContextStore } from "./context-store.mjs";
+import { callContextStoreTool, contextStoreTools, startContextStore } from "./context-store.mjs";
 import { serveStdio } from "./stdio.mjs";
 
 ensureProductEnv();
@@ -28,7 +28,7 @@ async function handle(msg) {
       });
     }
     if (method === "notifications/initialized" || method === "ping") return ok(id, {});
-    if (method === "tools/list") return ok(id, { tools: CONTEXT_STORE_MCP_TOOLS });
+    if (method === "tools/list") return ok(id, { tools: contextStoreTools(process.env) });
     if (method === "tools/call") {
       const data = await callContextStoreTool(params?.name, params?.arguments || {}, { home });
       return ok(id, { content: [{ type: "text", text: JSON.stringify(data) }] });

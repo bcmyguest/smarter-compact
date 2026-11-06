@@ -69,6 +69,7 @@ class Store:
         self.root = Path(root)
         self.sessions = self.root / "sessions"
         self.blobs = self.root / "blobs"
+        self.scratchpad = self.root / "scratchpad"
 
     def _session_path(self, sid, suffix):
         return self.sessions / f"{sid}{suffix}"
@@ -119,6 +120,25 @@ class Store:
         _ensure_dir(self.sessions)
         data = json.dumps(state, ensure_ascii=False, sort_keys=True).encode("utf-8")
         _write_atomic(self._session_path(sid, ".trim.json"), data)
+
+    # Agent scratchpad (written by the smart_compact_scratchpad MCP tool)
+    def take_scratchpad(self, sid):
+        """The pad's text, the file then renamed to <sid>.<n>.md (n the next free integer); "" when missing or blank."""
+        path = self.scratchpad / f"{sid}.md"
+        try:
+            text = path.read_bytes().decode("utf-8", "replace")
+        except OSError:
+            return ""
+        if not text.strip():
+            return ""
+        n = 1
+        while (self.scratchpad / f"{sid}.{n}.md").exists():
+            n += 1
+        try:
+            os.replace(path, self.scratchpad / f"{sid}.{n}.md")
+        except OSError:
+            pass
+        return text
 
     # Blobs
     def write_blob(self, bid, text):
