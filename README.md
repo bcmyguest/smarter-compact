@@ -161,18 +161,7 @@ A fail-open sends the request on untrimmed and records the error. The request is
 
 `SMARTER_COMPACT_STATE_DIR` defaults to `~/.local/share/smarter-compact` for smarter-compact and the plugin. The store is `$SMARTER_COMPACT_STATE_DIR/context`. Schema and file layout: [docs/context-store.md](docs/context-store.md).
 
-| Variable | Default | Effect |
-| --- | --- | --- |
-| `CONTEXT_PROXY_ENABLED` | `1` | `0` forwards every request unchanged |
-| `CONTEXT_TRIM_AT_TOKENS` | unset → per-model table | When **set** (env, `proxy.env`, OpenCode `trimAtTokens`, or `smarter-compact context set trim=N`), one threshold for **every** model. When **unset**, the model id is matched against `[context_proxy.trim_at]` in `~/.config/smarter-compact/config.toml` (built-in: `haiku` → 95000, else `default` 125000). Example: `smarter-compact context set haiku=88000`. |
-| `CONTEXT_TRIM_TO_FRACTION` | `0.53` | In-turn tool steps kept while the request stays under this fraction of the threshold |
-| `CONTEXT_TRIM_MIN_GAIN_TOKENS` | `0` | A trim that would free fewer estimated tokens than this waits for a bigger one; `/compact` ignores it; `0` off |
-| `CONTEXT_MASK_OBSERVATIONS` | `1` | Keeps tool calls in the kept region before the latest run and masks their results; `0` drops them with their turns ([details](docs/context-proxy.md#configuration)) |
-| `CONTEXT_CLEAR_KEEP_RESULTS` | `0` | `N` > 0: a trim masks every tool result but the N newest, keeping all turns; turns drop only when that is not enough ([research](docs/context-research.md#clearing-versus-turn-deletion-2026-11-05)) |
-| `CONTEXT_SERVER_CLEAR` | `0` | `1` adds Anthropic's server-side tool-result clearing to Claude requests ([details](docs/context-proxy.md#server-side-tool-result-clearing)) |
-| `CONTEXT_COMPRESS_OVER_TOKENS` | `4000` | Tool results above this are stored in full and replaced by a short header |
-| `CONTEXT_COMPACTION_RECALL` | `0` by default | `1` asks a memory bank named on the session registration |
-| `CONTEXT_PROXY_PORT` | `4101` | LiteLLM listen port (env overrides `~/.config/smarter-compact/proxy.env`; `smarter-compact enable` writes the port in use) |
+Every setting and default: [configuration reference](docs/configuration.md).
 
 ### Proxy port
 
@@ -196,7 +185,7 @@ CONTEXT_PROXY_PORT=4200
 # CONTEXT_TRIM_AT_TOKENS=120000
 ```
 
-OpenCode 2 plugin options: `"proxyPort": 4200` in the plugin entry (maps to `CONTEXT_PROXY_PORT` for in-process trim settings; proxy auto-start uses the same resolution).
+The OpenCode 2 `proxyPort` option does not move the auto-started proxy; set `CONTEXT_PROXY_PORT` instead.
 
 ## Tests
 

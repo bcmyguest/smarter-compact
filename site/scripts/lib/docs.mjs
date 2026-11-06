@@ -38,14 +38,21 @@ export const PAGES = [
     source: 'docs/context-proxy.md',
     group: 'Guides',
     title: 'Context proxy',
-    description: 'LiteLLM proxy, env vars, proxy port, token estimate.',
+    description: 'LiteLLM proxy, proxy port, token estimate.',
   },
   {
     slug: 'opencode',
     source: 'docs/opencode.md',
     group: 'Guides',
     title: 'OpenCode',
-    description: 'Plugin install and options.',
+    description: 'Plugin install.',
+  },
+  {
+    slug: 'configuration',
+    source: 'docs/configuration.md',
+    group: 'Reference',
+    title: 'Configuration',
+    description: 'Every setting, its default, and the component that reads it.',
   },
   {
     slug: 'context-store',

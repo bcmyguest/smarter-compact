@@ -159,28 +159,12 @@ Wire format and SQL rules: [context store](context-store.md).
 
 ## Configuration
 
-Environment variables (OpenCode plugin options use camelCase equivalents — see [opencode.md](opencode.md)):
-
-| Variable | Default | Effect |
-| --- | --- | --- |
-| `CONTEXT_TRIM_AT_TOKENS` | unset → per-model table | When unset, thresholds come from `config.toml` `[context_proxy.trim_at]` (built-in `haiku` 95k, `default` 125k). When set, one value for all models. `smarter-compact context set …` edits the table. |
-| `CONTEXT_TRIM_TO_FRACTION` | `0.53` | In-turn tool exchanges kept under this fraction of threshold |
-| `CONTEXT_TRIM_MIN_GAIN_TOKENS` | `0` | Skip a trim that would free fewer estimated tokens than this; forced trims ignore it; `0` off |
-| `CONTEXT_STRIP_PROSE` | `0` | Strip tool calls from kept turns, keep their text; `1` on, under review ([research](context-research.md#terminal-bench-21-trim-shape-arms-2026-11-05)) |
-| `CONTEXT_MASK_OBSERVATIONS` | `1` | Keep tool calls in that region, mask their results (`0` turns it off); wins over prose strip ([research](context-research.md#prose-strip-versus-observation-masking-2026-11-05)) |
-| `CONTEXT_CLEAR_KEEP_RESULTS` | `0` | `N` > 0: a trim masks every tool result but the N newest and keeps all turns; drops turns only when that is not enough ([research](context-research.md#clearing-versus-turn-deletion-2026-11-05)) |
-| `CONTEXT_SERVER_CLEAR` | `0` | `1` adds Anthropic's `clear_tool_uses_20250919` edit to Claude requests (proxy only); `CONTEXT_SERVER_CLEAR_TRIGGER_TOKENS` `100000`, `CONTEXT_SERVER_CLEAR_KEEP_TOOL_USES` `3`, `CONTEXT_SERVER_CLEAR_AT_LEAST_TOKENS` `5000` ([details](context-proxy.md#server-side-tool-result-clearing)) |
-| `CONTEXT_PROGRESS_NOTE` | `1` | Add a mechanical progress note to the trim pointer; `0` off ([research](context-research.md#terminal-bench-21-trim-shape-arms-2026-11-05)) |
-| `CONTEXT_COMPRESS_OVER_TOKENS` | `4000` | Tool result compression threshold |
-| `CONTEXT_COMPACTION_RECALL` | `0` | Recall on trim |
-| `CONTEXT_PROXY_PORT` | `4101` | LiteLLM listen port — see [proxy port](context-proxy.md#proxy-port) |
-| `SMARTER_COMPACT_STATE_DIR` | `~/.local/share/smarter-compact` | Store root (append `/context` for files) |
-
-Full proxy and token-estimate tables: [context proxy](context-proxy.md).
+Every setting, its default and the component that reads it: [configuration reference](configuration.md#trim).
 
 ## More
 
-- [Context proxy](context-proxy.md) — LiteLLM rewrite pipeline and env vars
+- [Context proxy](context-proxy.md) — LiteLLM rewrite pipeline
 - [Context store](context-store.md) — schema, trim rules, search tools
-- [OpenCode](opencode.md) — plugin options
+- [OpenCode](opencode.md) — plugin install
+- [Configuration](configuration.md) — every setting and default
 - [Context research](context-research.md) — related work, run notes, and benchmark method

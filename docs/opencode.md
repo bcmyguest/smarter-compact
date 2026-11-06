@@ -88,27 +88,12 @@ OpenCode 1 has no context hook, so trimming goes through the LiteLLM proxy:
 
 The plugin starts the proxy in the background when needed (`CONTEXT_PROXY_PORT`, default 4101).
 
-Plugin options in `opencode.json`:
-
-```jsonc
-{ "plugin": [["smarter-compact", { "trimAtTokens": 125000 }]] }
-```
+The proxy reads its own environment, so set `CONTEXT_*` variables or `proxy.env`; OpenCode 1 plugin options do not reach it ([reference](configuration.md#opencode-plugin-options)).
 
 The `server` hook sends `x-smarter-compact-session-id` when your Anthropic `baseURL` is the local proxy, registers the session, and honours `/compact`.
 
 ## Options
 
-| option | env | default |
-| --- | --- | --- |
-| `enabled` | `CONTEXT_PROXY_ENABLED` | on |
-| `standingInstruction` | `CONTEXT_STANDING_INSTRUCTION` | on |
-| `trimAtTokens` | `CONTEXT_TRIM_AT_TOKENS` | 125000 (95000 for Haiku when unset; setting this disables per-model defaults) |
-| `trimToFraction` | `CONTEXT_TRIM_TO_FRACTION` | 0.53 |
-| `compressOverTokens` | `CONTEXT_COMPRESS_OVER_TOKENS` | 4000 |
-| `charsPerToken` | `CONTEXT_CHARS_PER_TOKEN` | 2.5 |
-| `compactionMaxChars` | `CONTEXT_COMPACTION_MAX_CHARS` | 12000 |
-| `compactionRecall` | `CONTEXT_COMPACTION_RECALL` | off in Smarter Compact |
-| `stateDir` | `SMARTER_COMPACT_STATE_DIR` | `~/.local/share/smarter-compact` |
-| `proxyPort` | `CONTEXT_PROXY_PORT` | 4101 (also read from `~/.config/smarter-compact/proxy.env`) |
+Each option maps to a `CONTEXT_*` variable; which ones OpenCode 2 honours: [configuration reference](configuration.md#opencode-plugin-options).
 
 Store layout: [context-store.md](context-store.md).

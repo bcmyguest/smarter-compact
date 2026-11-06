@@ -19,6 +19,7 @@ The agent searches the store with `smart_compact_search`, `smart_compact_sql`, a
 | [Quick start](quick-start.md) | Install and set up for Claude Code, Codex, Pi, or OpenCode |
 | [Smart compaction](context-management.md) | How trimming works, **ContextBench results**, agents, MCP tools |
 | [Context research](context-research.md) | Related work, design evidence, strict runs through Run E |
-| [Context proxy](context-proxy.md) | LiteLLM proxy, env vars, **proxy port**, token estimate |
+| [Context proxy](context-proxy.md) | LiteLLM proxy, **proxy port**, token estimate |
 | [Context store](context-store.md) | File layout, schema, trim rules, search and SQL |
-| [OpenCode](opencode.md) | Plugin install and options |
+| [OpenCode](opencode.md) | Plugin install |
+| [Configuration](configuration.md) | Every setting, its default, and the component that reads it |

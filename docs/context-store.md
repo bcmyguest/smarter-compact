@@ -121,7 +121,7 @@ ALTER TABLE events ADD COLUMN applied_edits TEXT;
 | `messages.created_at` | When the row was stored. Timestamps are ISO 8601 UTC without fractions (`2026-10-29T17:00:00Z`) |
 | `lines` | One row per `\n`-separated line of `messages.text`, `line_no` from 1, `role` copied from the message |
 | `messages_fts`, `lines_fts` | FTS5 (default `unicode61` tokenizer) over `messages.text` and `lines.text`; rowid = `messages.seq` / `lines.id` |
-| `vectors` | Embedding of the head of `messages.text` (first `embedding_max_chars` characters, default 4000) per model: `dim` float32 values, little-endian, in `blob`. `dim = 0` with an empty `blob` marks a row skipped after repeated failures |
+| `vectors` | Embedding of the head of `messages.text` (first `CONTEXT_EMBEDDING_MAX_CHARS` characters, default 4000) per model: `dim` float32 values, little-endian, in `blob`. `dim = 0` with an empty `blob` marks a row skipped after repeated failures |
 | `events` | One row per trim, fail-open or model call, [below](#events) |
 
 ### Rows
@@ -186,10 +186,10 @@ One writer per session at a time is the design: the proxy serializes a session u
 | Field | Counts |
 | --- | --- |
 | `total_matches` | Rows that match lexically under the filters (`query`: at least one word; `pattern`: the regex matches the row) |
-| `vectors` | Background embedding progress of the searched sessions for their model: `filled` (rows with a vector), `pending` (non-blank rows still waiting), `skipped` (rows given up on). Present when `embedding_model` is set or a session has vectors; absent for `pattern` searches |
+| `vectors` | Background embedding progress of the searched sessions for their model: `filled` (rows with a vector), `pending` (non-blank rows still waiting), `skipped` (rows given up on). Present when `CONTEXT_EMBEDDING_MODEL` is set or a session has vectors; absent for `pattern` searches |
 | `line_matches` | Exact count of `lines` rows that match under the same filters, across the whole session: every word (`lines_fts MATCH "w1" AND "w2"`) for `query`, the regex for `pattern` (`^` and `$` per line, as `grep -c`). When the pattern budget runs out the response carries the partial count and `timed_out: true` |
 
-`mode` in the response says which ranking ran. **Hybrid**: the MCP server embeds the query with the model that has the most vectors in the database (the configured `embedding_model` when it has vectors), takes the 50 nearest rows by brute-force cosine under the same filters, and merges them with the lexical ranking by reciprocal rank fusion (score Σ 1/(60 + rank)). Vector-only hits carry `similarity` and `matched_terms: 0`. When the query embedding fails, the response is lexical and carries `embedding_error`. `pattern` searches are always lexical.
+`mode` in the response says which ranking ran. **Hybrid**: the MCP server embeds the query with the model that has the most vectors in the database (the configured `CONTEXT_EMBEDDING_MODEL` when it has vectors), takes the 50 nearest rows by brute-force cosine under the same filters, and merges them with the lexical ranking by reciprocal rank fusion (score Σ 1/(60 + rank)). Vector-only hits carry `similarity` and `matched_terms: 0`. When the query embedding fails, the response is lexical and carries `embedding_error`. `pattern` searches are always lexical.
 
 Results carry `session_id`, `seq`, `role`, `kind`, `name`, `in_context`, an excerpt, `matched_terms` (query), `similarity` (hybrid), `blob_ids`, and `before`/`after` with `context`. `databases` maps each searched session to its database path.
 
@@ -216,20 +216,13 @@ The middle row exists because the alternative was a `total_matches: 0` from a st
 
 ## Vectors
 
-Vectors are off unless `[context_store] embedding_model` (env `CONTEXT_EMBEDDING_MODEL`) names a model. The stack ships no embedding route: Hindsight embeds locally, and the LiteLLM configs route only chat models. To turn vectors on, serve an embedding model behind an OpenAI-compatible `POST <url>/embeddings` and set:
+Vectors are off unless `CONTEXT_EMBEDDING_MODEL` names a model. The stack ships no embedding route: Hindsight embeds locally, and the LiteLLM configs route only chat models. To turn vectors on, serve an embedding model behind an OpenAI-compatible `POST <url>/embeddings` and set `CONTEXT_EMBEDDING_MODEL` and `CONTEXT_EMBEDDING_URL`.
 
-| Setting | Env | Default | Used by |
-| --- | --- | --- | --- |
-| `[context_store] embedding_model` | `CONTEXT_EMBEDDING_MODEL` | empty (off) | proxy, OpenCode 2 plugin, MCP |
-| `[context_store] embedding_url` | `CONTEXT_EMBEDDING_URL` | `http://127.0.0.1:11434/v1` (Ollama) | OpenCode 2 plugin and MCP, on the host |
-| — | `CONTEXT_PROXY_EMBEDDING_URL` (stack `.env`) | `http://host.docker.internal:11434/v1` | the proxy container (compose passes it as `CONTEXT_EMBEDDING_URL`) |
-| — | `CONTEXT_EMBEDDING_API_KEY` | empty | Bearer token, when the endpoint needs one (proxy: its env file) |
-| `[context_store] embedding_timeout_s` | `CONTEXT_EMBEDDING_TIMEOUT_S` | `30` | Seconds per row: a call of n rows times out after n × this (proxy, OpenCode 2 plugin) |
-| `[context_store] embedding_max_chars` | `CONTEXT_EMBEDDING_MAX_CHARS` | `4000` | Characters of each row's head that are embedded (proxy, OpenCode 2 plugin) |
+Variables and defaults: [configuration reference](configuration.md#store-and-search).
 
-For Ollama: `ollama pull nomic-embed-text`, then `embedding_model = "nomic-embed-text"`. Embedding runs off the request path: after a request stores new rows, the proxy queues the database for one daemon thread and the OpenCode 2 plugin starts one background run per database. Each run embeds rows without a vector for the model in this order: trimmed rows (`in_context = 0`) first, since those are what search needs, then newest first (`ORDER BY in_context, seq DESC`). The MCP server embeds only the query. The model must be the same at every end; vectors of another model are ignored by a search that picks a different one.
+For Ollama: `ollama pull nomic-embed-text`, then `CONTEXT_EMBEDDING_MODEL=nomic-embed-text`. Embedding runs off the request path: after a request stores new rows, the proxy queues the database for one daemon thread and the OpenCode 2 plugin starts one background run per database. Each run embeds rows without a vector for the model in this order: trimmed rows (`in_context = 0`) first, since those are what search needs, then newest first (`ORDER BY in_context, seq DESC`). The MCP server embeds only the query. The model must be the same at every end; vectors of another model are ignored by a search that picks a different one.
 
-**Input size.** Each row sends only its first `embedding_max_chars` characters (code points), so a row's vector covers its head and the rest of a long tool result is reachable only lexically. nomic-embed-text has a 2048-token context (`nomic-bert.context_length` in Ollama's `/api/show`; its `num_ctx 8192` parameter does not raise it). Code and logs run at about 2–3 characters per token, so 4000 characters stay inside it: on Ollama 0.40.1, 4000 characters of JavaScript were 1254 tokens, while 8000 hit the 2048 cap. Ollama 0.12.6 hung on inputs past the context. Rows are truncated, not chunked: several vectors per row would multiply the embedding work on the slow hardware this targets, and the `vectors` key (`message_seq`, `model`) would need a schema change.
+**Input size.** Each row sends only its first `CONTEXT_EMBEDDING_MAX_CHARS` characters (code points), so a row's vector covers its head and the rest of a long tool result is reachable only lexically. nomic-embed-text has a 2048-token context (`nomic-bert.context_length` in Ollama's `/api/show`; its `num_ctx 8192` parameter does not raise it). Code and logs run at about 2–3 characters per token, so 4000 characters stay inside it: on Ollama 0.40.1, 4000 characters of JavaScript were 1254 tokens, while 8000 hit the 2048 cap. Ollama 0.12.6 hung on inputs past the context. Rows are truncated, not chunked: several vectors per row would multiply the embedding work on the slow hardware this targets, and the `vectors` key (`message_seq`, `model`) would need a schema change.
 
 **Batches.** Calls start at 4 rows. A full batch that finishes under a quarter of its timeout doubles the next one, up to 32. A failed call of n > 1 rows halves the batch, and the rest of that run grows no larger than the halved size. The size persists per endpoint and model between runs, so each run probes at most one larger batch. Every call logs one line to stderr: `smarter-compact: embedded rows=<n> seconds=<s> batch=<next>`, or `embedding batch failed <type> rows=<n> seconds=<s> batch=<next>`.
 
@@ -237,7 +230,7 @@ For Ollama: `ollama pull nomic-embed-text`, then `embedding_model = "nomic-embed
 
 ## Retention
 
-`[context_store] ttl_days` (env `CONTEXT_STORE_TTL_DAYS`, default 30; `0` keeps everything). At start, the proxy (on a daemon thread) and the MCP server sweep `sessions/`, at most once a day: when `.ttl-stamp` is older than 24 h or missing, they touch it and delete every session whose newest file is older than the TTL. A session's files are grouped by suffix (`.db`, `.db-wal`, `.db-shm`, `.json`, `.trim.json`, `.force`, `.log.jsonl`); dot files and other names are left alone. After session cleanup, the same pass deletes orphaned `blobs/<id>.txt` files that no remaining `messages.blob_id` references (blobs are content-addressed and shared across sessions). If any remaining session database cannot be opened, the blob pass is skipped for that run. A writer that finds its cached database deleted or replaced reopens it on the next request.
+`CONTEXT_STORE_TTL_DAYS` (default 30; `0` keeps everything). At start, the proxy (on a daemon thread) and the MCP server sweep `sessions/`, at most once a day: when `.ttl-stamp` is older than 24 h or missing, they touch it and delete every session whose newest file is older than the TTL. A session's files are grouped by suffix (`.db`, `.db-wal`, `.db-shm`, `.json`, `.trim.json`, `.force`, `.log.jsonl`); dot files and other names are left alone. After session cleanup, the same pass deletes orphaned `blobs/<id>.txt` files that no remaining `messages.blob_id` references (blobs are content-addressed and shared across sessions). If any remaining session database cannot be opened, the blob pass is skipped for that run. A writer that finds its cached database deleted or replaced reopens it on the next request.
 
 **Contents.** The store holds tool output verbatim, unredacted, as Claude Code's own `~/.claude/projects/*.jsonl` transcripts do; redaction would break exact recall of values such as keys. `sessions/` and `blobs/` are mode 700, session files mode 600.
 

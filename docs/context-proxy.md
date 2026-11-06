@@ -33,35 +33,13 @@ smarter-compact enable claude
 
 Or add `CONTEXT_PROXY_PORT=4200` to `proxy.env`, then run `smarter-compact enable` again so agent URLs match.
 
-OpenCode 2 plugin JSON: `"proxyPort": 4200` (maps to `CONTEXT_PROXY_PORT` for settings and auto-start).
+The OpenCode 2 `proxyPort` option does not move the auto-started proxy; set `CONTEXT_PROXY_PORT` instead.
 
 Auto-start is off when `SMARTER_COMPACT_AUTO_PROXY=0`. Logs: `~/.config/smarter-compact/proxy.log`, rotated to `proxy.log.1` at 5 MB on each start.
 
 ## Configuration
 
-| Variable | Default | Effect |
-| --- | --- | --- |
-| `CONTEXT_PROXY_ENABLED` | `1` | `0` forwards requests unchanged |
-| `CONTEXT_TRIM_AT_TOKENS` | unset → per-model | **Set** (env, `proxy.env`, OpenCode `trimAtTokens`, or `[context_proxy] trim_at_tokens` / `context set trim=`) → one threshold for every model. **Unset** → `[context_proxy.trim_at]` in `~/.config/smarter-compact/config.toml` merged with built-in `haiku=95000`, fallback `default=125000`. CLI: `smarter-compact context set haiku=88000`. |
-| `CONTEXT_TRIM_TO_FRACTION` | `0.53` | In-turn tool retention fraction |
-| `CONTEXT_TRIM_MIN_GAIN_TOKENS` | `0` | Skips a new trim that would free fewer estimated tokens than this (pointer note not counted); a forced trim (`/compact`) ignores it; `0` off. Without it, a trim fires whenever any message can drop: `CONTEXT_TRIM_TO_FRACTION` is a target, not a floor, and a long in-flight turn can leave a trim that frees little |
-| `CONTEXT_STRIP_PROSE` | `0` | Strips tool calls and results from kept turns, keeping their text; `1` on, under review ([research](context-research.md#terminal-bench-21-trim-shape-arms-2026-11-05)) |
-| `CONTEXT_MASK_OBSERVATIONS` | `1` | On by default (`0` turns it off): keeps each tool call in the same region and replaces its result (when longer) with a fixed placeholder; the trim pointer gains how to fetch it back from the store. Wins over `CONTEXT_STRIP_PROSE`. Proxy only; the OpenCode plugin trim does not mask ([research](context-research.md#prose-strip-versus-observation-masking-2026-11-05)) |
-| `CONTEXT_CLEAR_KEEP_RESULTS` | `0` | `N` > 0: each trim first replaces every tool result except the N newest with the mask placeholder, keeping all turns and calls; oldest turns drop only when the request is still above `CONTEXT_TRIM_TO_FRACTION`. The cleared set stays fixed until the next trim. Experimental ([research](context-research.md#clearing-versus-turn-deletion-2026-11-05)) |
-| `CONTEXT_SERVER_CLEAR` | `0` | `1` adds Anthropic's server-side tool-result clearing edit to Claude requests on `/v1/messages`, [below](#server-side-tool-result-clearing) |
-| `CONTEXT_SERVER_CLEAR_TRIGGER_TOKENS` | `100000` | The edit's `trigger`: clearing starts once the prompt exceeds this many input tokens (Anthropic's default) |
-| `CONTEXT_SERVER_CLEAR_KEEP_TOOL_USES` | `3` | The edit's `keep`: most recent tool use/result pairs never cleared (Anthropic's default) |
-| `CONTEXT_SERVER_CLEAR_AT_LEAST_TOKENS` | `5000` | The edit's `clear_at_least`, the cache-break gate; `0` omits it |
-| `CONTEXT_PROGRESS_NOTE` | `1` | Appends files edited and last build/test commands to the trim pointer; `0` off ([research](context-research.md#terminal-bench-21-trim-shape-arms-2026-11-05)) |
-| `CONTEXT_CHARS_PER_TOKEN` | `2.5` | Estimate before usage calibration |
-| `CONTEXT_COMPRESS_OVER_TOKENS` | `4000` | Tool compression threshold; `0` off |
-| `CONTEXT_COMPACTION_MAX_CHARS` | `12000` | Max recall block size |
-| `CONTEXT_COMPACTION_RECALL` | `0` in this package | `1` enables recall on trim |
-| `CONTEXT_STANDING_INSTRUCTION` | `1` | `0` omits standing search note |
-| `CONTEXT_PROXY_PORT` | `4101` | LiteLLM `--port` (see above) |
-| `SMARTER_COMPACT_STATE_DIR` | `~/.local/share/smarter-compact` | Store parent; files under `context/` |
-| `CONTEXT_STORE_TTL_DAYS` | `30` | Idle session cleanup at proxy start |
-| `CONTEXT_EMBEDDING_MODEL` | empty | Hybrid search embeddings (optional) |
+Every proxy setting, its default and which settings OpenCode 2 also reads: [configuration reference](configuration.md#trim).
 
 Secrets: `LITELLM_MASTER_KEY` in `~/.config/smarter-compact/proxy.env` (mode 600), created by `smarter-compact enable`.
 
