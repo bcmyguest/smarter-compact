@@ -95,7 +95,7 @@ def mechanism(trial, arm):
 
     Mask-10: a trim set a clear bound (trim.json thread "clear_fp"). Mask-run: a trim note carries the mask recovery text.
     ServerClear: Anthropic reported a non-empty context_management.applied_edits on some request.
-    Scratchpad: a trim note carried the agent's pad."""
+    Scratchpad: a trim note carried the agent's pad. ScratchpadClear: both the pad and a Mask-10 clear bound."""
     ctx = os.path.join(trial, "agent/smarter-compact/context/sessions")
     if arm in ("Mask-10", "Mask-run"):
         for path in glob.glob(os.path.join(ctx, "*.trim.json")):
@@ -120,6 +120,8 @@ def mechanism(trial, arm):
         return "no"
     if arm == "Scratchpad":
         return "yes" if trim_stats(trial)[3] else "no"
+    if arm == "ScratchpadClear":
+        return "yes" if trim_stats(trial)[3] and mechanism(trial, "Mask-10") == "yes" else "no"
     return "-"
 
 

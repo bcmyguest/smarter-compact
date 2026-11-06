@@ -288,3 +288,10 @@ class ScClaudeScratchpad(ScClaudeSmarterCompact):
     FORCED_ENV = {"CONTEXT_SCRATCHPAD": "1"}
     # The MCP server offers smart_compact_scratchpad only with the flag on.
     MCP_ENV = {"CONTEXT_SCRATCHPAD": "1"}
+
+
+class ScClaudeScratchpadClear(ScClaudeScratchpad):
+    """The scratchpad plus the proxy defaults: masking and clearing all results but the newest 10."""
+
+    REQUIRES_PROXY_SETTINGS = ("CONTEXT_SCRATCHPAD", "CONTEXT_CLEAR_KEEP_RESULTS")
+    DEFAULT_ENV = {"CONTEXT_CLEAR_KEEP_RESULTS": "10", "CONTEXT_MASK_OBSERVATIONS": "1"}
