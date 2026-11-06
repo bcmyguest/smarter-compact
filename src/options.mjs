@@ -15,9 +15,6 @@ export function envFromPluginOptions(options = {}, base = process.env) {
   set("CONTEXT_TRIM_TO_FRACTION", options.trimToFraction);
   set("CONTEXT_COMPRESS_OVER_TOKENS", options.compressOverTokens);
   set("CONTEXT_CHARS_PER_TOKEN", options.charsPerToken);
-  set("CONTEXT_COMPACTION_MAX_CHARS", options.compactionMaxChars);
-  flag("CONTEXT_COMPACTION_RECALL", options.compactionRecall);
-  set("CONTEXT_RECALL_TIMEOUT_S", options.recallTimeoutS);
   set("SMARTER_COMPACT_STATE_DIR", options.stateDir);
   set("CONTEXT_PROXY_PORT", options.proxyPort);
   return env;

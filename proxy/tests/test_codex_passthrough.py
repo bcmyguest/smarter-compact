@@ -34,10 +34,6 @@ def codex_body(sid=SID):
     }
 
 
-def no_http(*args):
-    raise AssertionError("no registration, so no recall")
-
-
 class AdapterSelectionTests(unittest.TestCase):
     def test_codex_route_uses_the_responses_adapter(self):
         self.assertIsInstance(adapter_for("pass_through_endpoint", CODEX_RESPONSES_ROUTE), ResponsesAdapter)
@@ -66,8 +62,7 @@ class PassThroughRequestTests(unittest.TestCase):
         return Settings(**base)
 
     def run_codex(self, data, route=CODEX_RESPONSES_ROUTE, call_id="call-codex", **kw):
-        return process_request(data, "pass_through_endpoint", self.settings(**kw), http=no_http, route=route,
-                               call_id=call_id)
+        return process_request(data, "pass_through_endpoint", self.settings(**kw), route=route, call_id=call_id)
 
     def test_codex_body_is_rewritten_in_place(self):
         data = codex_body()

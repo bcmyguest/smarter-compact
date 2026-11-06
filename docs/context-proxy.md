@@ -5,8 +5,7 @@ For Claude Code, OpenCode 1, and Codex, **Smarter Compact** runs a local **LiteL
 1. **Tool-result compression.** Results over `CONTEXT_COMPRESS_OVER_TOKENS` become a short header plus `smart_compact_get(id=...)`; full text in `blobs/<id>.txt`.
 2. **Store.** Messages go into `sessions/<sid>.db` ([session database](context-store.md#session-database)).
 3. **Trim.** At `CONTEXT_TRIM_AT_TOKENS` or when `sessions/<sid>.force` exists, older turns drop from the request; dropped rows get `in_context = 0`; a pointer replaces them at the start of the kept turn.
-4. **Recall on trim.** Optional when `CONTEXT_COMPACTION_RECALL=1` and the session registration names a bank ([format](context-store.md#proxy-inserted-text)).
-5. **Standing instruction.** Every request gets a constant system note to use `smart_compact_search` before guessing about trimmed content.
+4. **Standing instruction.** Every request gets a constant system note to use `smart_compact_search` before guessing about trimmed content.
 
 The cut is sticky for prompt-cache stability. **OpenCode 2** applies the same rules in-process (`plugin/lib/context-trim.mjs`); it does not send traffic through this proxy.
 

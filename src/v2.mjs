@@ -61,7 +61,6 @@ async function registerSearchTools(ctx, { home, env, enabled, directory }) {
         environment: {
           HOME: home,
           SMARTER_COMPACT_STATE_DIR: stateParent(home, env),
-          CONTEXT_COMPACTION_RECALL: env.CONTEXT_COMPACTION_RECALL || "0",
         },
         enabled: true,
       },

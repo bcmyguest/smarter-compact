@@ -20,7 +20,7 @@ The agent searches the store with `smart_compact_search`, `smart_compact_sql`, a
 <img src="docs/media/contextbench-savings.png" alt="Average cost saving 72%: paired cost of Smarter Compact relative to keep everything, kv-store R4000 −87%, log-triage L1600 −19% (not significant), L6400 −89%, L12800 −94%; log-task score +0.47" width="720" />
 </p>
 
-Trimmed context is marked with a `[smarter-compact: …]` pointer, and recalled text arrives in `<smarter-compact-recall>` blocks. Memory recall on a trim is off unless you set `CONTEXT_COMPACTION_RECALL=1`.
+Trimmed context is marked with a `[smarter-compact: …]` pointer.
 
 You need Node 24 or newer (for `node:sqlite`) and, for agents that trim through the proxy, the LiteLLM dev build `v1.109.0-dev.1` on `PATH` as `litellm`. The plugin has no API key of its own. Your agent keeps its own login.
 

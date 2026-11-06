@@ -35,17 +35,6 @@ OpenCode plugin options override the environment ([which reach what](#opencode-p
 | `CONTEXT_COMPRESS_OVER_TOKENS` | `4000` | proxy, OpenCode 2 | Tool results above this become a header plus `smart_compact_get(id=...)`; `0` off |
 | `CONTEXT_STANDING_INSTRUCTION` | `1` | proxy, OpenCode 2 | `0` omits the system note telling the agent to search before guessing |
 
-## Recall on trim
-
-Recall runs in the proxy only. OpenCode 2 reads these values but makes no recall call.
-
-| Variable | Default | Read by | Effect |
-| --- | --- | --- | --- |
-| `CONTEXT_COMPACTION_RECALL` | `0` via the CLI, hooks and OpenCode 2; `1` in the proxy core and Docker compose | proxy | `1` adds a recall block from the memory bank the session registration names ([format](context-store.md#proxy-inserted-text)) |
-| `CONTEXT_COMPACTION_MAX_CHARS` | `12000` | proxy | Recall block size cap, in characters |
-| `CONTEXT_RECALL_TIMEOUT_S` | `5.0` | proxy | Recall request timeout, in seconds |
-| `HINDSIGHT_URL` | `http://127.0.0.1:8888` | proxy | Memory service the recall queries |
-
 ## Server-side tool-result clearing
 
 Anthropic route (`/v1/messages`) to Claude models only. Details: [context proxy](context-proxy.md#server-side-tool-result-clearing).
@@ -115,9 +104,6 @@ OpenCode 2 maps each option to its variable for the in-process trim (`src/option
 | `compressOverTokens` | `CONTEXT_COMPRESS_OVER_TOKENS` | yes |
 | `charsPerToken` | `CONTEXT_CHARS_PER_TOKEN` | yes |
 | `stateDir` | `SMARTER_COMPACT_STATE_DIR` | yes: trim store, session registration, `/compact` flags and the registered MCP server |
-| `compactionRecall` | `CONTEXT_COMPACTION_RECALL` | none: OpenCode 2 has no recall |
-| `compactionMaxChars` | `CONTEXT_COMPACTION_MAX_CHARS` | none |
-| `recallTimeoutS` | `CONTEXT_RECALL_TIMEOUT_S` | none |
 | `proxyPort` | `CONTEXT_PROXY_PORT` | proxy auto-start probes this port, over the environment and `proxy.env`, and starts a proxy there only when an agent config already points at it; the in-process trim does not use it |
 
 OpenCode 1 applies only `stateDir`, to session registration and `/compact` flags. It trims in the proxy, which reads its own environment: set the trim variables or `proxy.env`, not plugin options.

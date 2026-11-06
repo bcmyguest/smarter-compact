@@ -55,7 +55,7 @@ class DbBase(unittest.TestCase):
     def run_req(self, msgs, sid=SID, **kw):
         base = dict(trim_at_tokens=BIG, compress_over_tokens=0, context_dir=self.ctx, standing_instruction=False)
         base.update(kw)
-        return process_request(req(msgs, sid), "anthropic_messages", Settings(**base), http=lambda *a: (200, {}))
+        return process_request(req(msgs, sid), "anthropic_messages", Settings(**base))
 
     def path(self, sid=SID):
         return self.ctx / "sessions" / f"{sid}.db"

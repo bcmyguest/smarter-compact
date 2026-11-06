@@ -141,22 +141,17 @@ test("proxy.env supplies every proxy setting the environment leaves unset", () =
     CONTEXT_MASK_OBSERVATIONS: "0",
     CONTEXT_SERVER_CLEAR: "1",
     CONTEXT_STORE_TTL_DAYS: "9",
-    CONTEXT_COMPACTION_RECALL: "1",
-    HINDSIGHT_URL: "http://127.0.0.1:9999",
     CONTEXT_EMBEDDING_API_KEY: "secret",
   }, { mode: 0o600 });
   const env = { HOME: home, CONTEXT_SERVER_CLEAR: "0" };
   ensureProductEnv(env, home);
   assert.equal(env.CONTEXT_MASK_OBSERVATIONS, "0");
   assert.equal(env.CONTEXT_STORE_TTL_DAYS, "9");
-  assert.equal(env.CONTEXT_COMPACTION_RECALL, "1");
-  assert.equal(env.HINDSIGHT_URL, "http://127.0.0.1:9999");
   assert.equal(env.CONTEXT_SERVER_CLEAR, "0", "the environment wins");
   assert.equal(env.CONTEXT_EMBEDDING_API_KEY, undefined, "a secret stays out of the agent's environment");
   assert.equal(typeof proxyDaemon.litellmEnv, "function");
   const proxy = proxyDaemon.litellmEnv(home, home, "4101", { HOME: home });
   assert.equal(proxy.CONTEXT_MASK_OBSERVATIONS, "0");
-  assert.equal(proxy.CONTEXT_COMPACTION_RECALL, "1");
   assert.equal(proxy.CONTEXT_EMBEDDING_API_KEY, "secret", "the spawned proxy gets the secret");
 });
 

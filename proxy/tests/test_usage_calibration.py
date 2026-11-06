@@ -36,10 +36,6 @@ def request(msgs, call_id=None):
     return data
 
 
-def no_http(*args):
-    raise AssertionError("no registration, so no recall")
-
-
 class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -53,8 +49,7 @@ class Base(unittest.TestCase):
         return Settings(**base)
 
     def run_req(self, msgs, call_id=None, **kw):
-        return process_request(request(copy.deepcopy(msgs), call_id), "anthropic_messages", self.settings(**kw),
-                               http=no_http)
+        return process_request(request(copy.deepcopy(msgs), call_id), "anthropic_messages", self.settings(**kw))
 
     def chars_of(self, msgs):
         return request_chars("SYSTEM", None, msgs)
@@ -223,7 +218,7 @@ class DeferredToolTests(Base):
             tool["defer_loading"] = True
         data["tools"] = [tool]
         settings = self.settings(trim_at_tokens=50000, chars_per_token=4.0, context_dir=self.ctx / str(defer))
-        out = process_request(data, "anthropic_messages", settings, http=no_http)
+        out = process_request(data, "anthropic_messages", settings)
         return len(out["messages"]) < len(msgs)
 
     def test_deferred_tools_do_not_count_toward_the_trim(self):

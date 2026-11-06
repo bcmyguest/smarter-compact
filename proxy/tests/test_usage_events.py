@@ -155,7 +155,7 @@ class ServerClearTests(UsageEventFlowTests):
         from smarter_compact import process_request
         data = {"model": model, "system": "SYSTEM", "messages": tool_history("x" * 50), "litellm_call_id": "s1",
                 "proxy_server_request": {"headers": {"x-claude-code-session-id": SID}}, **(data_extra or {})}
-        return process_request(data, call_type, self.settings(**kw), http=lambda *a: None)
+        return process_request(data, call_type, self.settings(**kw))
 
     def test_env_defaults(self):
         from smarter_compact import Settings

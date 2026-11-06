@@ -1,6 +1,6 @@
 /**
  * Product identity for the extracted trimmer. Everything the product writes or says carries its
- * own name; the spellings earlier releases emitted (`[openmem: …]`, `<openmem-recall>`,
+ * own name; the spellings earlier releases emitted (`[openmem: …]`,
  * `OPENMEM_STATE_DIR`, `openmem:smarter-compact`) are still READ, because sessions, command files
  * and env set up before the rename exist in the wild. Tool names were always `smart_compact_*`.
  */
@@ -32,10 +32,6 @@ export const PROXY_ENV_CONTEXT_KEYS = [
   "CONTEXT_CHARS_PER_TOKEN",
   "CONTEXT_COMPRESS_OVER_TOKENS",
   "CONTEXT_STANDING_INSTRUCTION",
-  "CONTEXT_COMPACTION_RECALL",
-  "CONTEXT_COMPACTION_MAX_CHARS",
-  "CONTEXT_RECALL_TIMEOUT_S",
-  "HINDSIGHT_URL",
   "CONTEXT_SERVER_CLEAR",
   "CONTEXT_SERVER_CLEAR_TRIGGER_TOKENS",
   "CONTEXT_SERVER_CLEAR_KEEP_TOOL_USES",
@@ -69,7 +65,6 @@ export function ensureProductEnv(env = process.env, home = os.homedir()) {
     env.CONTEXT_PROXY_PORT = file.CONTEXT_PROXY_PORT ? String(file.CONTEXT_PROXY_PORT) : String(DEFAULT_PORT);
   }
   fillFromProxyEnv(env, file, PROXY_ENV_CONTEXT_KEYS);
-  if (env.CONTEXT_COMPACTION_RECALL === undefined) env.CONTEXT_COMPACTION_RECALL = "0";
   applyTrimConfigToEnv(env, home);
   applyContextStoreConfigToEnv(env, home);
   return env;

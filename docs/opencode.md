@@ -38,8 +38,7 @@ as `CONTEXT_*` env vars (camelCase in JSON):
       "package": "smarter-compact",
       "options": {
         "trimAtTokens": 125000,
-        "compressOverTokens": 4000,
-        "compactionRecall": false
+        "compressOverTokens": 4000
       }
     }
   ]

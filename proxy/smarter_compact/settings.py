@@ -16,9 +16,6 @@ MODEL_TRIM_AT_TOKENS = (("haiku", 95000),)
 # A trim keeps older in-turn exchanges while the request stays under this fraction of trim_at_tokens (Haiku: ~50K).
 DEFAULT_TRIM_TO_FRACTION = 0.53
 DEFAULT_COMPRESS_OVER_TOKENS = 4000
-DEFAULT_COMPACTION_MAX_CHARS = 12000
-DEFAULT_RECALL_TIMEOUT_S = 5.0
-DEFAULT_HINDSIGHT_URL = "http://127.0.0.1:8888"
 DEFAULT_TTL_DAYS = 30
 # OpenAI-compatible embeddings base URL (POST <url>/embeddings): Ollama on the host. compose.yaml sets the
 # container's view (host.docker.internal).
@@ -132,11 +129,6 @@ class Settings:
     compress_over_tokens: int = DEFAULT_COMPRESS_OVER_TOKENS
     # Characters per token for the trim estimate until the session reports usage (CONTEXT_CHARS_PER_TOKEN).
     chars_per_token: float = DEFAULT_CHARS_PER_TOKEN
-    compaction_max_chars: int = DEFAULT_COMPACTION_MAX_CHARS
-    # Bounded provider recall in the trim pointer (CONTEXT_COMPACTION_RECALL=0 turns it off).
-    compaction_recall: bool = True
-    recall_timeout_s: float = DEFAULT_RECALL_TIMEOUT_S
-    hindsight_url: str = DEFAULT_HINDSIGHT_URL
     context_dir: Path = Path.home() / ".local" / "share" / "smarter-compact" / "context"
     # Session files older than this are deleted at start, at most once a day; 0 keeps them (CONTEXT_STORE_TTL_DAYS).
     ttl_days: int = DEFAULT_TTL_DAYS
@@ -187,10 +179,6 @@ class Settings:
             progress_note=_flag(env, "CONTEXT_PROGRESS_NOTE"),
             compress_over_tokens=_int(env, "CONTEXT_COMPRESS_OVER_TOKENS", DEFAULT_COMPRESS_OVER_TOKENS),
             chars_per_token=_positive_float(env, "CONTEXT_CHARS_PER_TOKEN", DEFAULT_CHARS_PER_TOKEN),
-            compaction_max_chars=_int(env, "CONTEXT_COMPACTION_MAX_CHARS", DEFAULT_COMPACTION_MAX_CHARS),
-            compaction_recall=_flag(env, "CONTEXT_COMPACTION_RECALL"),
-            recall_timeout_s=_float(env, "CONTEXT_RECALL_TIMEOUT_S", DEFAULT_RECALL_TIMEOUT_S),
-            hindsight_url=(str(env.get("HINDSIGHT_URL", "")).strip() or DEFAULT_HINDSIGHT_URL).rstrip("/"),
             context_dir=root / "context",
             ttl_days=_int(env, "CONTEXT_STORE_TTL_DAYS", DEFAULT_TTL_DAYS),
             embedding_model=str(env.get("CONTEXT_EMBEDDING_MODEL", "")).strip(),

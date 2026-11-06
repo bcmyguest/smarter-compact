@@ -79,7 +79,6 @@ export function litellmEnv(home, root, port, env) {
     LITELLM_MASTER_KEY: ensureKey(home),
     SMARTER_COMPACT_STATE_DIR: stateParent(home, env),
     CONTEXT_PROXY_PORT: port,
-    CONTEXT_COMPACTION_RECALL: merged.CONTEXT_COMPACTION_RECALL || "0",
   };
 }
 

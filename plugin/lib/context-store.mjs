@@ -62,7 +62,7 @@ function writePrivate(file, text) {
 }
 
 /** Write `sessions/<sid>.json`. Returns the path, or null without a session id. */
-export function registerSession({ home, env, sessionId, agent, cwd, bank, now = new Date() }) {
+export function registerSession({ home, env, sessionId, agent, cwd, now = new Date() }) {
   if (!sessionId) return null;
   const sid = sanitizeSessionId(sessionId);
   const file = path.join(sessionsDir(home, env), `${sid}.json`);
@@ -70,7 +70,6 @@ export function registerSession({ home, env, sessionId, agent, cwd, bank, now = 
     session_id: sid,
     agent,
     cwd,
-    bank,
     registered_at: now.toISOString().replace(/\.\d{3}Z$/, "Z"),
   };
   writePrivate(file, `${JSON.stringify(registration)}\n`);

@@ -17,7 +17,7 @@ from smarter_compact.core import STREAM_TAIL_BYTES, note_stream_edits  # noqa: E
 
 class SmarterCompactHook(CustomLogger):
     async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):
-        # File and Hindsight I/O run off the event loop; process_request never raises. A pass-through call (the
+        # File I/O runs off the event loop; process_request never raises. A pass-through call (the
         # Codex subscription route) is told apart by its route, and its call id lives on the logging object.
         route = getattr(user_api_key_dict, "request_route", None)
         call_id = getattr(data.get("litellm_logging_obj"), "litellm_call_id", None) if isinstance(data, dict) else None
