@@ -111,15 +111,6 @@ class EstimateTests(unittest.TestCase):
         tools = [{"input_schema": {"properties": {"type": {"type": "string"}}}}]
         self.assertEqual(request_chars(tools), len("input_schema" "properties" "type" "type" "string"))
 
-    def test_thinking_signature_and_redacted_data_not_counted(self):
-        # A 6-minute Haiku turn carried a 214k-character signature; counting it fired a trim at 110k of 32k real.
-        blocks = [{"type": "thinking", "thinking": "plan", "signature": "s" * 200000},
-                  {"type": "redacted_thinking", "data": "d" * 50000}]
-        self.assertEqual(request_chars(blocks), len("type" "thinking" "thinking" "plan")
-                         + len("type" "redacted_thinking"))
-        # Only on thinking blocks: a tool input field named signature is prompt text.
-        self.assertEqual(request_chars({"type": "tool_use", "signature": "abc"}), len("type" "tool_use" "signature" "abc"))
-
 
 class UsageShapeTests(unittest.TestCase):
     def test_litellm_usage_prompt_tokens(self):

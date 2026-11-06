@@ -23,13 +23,6 @@ import {
 
 const SID = "sess-1";
 
-test("requestChars counts signed reasoning by its text, not its encrypted payload", () => {
-  const signed = { type: "reasoning", text: "plan", providerMetadata: { anthropic: { signature: "s".repeat(200000) } } };
-  const redacted = { type: "reasoning", text: "", providerMetadata: { anthropic: { redactedData: "d".repeat(50000) } } };
-  assert.equal(requestChars([signed, redacted]), 4);
-  assert.equal(requestChars({ type: "reasoning", text: "plan" }), "typereasoningtextplan".length);
-});
-
 test("the pointer states what was removed, denies a summary, and names both tools", () => {
   const note = pointerText(SID, 3);
   assert.match(note, /^\[smarter-compact: continuing session sess-1; 3 earlier messages are NOT in your context\./);

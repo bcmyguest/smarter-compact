@@ -234,8 +234,6 @@ function chars(value) {
   if (ArrayBuffer.isView(value)) return BINARY_BLOCK_CHARS;
   if (typeof value === "object") {
     if (BINARY_BLOCK_TYPES.has(value.type)) return BINARY_BLOCK_CHARS;
-    // Signed reasoning: its encrypted payload is often 100k+ characters, billed as little or no prompt text.
-    if (isSignedReasoning(value)) return cpLen(typeof value.text === "string" ? value.text : "");
     return Object.entries(value).reduce((sum, [k, v]) => sum + k.length + chars(v), 0);
   }
   return String(value).length;
