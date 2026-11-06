@@ -14,9 +14,10 @@ Code's own autocompaction.
 
 Two things this file deliberately does **not** fake:
 
-* It does not set a native compaction threshold. Claude Code exposes autocompaction as an
-  on/off switch; a "195k" number has to be verified against the CLI before it goes in a config.
-  Until then the baseline is "native compaction enabled, threshold whatever Claude Code uses".
+* It does not set a native compaction threshold in code. Jobs set Claude Code's own
+  `CLAUDE_CODE_AUTO_COMPACT_WINDOW` (100000 to 1000000) and `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`
+  (lowers the trigger to that percentage of the window) per agent; see
+  https://code.claude.com/docs/en/env-vars and https://code.claude.com/docs/en/model-config.
 * It does not carry an API key. Harbor reads `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` from
   the launching environment; nothing here should hardcode one.
 
@@ -40,7 +41,11 @@ TRIM_AT = os.environ.get("SC_TRIM_AT", "95000")
 # Proxy experiment knobs a job's per-agent "env" may set; Harbor applies that env only while the agent runs,
 # after install has already started the proxy, so install forwards these itself.
 ARM_ENV_KEYS = ("CONTEXT_TRIM_AT_TOKENS", "CONTEXT_TRIM_TO_FRACTION", "CONTEXT_STRIP_PROSE", "CONTEXT_PROGRESS_NOTE",
-                "CONTEXT_MASK_OBSERVATIONS")
+                "CONTEXT_MASK_OBSERVATIONS", "CONTEXT_STANDING_INSTRUCTION", "CONTEXT_POINTER_TOOLS",
+                "CONTEXT_SERVER_CLEAR", "CONTEXT_SERVER_CLEAR_TRIGGER_TOKENS", "CONTEXT_SERVER_CLEAR_KEEP_TOOL_USES",
+                "CONTEXT_SERVER_CLEAR_AT_LEAST_TOKENS")
+# A trim threshold no Terminal-Bench session reaches: the proxy runs, our trim never fires.
+TRIM_OFF = "10000000"
 # Job-level bind mount of the host ~/.claude/.credentials.json (read-only in practice; the
 # trial container never refreshes it).
 CREDS_MOUNT = "/opt/claude-creds/.credentials.json"
@@ -113,10 +118,31 @@ class ScClaudeBaseline(ScClaudeBase):
 class ScClaudeSmarterCompact(ScClaudeBase):
     """Same agent, plus smarter-compact's proxy trim at $TRIM_AT and its MCP search tools."""
 
+    # False leaves the recall MCP server unregistered, so Claude Code offers no smart_compact_* tool.
+    RECALL_TOOLS = True
+    # Env names the mounted proxy's settings.py must read; install fails rather than run an arm whose knob is a no-op.
+    REQUIRES_PROXY_SETTINGS = ()
+    # Proxy env that defines the arm; applied after the job's env so a job cannot undo it.
+    FORCED_ENV = {}
+
     async def install(self, environment):
         await super().install(environment)
         # The dir Harbor will point CLAUDE_CONFIG_DIR at.
         dest = (self.environment_logs_dir / "sessions").as_posix()
+        requires = "".join(
+            f"grep -q {name} {REPO}/proxy/smarter_compact/settings.py || "
+            f"{{ echo 'FATAL: mounted proxy lacks {name}'; exit 1; }}; "
+            for name in self.REQUIRES_PROXY_SETTINGS)
+        recall = (
+            # The plugin's MCP server loads from $HOME/.claude's marketplace, invisible under
+            # CLAUDE_CONFIG_DIR; register it user-scoped there (Harbor writes this file only
+            # when its own mcp_servers option is set).
+            f'python3 -c {shlex.quote(_MCP_REGISTER)} {dest}/.claude.json "$NODE_BIN" || '
+            "{ echo 'FATAL: recall MCP not registered'; exit 1; }; "
+        ) if self.RECALL_TOOLS else (
+            f"! grep -qs smarter-compact {dest}/.claude.json || "
+            "{ echo 'FATAL: recall MCP registered in a no-recall arm'; exit 1; }; echo recall-tools=off; "
+        )
 
         # Harbor's ClaudeCode.install() puts the CLI in the *default user's* ~/.local/bin (curl
         # bootstrap) or npm's global prefix, and only appends that dir to ~/.bashrc -- which a
@@ -126,6 +152,7 @@ class ScClaudeSmarterCompact(ScClaudeBase):
         await self.exec_as_agent(
             environment,
             command=(
+                requires +
                 'found=""; for d in "$HOME/.local/bin" /root/.local/bin /home/*/.local/bin '
                 '"$(npm prefix -g 2>/dev/null)/bin" /usr/local/bin /usr/bin; do '
                 '[ -n "$d" ] && [ -x "$d/claude" ] && found="$d" && break; done; '
@@ -158,11 +185,7 @@ class ScClaudeSmarterCompact(ScClaudeBase):
                 "/settings.json || { echo 'FATAL: proxy not wired into CLAUDE_CONFIG_DIR'; "
                 "tail -20 /logs/agent/sc-install.log; exit 1; }; "
                 "echo proxy-enabled-check=ok; "
-                # The plugin's MCP server loads from $HOME/.claude's marketplace, invisible under
-                # CLAUDE_CONFIG_DIR; register it user-scoped there (Harbor writes this file only
-                # when its own mcp_servers option is set).
-                f'python3 -c {shlex.quote(_MCP_REGISTER)} {dest}/.claude.json "$NODE_BIN" || '
-                "{ echo 'FATAL: recall MCP not registered'; exit 1; }; "
+                + recall +
                 # `enable` gives up after 12s while litellm often needs ~20s, so wait here instead.
                 "for i in $(seq 60); do bash -c 'exec 3<>/dev/tcp/127.0.0.1/4101' 2>/dev/null && break; "
                 "sleep 2; done; bash -c 'exec 3<>/dev/tcp/127.0.0.1/4101' 2>/dev/null || "
@@ -176,6 +199,7 @@ class ScClaudeSmarterCompact(ScClaudeBase):
                 "SMARTER_COMPACT_STATE_DIR": STATE_DIR,
                 "SMARTER_COMPACT_AUTO_PROXY": "1",
                 **{k: v for k, v in self.extra_env.items() if k in ARM_ENV_KEYS},
+                **self.FORCED_ENV,
             },
         )
 
@@ -203,3 +227,31 @@ class ScClaudeMask(ScClaudeSmarterCompact):
 
 class ScClaudeNoStrip(ScClaudeSmarterCompact):
     """Prose strip off (CONTEXT_STRIP_PROSE=0, the default since 26d2040): the control for prose and mask."""
+
+
+class ScClaudeNoRecall(ScClaudeSmarterCompact):
+    """Trim without the search tools: separates the archive's effect from a shorter prompt.
+
+    The trim pointer names smart_compact_search/_sql even when no request offers them, so this arm needs the proxy
+    to drop those directions (proposed CONTEXT_POINTER_TOOLS=0, not implemented yet); install fails until it exists.
+    """
+
+    RECALL_TOOLS = False
+    REQUIRES_PROXY_SETTINGS = ("CONTEXT_POINTER_TOOLS",)
+    FORCED_ENV = {"CONTEXT_POINTER_TOOLS": "0", "CONTEXT_STANDING_INSTRUCTION": "0"}
+
+
+class ScClaudeServerClear(ScClaudeSmarterCompact):
+    """Anthropic context editing (clear_tool_uses_20250919) added by the proxy, our trim off (TRIM_OFF), no recall tools.
+
+    Needs CONTEXT_SERVER_CLEAR from branch sc-core in the mounted repo; install fails until it is there.
+    """
+
+    RECALL_TOOLS = False
+    REQUIRES_PROXY_SETTINGS = ("CONTEXT_SERVER_CLEAR", "CONTEXT_SERVER_CLEAR_TRIGGER_TOKENS")
+    FORCED_ENV = {"CONTEXT_SERVER_CLEAR": "1", "CONTEXT_TRIM_AT_TOKENS": TRIM_OFF, "CONTEXT_STANDING_INSTRUCTION": "0"}
+
+
+class ScClaudeNativeLow(ScClaudeBaseline):
+    """Claude Code's summarizing compaction at a lowered trigger (CLAUDE_CODE_AUTO_COMPACT_WINDOW x
+    CLAUDE_AUTOCOMPACT_PCT_OVERRIDE in the job env), no proxy."""
