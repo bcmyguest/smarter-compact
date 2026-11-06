@@ -211,5 +211,24 @@ class CalibrationFlowTests(Base):
         self.assertNotIn("id0", core._pending)
 
 
+
+class DeferredToolTests(Base):
+    """Tools with defer_loading cost no prompt tokens, so the trim estimate leaves them out."""
+
+    def trims(self, defer):
+        msgs = history(3)
+        data = request(copy.deepcopy(msgs))
+        tool = {"name": "big", "description": "d" * 400000, "input_schema": {"type": "object"}}
+        if defer:
+            tool["defer_loading"] = True
+        data["tools"] = [tool]
+        settings = self.settings(trim_at_tokens=50000, chars_per_token=4.0, context_dir=self.ctx / str(defer))
+        out = process_request(data, "anthropic_messages", settings, http=no_http)
+        return len(out["messages"]) < len(msgs)
+
+    def test_deferred_tools_do_not_count_toward_the_trim(self):
+        self.assertTrue(self.trims(defer=False))
+        self.assertFalse(self.trims(defer=True))
+
 if __name__ == "__main__":
     unittest.main()

@@ -103,6 +103,13 @@ def _availability(names):
     return f"The tools {names['search']} and {names['sql']} are available to you in this request. "
 
 
+def counted_tools(tools):
+    """Tools without defer_loading: a deferred tool costs no prompt tokens until a tool_reference loads it."""
+    if not isinstance(tools, list):
+        return tools
+    return [t for t in tools if not (isinstance(t, dict) and t.get("defer_loading") is True)]
+
+
 def request_tool_names(data):
     """Tool names from an Anthropic- or OpenAI-format request body."""
     tools = data.get("tools") if isinstance(data, dict) else None
@@ -694,7 +701,7 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, http,
         return data
     root = fingerprint(roots[0])
     first = first_user_index(adapter, items)
-    context = [data.get(k) for k in adapter.context_keys]
+    context = [counted_tools(data.get(k)) if k == "tools" else data.get(k) for k in adapter.context_keys]
     # Usage event fields known before the call; counted on the incoming request, before any rewrite.
     request = {"model": data.get("model") if isinstance(data.get("model"), str) else None, "thread_root": root}
     if hasattr(adapter, "cache_breakpoints"):
