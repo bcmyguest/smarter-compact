@@ -355,6 +355,43 @@ Uncached `input_tokens` were 2 to 4 on every row.
 
 Cost $1.90 by Claude Code's `total_cost_usd` estimate (`think` $0.98, `nothink` $0.59, check call about $0.33 from its token counts), on subscription credentials.
 
+## Clearing versus turn deletion (2026-11-05)
+
+**Research.**
+
+| Source | Finding |
+| --- | --- |
+| The Complexity Trap (JetBrains, [arXiv 2508.21433v3](https://arxiv.org/abs/2508.21433v3)) | Observation masking keeps every turn's reasoning and action and replaces only old tool outputs with a placeholder, keeping the last M=10 outputs. Deleting whole turns "breaks the agent reasoning trace" (§2). M must be tuned per scaffold: M=10 for SWE-agent, M=58 for OpenHands (§5.1) |
+| Beyond Token Savings ([arXiv 2609.32961v1](https://arxiv.org/abs/2609.32961v1)) | Tool-result clearing (TRC, keep the 3 most recent) roughly matched full context on SWE-bench at 0.57x tokens and 0.71x billed cost. Deleting the oldest whole messages (TR) solved 42/100 against 53.7% for TRC. Threshold-triggered TRC beat clearing on every step (OTRC: 51.3%, 0.95x cost), because every-step rewrites break the cached prefix. On Terminal-Bench 1.0, 11 of 12 policies lost 5 to 13 pp |
+
+**What our Mask arm does.** `CONTEXT_MASK_OBSERVATIONS=1` is not observation masking in the papers' sense. A trim still drops the oldest whole turns (the cut and gap), then masks the tool results in the kept region before the latest run (`strip_reasoning` and `_prose_sizes` in `proxy/smarter_compact/core.py`). Every Mask trial therefore deleted turns as well, and pure clearing was never tested.
+
+**New mode: `CONTEXT_CLEAR_KEEP_RESULTS=N`** (off at 0). A trim, still triggered by `CONTEXT_TRIM_AT_TOKENS`, first replaces every tool result except the N newest with `MASK_PLACEHOLDER`, keeping every turn, tool call and text block. Only when the estimate stays above `CONTEXT_TRIM_TO_FRACTION` of the threshold does it also drop the oldest turns as before. The clear bound is stored with the cut (`clear`, `clear_fp`), so requests between trims send byte-identical prefixes; a later trim only moves it forward. Signed thinking before the edit is stripped, as for any trim, and the store keeps every cleared output (`in_context = 0`).
+
+**Why not every step.** Masking on each request moves the edit point every turn and rewrites the cached prefix each time; Beyond Token Savings measured that cost (OTRC 0.95x against TRC 0.71x billed). Clearing here only happens at a trim.
+
+**Stopped run.** `/tmp/opencode/tb21-h55-mask` (Smart, Mask, Native at 95K, the 8 tasks below, 3 attempts) was stopped at 37 of 72 trials and is superseded by the publish run. Partial results, 36 finished at 21:17:
+
+| Arm | Pass | Cost (harbor) | Cost at flat pricing (no 5x tier above 100K) |
+| --- | --- | --- | --- |
+| Smart | 9/12 | $0.895 | $0.928 |
+| Mask | 9/11 | $0.810 | $0.862 |
+| Native | 9/11 | $2.247 | $0.919 |
+
+The 5x price tier above 100K input tokens explains Native's extra cost: at flat pricing the three arms cost about the same.
+
+**Publish run (planned).** Job [`tb21-h55-publish.json`](../bench/termbench/harbor/jobs/tb21-h55-publish.json): Claude Code on `claude-haiku-5-5`, `CLAUDE_CODE_AUTO_COMPACT_WINDOW=195000` in every arm, 8 tasks (schemelike-metacircular-eval, make-mips-interpreter, make-doom-for-mips, path-tracing-reverse, regex-chess, fix-ocaml-gc, adaptive-rejection-sampler, path-tracing), 3 attempts, 5 arms: 120 trials.
+
+| Arm | Class | Settings |
+| --- | --- | --- |
+| Smart | `ScClaudeSmarterCompact` | trim at 95K |
+| Mask | `ScClaudeMask` | trim at 95K, `CONTEXT_MASK_OBSERVATIONS=1` |
+| Clear | `ScClaudeClear` | trim at 95K, `CONTEXT_CLEAR_KEEP_RESULTS=10` |
+| ServerClear | `ScClaudeServerClear` | Anthropic `clear_tool_uses_20250919`, trigger 95K, keep 3, clear at least 5,000; our trim off |
+| Native | `ScClaudeBaseline` | Claude Code's own compaction |
+
+Probe first: [`tb21-h55-publish-probe.json`](../bench/termbench/harbor/jobs/tb21-h55-publish-probe.json), adaptive-rejection-sampler, 1 attempt, Clear, ServerClear and Mask at 40K so each mechanism fires.
+
 ## Limitations
 
 - The primary run E uses Haiku 5.5 and two or three seeds per cell. Sonnet has two paired seeds on one task. Earlier run B baselines have one or two seeds per cell.
