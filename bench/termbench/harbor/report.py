@@ -15,19 +15,28 @@ import os
 import sqlite3
 
 ARMS = ("Smart", "Mask", "Native")
+# Agent class -> arm label; any other ScClaude<Name> class reports as <Name> (NoStrip, Prose, Trim50, ...).
+ARM_LABELS = {"ScClaudeSmarterCompact": "Smart", "ScClaudeBaseline": "Native"}
 
 
 def arm_of(trial):
-    path = json.load(open(os.path.join(trial, "config.json")))["agent"]["import_path"]
-    return "Smart" if "Smarter" in path else "Mask" if "Mask" in path else "Native"
+    cls = json.load(open(os.path.join(trial, "config.json")))["agent"]["import_path"].rsplit(":", 1)[-1]
+    return ARM_LABELS.get(cls) or cls.removeprefix("ScClaude")
+
+
+def arms_in(rows):
+    """ARMS first, then every other arm present, in first-seen order."""
+    return list(dict.fromkeys([*ARMS, *(r["arm"] for r in rows)]))
 
 
 def stream_stats(path):
-    """Peak prompt (input + cache read + cache write of one request), recall calls and errors."""
-    peak = recall = recall_err = econn = 0
+    """Peak prompt (input + cache read + cache write of one request), recall calls and errors, connection
+    refusals, Claude Code compactions, and whether the init event offered a smart_compact tool."""
+    peak = recall = recall_err = econn = compacts = 0
+    offered = False
     ids = set()
     if not os.path.exists(path):
-        return peak, recall, recall_err, econn
+        return peak, recall, recall_err, econn, compacts, offered
     for line in open(path, errors="ignore"):
         if "ECONNREFUSED" in line:
             econn += 1
@@ -35,6 +44,10 @@ def stream_stats(path):
             msg = json.loads(line)
         except ValueError:
             continue
+        if msg.get("type") == "system" and msg.get("subtype") == "compact_boundary":
+            compacts += 1
+        if msg.get("type") == "system" and msg.get("subtype") == "init":
+            offered = offered or any("smart_compact" in t for t in msg.get("tools") or [] if isinstance(t, str))
         body = msg.get("message") if isinstance(msg.get("message"), dict) else {}
         usage = body.get("usage") or {}
         if msg.get("type") == "assistant" and usage:
@@ -48,7 +61,7 @@ def stream_stats(path):
                 ids.add(block["id"])
             if block.get("type") == "tool_result" and block.get("tool_use_id") in ids and block.get("is_error"):
                 recall_err += 1
-    return peak, recall, recall_err, econn
+    return peak, recall, recall_err, econn, compacts, offered
 
 
 def trim_stats(trial):
@@ -70,7 +83,7 @@ def load(job):
             running.append(f"{arm}:{task}")
             continue
         agent = result.get("agent_result") or {}
-        peak, recall, recall_err, econn = stream_stats(os.path.join(trial, "agent/claude-code.txt"))
+        peak, recall, recall_err, econn, compacts, offered = stream_stats(os.path.join(trial, "agent/claude-code.txt"))
         trims, dropped = trim_stats(trial)
         watchdog = os.path.join(trial, "agent/proxy-watchdog.log")
         rows.append({
@@ -79,7 +92,7 @@ def load(job):
             "exc": (result.get("exception_info") or {}).get("exception_type") or "",
             "in": agent.get("n_input_tokens") or 0, "out": agent.get("n_output_tokens") or 0,
             "cost": agent.get("cost_usd") or 0.0, "peak": peak, "trims": trims, "dropped": dropped,
-            "recall": recall, "recall_err": recall_err, "econn": econn,
+            "recall": recall, "recall_err": recall_err, "econn": econn, "compacts": compacts, "offered": offered,
             "restarts": open(watchdog).read().count("restarting") if os.path.exists(watchdog) else 0,
         })
     return rows, running
@@ -91,22 +104,24 @@ def totals(rows):
         t = out[r["arm"]]
         t["n"] += 1
         t["pass"] += r["reward"] == 1.0
-        for k in ("in", "out", "cost", "trims", "recall", "recall_err", "restarts"):
+        for k in ("in", "out", "cost", "trims", "recall", "recall_err", "restarts", "compacts"):
             t[k] += r[k]
         t["trimmed_tasks"] += r["trims"] > 0
         t["econn_trials"] += r["econn"] > 0
+        t["offered"] += r["offered"]
     return out
 
 
-def print_totals(title, rows):
+def print_totals(title, rows, arms=None):
     print(f"\n{title}")
-    print(f"{'arm':7} {'pass/n':>7} {'input':>11} {'output':>9} {'cost':>8} {'trims':>6} {'trimmed':>8} "
-          f"{'recall':>7} {'rec_err':>8} {'restarts':>9} {'econn':>6}")
+    print(f"{'arm':11} {'pass/n':>7} {'input':>11} {'output':>9} {'cost':>8} {'trims':>6} {'trimmed':>8} "
+          f"{'recall':>7} {'rec_err':>8} {'restarts':>9} {'econn':>6} {'compacts':>9} {'tools':>6}")
     t = totals(rows)
-    for arm in ARMS:
+    for arm in arms or arms_in(rows):
         a = t[arm]
-        print(f"{arm:7} {a['pass']:>3}/{a['n']:<3} {a['in']:>11,} {a['out']:>9,} {a['cost']:>8.3f} {a['trims']:>6} "
-              f"{a['trimmed_tasks']:>8} {a['recall']:>7} {a['recall_err']:>8} {a['restarts']:>9} {a['econn_trials']:>6}")
+        print(f"{arm:11} {a['pass']:>3}/{a['n']:<3} {a['in']:>11,} {a['out']:>9,} {a['cost']:>8.3f} {a['trims']:>6} "
+              f"{a['trimmed_tasks']:>8} {a['recall']:>7} {a['recall_err']:>8} {a['restarts']:>9} {a['econn_trials']:>6} "
+              f"{a['compacts']:>9} {a['offered']:>6}")
 
 
 def main():
@@ -116,10 +131,10 @@ def main():
     args = ap.parse_args()
     rows, running = load(args.job)
 
-    print(f"{'task':34} {'arm':6} {'rew':>4} {'peak':>8} {'input':>10} {'output':>8} {'cost':>7} "
+    print(f"{'task':34} {'arm':11} {'rew':>4} {'peak':>8} {'input':>10} {'output':>8} {'cost':>7} "
           f"{'trims':>5} {'drop':>5} {'recall':>6} exc")
     for r in sorted(rows, key=lambda r: (r["task"], r["arm"])):
-        print(f"{r['task'][:34]:34} {r['arm']:6} {r['reward'] if r['reward'] is not None else '-':>4} {r['peak']:>8,} "
+        print(f"{r['task'][:34]:34} {r['arm']:11} {r['reward'] if r['reward'] is not None else '-':>4} {r['peak']:>8,} "
               f"{r['in']:>10,} {r['out']:>8,} {r['cost']:>7.3f} {r['trims']:>5} {r['dropped']:>5} {r['recall']:>6} "
               f"{r['exc']}")
 
@@ -127,12 +142,13 @@ def main():
     paired = [r for r in rows if r["task"] in both]
     long_tasks = {r["task"] for r in paired if r["arm"] == "Native" and r["peak"] >= args.trim_at}
     trimmed = {r["task"] for r in paired if r["arm"] == "Smart" and r["trims"]}
-    print_totals(f"All finished trials ({len(rows)})", rows)
-    print_totals(f"Paired tasks, both arms finished ({len(both)})", paired)
+    arms = arms_in(rows)
+    print_totals(f"All finished trials ({len(rows)})", rows, arms)
+    print_totals(f"Paired tasks, both arms finished ({len(both)})", paired, arms)
     print_totals(f"Long tasks: native peak >= {args.trim_at:,} ({len(long_tasks)}: {', '.join(sorted(long_tasks))})",
-                 [r for r in paired if r["task"] in long_tasks])
+                 [r for r in paired if r["task"] in long_tasks], arms)
     print_totals(f"Check: long or smart trimmed ({len(long_tasks | trimmed)})",
-                 [r for r in paired if r["task"] in long_tasks | trimmed])
+                 [r for r in paired if r["task"] in long_tasks | trimmed], arms)
     print(f"\nrunning: {', '.join(running) or 'none'}")
 
 

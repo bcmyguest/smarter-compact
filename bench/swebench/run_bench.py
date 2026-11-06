@@ -35,6 +35,7 @@ import collections
 import glob as globmod
 import json
 import os
+import random
 import re
 import shlex
 import shutil
@@ -611,16 +612,19 @@ def _chunks(items: list, size: int):
         yield items[i:i + size]
 
 
-def group_for_chaining(instances: list, arms: list, chain_max: int) -> list:
+def group_for_chaining(instances: list, arms: list, chain_max: int, seed: int = 0) -> list:
     """[(arm, chain_label, instances)] in an order both arms see identically.
 
     Grouping by repo keeps the tasks of a chain in one codebase, so earlier turns stay relevant to
-    later ones; the order is fixed (sorted ids) because a chain whose tasks differ between arms
-    would not be a comparison of anything.
+    later ones; the order is fixed (sorted ids, or a shuffle keyed by seed and repo) because a chain
+    whose tasks differ between arms would not be a comparison of anything.
     """
     by_repo: dict[str, list] = {}
     for inst in sorted(instances, key=lambda i: i["instance_id"]):
         by_repo.setdefault(inst.get("repo") or inst["instance_id"].rsplit("-", 1)[0], []).append(inst)
+    if seed:
+        for repo, insts in by_repo.items():
+            random.Random(f"{seed}:{repo}").shuffle(insts)
     groups = []
     for arm in arms:
         for repo in sorted(by_repo):
@@ -680,7 +684,7 @@ def run_trial(client, inst, arm, args, run_dir: Path, chain: dict | None = None)
             "context_limit": args.context_limit}
     if chain is not None:
         meta.update({"chain": chain["label"], "chain_pos": chain["pos"],
-                     "chain_session": chain["session_id"]})
+                     "chain_session": chain["session_id"], "chain_seed": args.chain_seed})
     t0 = time.time()
     container = None
     log(f"{iid} arm={arm} start (pulls image if not local)")
@@ -1250,6 +1254,8 @@ def main() -> None:
         "accumulates across tasks the way a real work session does")
     ap.add_argument("--chain-max", type=int, default=0, help="split a repo's chain into batches of "
         "at most N tasks (0 = one chain per repo)")
+    ap.add_argument("--chain-seed", type=int, default=0, help="shuffle each repo's chain order with "
+        "this seed, identically for every arm (0 = sorted ids)")
     ap.add_argument("--defer-score", action="store_true", help="skip the per-trial test run and "
         "score afterwards with --score-only (per-trial scoring costs ~26s on django, ~95s on "
         "astropy; only worth deferring for a suite that really is the long pole)")
@@ -1316,7 +1322,7 @@ def main() -> None:
     # Group jobs by repo (and keep an instance's arms adjacent) so parallel workers
     # hit images sharing base layers back-to-back, and --evict-images reclaims the
     # repo-unique layers as each repo drains instead of needing mid-run prunes.
-    groups = group_for_chaining(instances, arms, args.chain_max) if args.chain else None
+    groups = group_for_chaining(instances, arms, args.chain_max, args.chain_seed) if args.chain else None
     jobs = None if args.chain else sorted(
         ((inst, arm) for arm in arms for inst in instances),
         key=lambda j: (j[0]["repo"], j[0]["instance_id"], j[1]))

@@ -1,0 +1,72 @@
+{
+ "job_name": "tb21-h55-strip60k",
+ "jobs_dir": "/tmp/opencode/tb21-h55-strip60k",
+ "n_attempts": 5,
+ "n_concurrent": 6,
+ "environment": {
+  "type": "docker",
+  "mounts": [
+   {
+    "type": "bind",
+    "source": "/home/brandonguest/smarter-compact",
+    "target": "/opt/smarter-compact"
+   },
+   {
+    "type": "bind",
+    "source": "/home/brandonguest/.claude/.credentials.json",
+    "target": "/opt/claude-creds/.credentials.json"
+   }
+  ]
+ },
+ "agents": [
+  {
+   "name": null,
+   "model_name": "anthropic/claude-haiku-5-5",
+   "import_path": "sc_agent_claude:ScClaudeNoStrip",
+   "env": {
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "195000",
+    "CONTEXT_TRIM_AT_TOKENS": "60000",
+    "CONTEXT_STRIP_PROSE": "0",
+    "CONTEXT_MASK_OBSERVATIONS": "0"
+   },
+   "kwargs": {}
+  },
+  {
+   "name": null,
+   "model_name": "anthropic/claude-haiku-5-5",
+   "import_path": "sc_agent_claude:ScClaudeProse",
+   "env": {
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "195000",
+    "CONTEXT_TRIM_AT_TOKENS": "60000",
+    "CONTEXT_STRIP_PROSE": "1",
+    "CONTEXT_MASK_OBSERVATIONS": "0"
+   },
+   "kwargs": {}
+  },
+  {
+   "name": null,
+   "model_name": "anthropic/claude-haiku-5-5",
+   "import_path": "sc_agent_claude:ScClaudeMask",
+   "env": {
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "195000",
+    "CONTEXT_TRIM_AT_TOKENS": "60000",
+    "CONTEXT_STRIP_PROSE": "0",
+    "CONTEXT_MASK_OBSERVATIONS": "1"
+   },
+   "kwargs": {}
+  }
+ ],
+ "datasets": [
+  {
+   "path": "/tmp/opencode/tb21/terminal-bench-2-1",
+   "task_names": [
+    "make-doom-for-mips",
+    "schemelike-metacircular-eval",
+    "path-tracing-reverse",
+    "make-mips-interpreter",
+    "path-tracing"
+   ]
+  }
+ ],
+ "agent_setup_timeout_multiplier": 3.0
+}
