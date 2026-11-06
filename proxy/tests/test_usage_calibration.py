@@ -116,13 +116,6 @@ class EstimateTests(unittest.TestCase):
         tools = [{"input_schema": {"properties": {"type": {"type": "string"}}}}]
         self.assertEqual(request_chars(tools), len("input_schema" "properties" "type" "type" "string"))
 
-    def test_thinking_signature_is_not_counted(self):
-        # A 180 KB signature on 59k thinking tokens added nothing to the next prompt (Terminal-Bench probe).
-        block = {"type": "thinking", "thinking": "", "signature": "s" * 180000}
-        self.assertEqual(request_chars(block), len("type" "thinking" "thinking" "signature"))
-        self.assertEqual(request_chars({"type": "redacted_thinking", "data": "d" * 9000}),
-                         len("type" "redacted_thinking" "data"))
-
 
 class UsageShapeTests(unittest.TestCase):
     def test_litellm_usage_prompt_tokens(self):

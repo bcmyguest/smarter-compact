@@ -12,8 +12,6 @@ import math
 BINARY_BLOCK_TYPES = frozenset({"image", "document", "input_image", "input_file", "image_url", "file"})
 # Flat charge per binary block, in characters (about 1600 tokens).
 BINARY_BLOCK_CHARS = 6400
-# Encrypted payloads of thinking blocks: their length tracks the thinking, which the API may drop or keep.
-OPAQUE_KEYS = {"thinking": "signature", "redacted_thinking": "data"}
 # Characters per prompt token before a session has reported usage. Claude Code requests measured about 2.3.
 DEFAULT_CHARS_PER_TOKEN = 2.5
 # Bounds on an observed ratio, so one odd usage report cannot make the estimate absurd.
@@ -33,8 +31,7 @@ def _chars(value):
     if isinstance(value, dict):
         if isinstance(value.get("type"), str) and value["type"] in BINARY_BLOCK_TYPES:
             return BINARY_BLOCK_CHARS
-        opaque = OPAQUE_KEYS.get(value["type"]) if isinstance(value.get("type"), str) else None
-        return sum(len(str(k)) + (0 if k == opaque else _chars(v)) for k, v in value.items())
+        return sum(len(str(k)) + _chars(v) for k, v in value.items())
     if isinstance(value, (list, tuple)):
         return sum(_chars(v) for v in value)
     if value is None:
