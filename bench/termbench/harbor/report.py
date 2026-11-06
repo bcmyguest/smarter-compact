@@ -15,11 +15,18 @@ import os
 import sqlite3
 
 ARMS = ("Smart", "Mask", "Native")
+# Agent class -> arm label; any other ScClaude<Name> class reports as <Name> (NoStrip, Prose, Trim50, ...).
+ARM_LABELS = {"ScClaudeSmarterCompact": "Smart", "ScClaudeBaseline": "Native"}
 
 
 def arm_of(trial):
-    path = json.load(open(os.path.join(trial, "config.json")))["agent"]["import_path"]
-    return "Smart" if "Smarter" in path else "Mask" if "Mask" in path else "Native"
+    cls = json.load(open(os.path.join(trial, "config.json")))["agent"]["import_path"].rsplit(":", 1)[-1]
+    return ARM_LABELS.get(cls) or cls.removeprefix("ScClaude")
+
+
+def arms_in(rows):
+    """ARMS first, then every other arm present, in first-seen order."""
+    return list(dict.fromkeys([*ARMS, *(r["arm"] for r in rows)]))
 
 
 def stream_stats(path):
@@ -98,14 +105,14 @@ def totals(rows):
     return out
 
 
-def print_totals(title, rows):
+def print_totals(title, rows, arms=None):
     print(f"\n{title}")
-    print(f"{'arm':7} {'pass/n':>7} {'input':>11} {'output':>9} {'cost':>8} {'trims':>6} {'trimmed':>8} "
+    print(f"{'arm':11} {'pass/n':>7} {'input':>11} {'output':>9} {'cost':>8} {'trims':>6} {'trimmed':>8} "
           f"{'recall':>7} {'rec_err':>8} {'restarts':>9} {'econn':>6}")
     t = totals(rows)
-    for arm in ARMS:
+    for arm in arms or arms_in(rows):
         a = t[arm]
-        print(f"{arm:7} {a['pass']:>3}/{a['n']:<3} {a['in']:>11,} {a['out']:>9,} {a['cost']:>8.3f} {a['trims']:>6} "
+        print(f"{arm:11} {a['pass']:>3}/{a['n']:<3} {a['in']:>11,} {a['out']:>9,} {a['cost']:>8.3f} {a['trims']:>6} "
               f"{a['trimmed_tasks']:>8} {a['recall']:>7} {a['recall_err']:>8} {a['restarts']:>9} {a['econn_trials']:>6}")
 
 
@@ -116,10 +123,10 @@ def main():
     args = ap.parse_args()
     rows, running = load(args.job)
 
-    print(f"{'task':34} {'arm':6} {'rew':>4} {'peak':>8} {'input':>10} {'output':>8} {'cost':>7} "
+    print(f"{'task':34} {'arm':11} {'rew':>4} {'peak':>8} {'input':>10} {'output':>8} {'cost':>7} "
           f"{'trims':>5} {'drop':>5} {'recall':>6} exc")
     for r in sorted(rows, key=lambda r: (r["task"], r["arm"])):
-        print(f"{r['task'][:34]:34} {r['arm']:6} {r['reward'] if r['reward'] is not None else '-':>4} {r['peak']:>8,} "
+        print(f"{r['task'][:34]:34} {r['arm']:11} {r['reward'] if r['reward'] is not None else '-':>4} {r['peak']:>8,} "
               f"{r['in']:>10,} {r['out']:>8,} {r['cost']:>7.3f} {r['trims']:>5} {r['dropped']:>5} {r['recall']:>6} "
               f"{r['exc']}")
 
@@ -127,12 +134,13 @@ def main():
     paired = [r for r in rows if r["task"] in both]
     long_tasks = {r["task"] for r in paired if r["arm"] == "Native" and r["peak"] >= args.trim_at}
     trimmed = {r["task"] for r in paired if r["arm"] == "Smart" and r["trims"]}
-    print_totals(f"All finished trials ({len(rows)})", rows)
-    print_totals(f"Paired tasks, both arms finished ({len(both)})", paired)
+    arms = arms_in(rows)
+    print_totals(f"All finished trials ({len(rows)})", rows, arms)
+    print_totals(f"Paired tasks, both arms finished ({len(both)})", paired, arms)
     print_totals(f"Long tasks: native peak >= {args.trim_at:,} ({len(long_tasks)}: {', '.join(sorted(long_tasks))})",
-                 [r for r in paired if r["task"] in long_tasks])
+                 [r for r in paired if r["task"] in long_tasks], arms)
     print_totals(f"Check: long or smart trimmed ({len(long_tasks | trimmed)})",
-                 [r for r in paired if r["task"] in long_tasks | trimmed])
+                 [r for r in paired if r["task"] in long_tasks | trimmed], arms)
     print(f"\nrunning: {', '.join(running) or 'none'}")
 
 

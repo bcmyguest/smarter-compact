@@ -35,11 +35,11 @@ from harbor.agents.installed.node_install import nvm_node_install_snippet
 
 REPO = "/opt/smarter-compact"
 STATE_DIR = "/logs/agent/smarter-compact"
-# SC_TRIM_AT on the harbor host lowers the cut for recall probes.
+# SC_TRIM_AT on the harbor host sets the default cut; a job agent's env CONTEXT_TRIM_AT_TOKENS overrides it.
 TRIM_AT = os.environ.get("SC_TRIM_AT", "95000")
 # Proxy experiment knobs a job's per-agent "env" may set; Harbor applies that env only while the agent runs,
 # after install has already started the proxy, so install forwards these itself.
-ARM_ENV_KEYS = ("CONTEXT_TRIM_TO_FRACTION", "CONTEXT_STRIP_PROSE", "CONTEXT_PROGRESS_NOTE",
+ARM_ENV_KEYS = ("CONTEXT_TRIM_AT_TOKENS", "CONTEXT_TRIM_TO_FRACTION", "CONTEXT_STRIP_PROSE", "CONTEXT_PROGRESS_NOTE",
                 "CONTEXT_MASK_OBSERVATIONS")
 # Job-level bind mount of the host ~/.claude/.credentials.json (read-only in practice; the
 # trial container never refreshes it).
