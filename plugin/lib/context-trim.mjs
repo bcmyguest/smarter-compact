@@ -10,6 +10,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { withProxyEnvSecrets } from "./brand.mjs";
 import { contextRoot, sanitizeSessionId } from "./context-store.mjs";
 import { cpLen, cpSlice, recallBlock } from "./recall-frame.mjs";
 import { blobRef, chain, dropSession, openSession, scheduleEmbedding, storeSettings } from "./session-db.mjs";
@@ -190,7 +191,7 @@ export function trimSettings(env = process.env, home = env.HOME) {
     compactionRecall: flag("CONTEXT_COMPACTION_RECALL"),
     recallTimeoutS: float("CONTEXT_RECALL_TIMEOUT_S", DEFAULT_RECALL_TIMEOUT_S),
     contextDir: contextRoot(home, env),
-    ...storeSettings(env),
+    ...storeSettings(withProxyEnvSecrets(env, home)),
   };
 }
 

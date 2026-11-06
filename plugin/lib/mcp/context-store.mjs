@@ -11,6 +11,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
+import { withProxyEnvSecrets } from "../brand.mjs";
+import { contextStoreEnvFromConfig } from "../context-config.mjs";
 import { contextRoot as hookContextRoot, sanitizeSessionId as hookSanitizeSessionId } from "../context-store.mjs";
 import {
   DB_SUFFIX, EVENT_WINDOW_HOURS, SCHEMA_VERSION, fetchEmbeddings, maybeSweepContextStore, nearest, proxyCodeVersion,
@@ -188,17 +190,16 @@ export function sanitizeSessionId(raw) {
 
 /**
  * Store settings (storeSettings) with config.toml `[context_store]` under the environment, which wins.
- * config.toml is read lazily; an unreadable one leaves the defaults.
+ * An unparsable config.toml is reported on stderr and leaves the environment and defaults.
  */
-export async function contextStoreSettings(env = process.env, { home = env.HOME || os.homedir(), stackRoot = PKG_ROOT } = {}) {
+export async function contextStoreSettings(env = process.env, { home = env.HOME || os.homedir() } = {}) {
   let fromConfig = {};
   try {
-    const { contextTrimEnvFromPmConfig, loadPmConfig } = await import("../../wizard/lib/pm-config.mjs");
-    fromConfig = contextTrimEnvFromPmConfig(loadPmConfig(home, stackRoot).merged);
-  } catch {
-    // defaults
+    fromConfig = contextStoreEnvFromConfig(home);
+  } catch (err) {
+    process.stderr.write(`smarter-compact-mcp: ignoring [context_store]: ${err instanceof Error ? err.message : err}\n`);
   }
-  return storeSettings({ ...fromConfig, ...env });
+  return storeSettings(withProxyEnvSecrets({ ...fromConfig, ...env }, home));
 }
 
 /** MCP server start: TTL cleanup of old session files, at most once a day. Never throws; returns deleted sids. */
@@ -723,7 +724,7 @@ function contextStatusTool(args, env) {
 /**
  * @param {string} name
  * @param {Record<string, unknown>} args
- * @param {{ env?: NodeJS.ProcessEnv, cwd?: string, settings?: object, fetch?: typeof fetch, home?: string, stackRoot?: string }} [opts]
+ * @param {{ env?: NodeJS.ProcessEnv, cwd?: string, settings?: object, fetch?: typeof fetch, home?: string }} [opts]
  */
 export async function callContextStoreTool(name, args = {}, opts = {}) {
   const env = opts.env || process.env;

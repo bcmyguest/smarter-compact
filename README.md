@@ -172,7 +172,7 @@ export CONTEXT_PROXY_PORT=4200
 smarter-compact enable claude    # agent URLs and proxy.env both use 4200
 ```
 
-Or set it once in `~/.config/smarter-compact/proxy.env` (same file as the LiteLLM key), then run `smarter-compact enable` again so agent configs pick up the port. The hook and auto-started proxy also read trim settings from that file when they are not already in the environment:
+Or set it once in `~/.config/smarter-compact/proxy.env` (same file as the LiteLLM key), then run `smarter-compact enable` again so agent configs pick up the port. The hook and auto-started proxy also read every proxy setting (`PROXY_ENV_CONTEXT_KEYS` in `plugin/lib/brand.mjs`) from that file when they are not already in the environment:
 
 ```
 CONTEXT_PROXY_PORT=4200
@@ -185,7 +185,7 @@ CONTEXT_PROXY_PORT=4200
 # CONTEXT_TRIM_AT_TOKENS=120000
 ```
 
-The OpenCode 2 `proxyPort` option does not move the auto-started proxy; set `CONTEXT_PROXY_PORT` instead.
+The OpenCode 2 `proxyPort` option sets the port that plugin probes; it starts a proxy there only when an agent config already points at that port. Other agents read `CONTEXT_PROXY_PORT`.
 
 ## Tests
 

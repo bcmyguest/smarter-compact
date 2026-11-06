@@ -9,6 +9,16 @@ import { writeFileAtomic } from "./file-io.mjs";
 
 const CONFIG_HEADER = "# Smarter Compact — see docs/context-proxy.md\n";
 const TRIM_AT_TABLE = "trim_at";
+/** `[context_store]` keys, the env vars storeSettings (session-db.mjs) reads, and the values it accepts. */
+const CONTEXT_STORE_NUMBER_KEYS = [
+  ["ttl_days", "CONTEXT_STORE_TTL_DAYS", "a whole number >= 0", (n) => Number.isInteger(n) && n >= 0],
+  ["embedding_timeout_s", "CONTEXT_EMBEDDING_TIMEOUT_S", "a number > 0", (n) => Number.isFinite(n) && n > 0],
+  ["embedding_max_chars", "CONTEXT_EMBEDDING_MAX_CHARS", "a whole number > 0", (n) => Number.isInteger(n) && n > 0],
+];
+const CONTEXT_STORE_STRING_KEYS = [
+  ["embedding_model", "CONTEXT_EMBEDDING_MODEL"],
+  ["embedding_url", "CONTEXT_EMBEDDING_URL"],
+];
 
 export function configTomlPath(home) {
   return `${configDir(home)}/config.toml`;
@@ -51,8 +61,6 @@ function parseTokens(raw) {
  * Sets CONTEXT_TRIM_AT_OVERRIDES JSON for per-model tables.
  */
 export function applyTrimConfigToEnv(env, home) {
-  const globalSet = String(env.CONTEXT_TRIM_AT_TOKENS ?? "").trim();
-  if (globalSet) return;
   let doc;
   try {
     doc = loadConfigDoc(home);
@@ -60,6 +68,10 @@ export function applyTrimConfigToEnv(env, home) {
     return;
   }
   const proxy = doc.context_proxy ?? {};
+  if (typeof proxy.standing_instruction === "boolean" && envUnset(env, "CONTEXT_STANDING_INSTRUCTION")) {
+    env.CONTEXT_STANDING_INSTRUCTION = proxy.standing_instruction ? "1" : "0";
+  }
+  if (!envUnset(env, "CONTEXT_TRIM_AT_TOKENS")) return;
   const global = parseTokens(proxy.trim_at_tokens);
   if (global) {
     env.CONTEXT_TRIM_AT_TOKENS = String(global);
@@ -74,6 +86,45 @@ export function applyTrimConfigToEnv(env, home) {
     }
     if (Object.keys(out).length) env.CONTEXT_TRIM_AT_OVERRIDES = JSON.stringify(out);
   }
+}
+
+function envUnset(env, key) {
+  return String(env[key] ?? "").trim() === "";
+}
+
+/**
+ * `[context_store]` keys as the env vars storeSettings reads. An invalid value is left out and reported on
+ * stderr. Throws when config.toml exists but does not parse.
+ */
+export function contextStoreEnvFromConfig(home) {
+  const store = loadConfigDoc(home).context_store ?? {};
+  const out = {};
+  const reject = (key, want) => {
+    process.stderr.write(`smarter-compact: ignoring [context_store] ${key} = ${JSON.stringify(store[key])} in ${configTomlPath(home)}: expected ${want}\n`);
+  };
+  for (const [key, envName, want, valid] of CONTEXT_STORE_NUMBER_KEYS) {
+    if (store[key] === undefined) continue;
+    if (typeof store[key] === "number" && valid(store[key])) out[envName] = String(store[key]);
+    else reject(key, want);
+  }
+  for (const [key, envName] of CONTEXT_STORE_STRING_KEYS) {
+    if (store[key] === undefined) continue;
+    if (typeof store[key] === "string") out[envName] = store[key].trim();
+    else reject(key, "a string");
+  }
+  return out;
+}
+
+/** Apply config.toml `[context_store]` to each variable env leaves unset; an unparsable file changes nothing. */
+export function applyContextStoreConfigToEnv(env, home) {
+  let fromConfig;
+  try {
+    fromConfig = contextStoreEnvFromConfig(home);
+  } catch {
+    return env;
+  }
+  for (const [key, value] of Object.entries(fromConfig)) if (envUnset(env, key)) env[key] = value;
+  return env;
 }
 
 export function listTrimConfig(home) {

@@ -6,7 +6,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { configDir, ensureProductEnv, PRODUCT_NAME, resolveProxyPort, ROOT_ENV, stateParent } from "./brand.mjs";
+import {
+  configDir, ensureProductEnv, PRODUCT_NAME, resolveProxyPort, ROOT_ENV, stateParent, withProxyEnvSecrets,
+} from "./brand.mjs";
 import { contextRoot } from "./context-store.mjs";
 import { agentsPointedAtProxy, ensureKey } from "./enable.mjs";
 import { rotateLog } from "./log-rotate.mjs";
@@ -67,8 +69,9 @@ function proxyPidPath(home) {
   return path.join(configDir(home), "proxy.pid");
 }
 
-function litellmEnv(home, root, port, env) {
-  const merged = { ...env };
+/** Environment for a proxy this package starts: env, then `proxy.env` settings and secrets, then fixed keys. */
+export function litellmEnv(home, root, port, env) {
+  const merged = withProxyEnvSecrets(env, home);
   ensureProductEnv(merged, home);
   return {
     ...merged,

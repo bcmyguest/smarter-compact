@@ -9,11 +9,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureProductEnv, PRODUCT, PRODUCT_NAME, ROOT_ENV, resolveProxyPort, stateParent } from "../lib/brand.mjs";
 import { contextRoot, writeForceFlag } from "../lib/context-store.mjs";
-import { AGENTS, configureAgent, detectInstalledAgents, ensureKey } from "../lib/enable.mjs";
+import { AGENTS, configureAgent, detectInstalledAgents } from "../lib/enable.mjs";
 import { installCursorPlugin } from "../lib/install-cursor.mjs";
 import { addPluginMarketplace, PLUGIN_AGENTS } from "../lib/plugins-cli.mjs";
 import { runContextCommand } from "../lib/context-config.mjs";
-import { ensureContextProxyRunning, packageRoot } from "../lib/proxy-daemon.mjs";
+import { ensureContextProxyRunning, litellmEnv, packageRoot } from "../lib/proxy-daemon.mjs";
 import { summarizeEvents } from "../lib/session-db.mjs";
 
 ensureProductEnv();
@@ -174,14 +174,7 @@ function proxy() {
   }
   const home = os.homedir();
   const port = String(resolveProxyPort(os.homedir(), process.env));
-  const env = {
-    ...process.env,
-    PYTHONPATH: path.join(root, "proxy"),
-    LITELLM_MASTER_KEY: ensureKey(home),
-    SMARTER_COMPACT_STATE_DIR: stateParent(home, process.env),
-    CONTEXT_PROXY_PORT: port,
-    CONTEXT_COMPACTION_RECALL: process.env.CONTEXT_COMPACTION_RECALL || "0",
-  };
+  const env = litellmEnv(home, root, port, process.env);
   const config = path.join(root, "proxy", "config.yaml");
   const child = spawn("litellm", ["--config", config, "--host", "127.0.0.1", "--port", port], { env, stdio: "inherit" });
   child.on("error", (err) => {

@@ -7,7 +7,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { applyTrimConfigToEnv } from "./context-config.mjs";
+import { applyContextStoreConfigToEnv, applyTrimConfigToEnv } from "./context-config.mjs";
 
 export const PRODUCT = "smarter-compact";
 export const PRODUCT_NAME = "Smarter Compact";
@@ -15,16 +15,39 @@ export const DEFAULT_PORT = 4101;
 export const STATE_ENV = "SMARTER_COMPACT_STATE_DIR";
 export const ROOT_ENV = "SMARTER_COMPACT_ROOT";
 
-/** Keys in `proxy.env` applied when missing from the process environment (env wins). */
+/**
+ * Keys in `proxy.env` applied when missing from the process environment (env wins): every non-secret
+ * setting the proxy reads (proxy/smarter_compact/settings.py) except the port and the store location.
+ */
 export const PROXY_ENV_CONTEXT_KEYS = [
-  "CONTEXT_TRIM_AT_TOKENS",
-  "CONTEXT_TRIM_TO_FRACTION",
-  "CONTEXT_COMPRESS_OVER_TOKENS",
-  "CONTEXT_COMPACTION_MAX_CHARS",
-  "CONTEXT_CHARS_PER_TOKEN",
-  "CONTEXT_STANDING_INSTRUCTION",
   "CONTEXT_PROXY_ENABLED",
+  "CONTEXT_TRIM_AT_TOKENS",
+  "CONTEXT_TRIM_AT_OVERRIDES",
+  "CONTEXT_TRIM_TO_FRACTION",
+  "CONTEXT_TRIM_MIN_GAIN_TOKENS",
+  "CONTEXT_CLEAR_KEEP_RESULTS",
+  "CONTEXT_MASK_OBSERVATIONS",
+  "CONTEXT_STRIP_PROSE",
+  "CONTEXT_PROGRESS_NOTE",
+  "CONTEXT_CHARS_PER_TOKEN",
+  "CONTEXT_COMPRESS_OVER_TOKENS",
+  "CONTEXT_STANDING_INSTRUCTION",
+  "CONTEXT_COMPACTION_RECALL",
+  "CONTEXT_COMPACTION_MAX_CHARS",
+  "CONTEXT_RECALL_TIMEOUT_S",
+  "HINDSIGHT_URL",
+  "CONTEXT_SERVER_CLEAR",
+  "CONTEXT_SERVER_CLEAR_TRIGGER_TOKENS",
+  "CONTEXT_SERVER_CLEAR_KEEP_TOOL_USES",
+  "CONTEXT_SERVER_CLEAR_AT_LEAST_TOKENS",
+  "CONTEXT_STORE_TTL_DAYS",
+  "CONTEXT_EMBEDDING_MODEL",
+  "CONTEXT_EMBEDDING_URL",
+  "CONTEXT_EMBEDDING_TIMEOUT_S",
+  "CONTEXT_EMBEDDING_MAX_CHARS",
 ];
+/** Secret `proxy.env` keys passed only to the proxy the CLI starts, never into an agent's environment. */
+export const PROXY_ENV_SECRET_KEYS = ["CONTEXT_EMBEDDING_API_KEY"];
 
 /** Parent of `context/`. The core appends `context` itself. */
 export function stateParent(home = os.homedir(), env = process.env) {
@@ -38,20 +61,32 @@ function envUnset(env, key) {
   return v === undefined || v === null || String(v).trim() === "";
 }
 
-/** Fill process env the core already reads. Existing values win; then `proxy.env`. */
+/** Fill process env the core already reads. Existing values win; then `proxy.env`; then config.toml. */
 export function ensureProductEnv(env = process.env, home = os.homedir()) {
   if (!String(env[STATE_ENV] || env.OPENMEM_STATE_DIR || "").trim()) env[STATE_ENV] = stateParent(home, env);
-  if (env.CONTEXT_COMPACTION_RECALL === undefined) env.CONTEXT_COMPACTION_RECALL = "0";
   const file = readProxyEnv(home);
   if (envUnset(env, "CONTEXT_PROXY_PORT")) {
     env.CONTEXT_PROXY_PORT = file.CONTEXT_PROXY_PORT ? String(file.CONTEXT_PROXY_PORT) : String(DEFAULT_PORT);
   }
-  for (const key of PROXY_ENV_CONTEXT_KEYS) {
+  fillFromProxyEnv(env, file, PROXY_ENV_CONTEXT_KEYS);
+  if (env.CONTEXT_COMPACTION_RECALL === undefined) env.CONTEXT_COMPACTION_RECALL = "0";
+  applyTrimConfigToEnv(env, home);
+  applyContextStoreConfigToEnv(env, home);
+  return env;
+}
+
+/** A copy of env plus the secret `proxy.env` keys it leaves unset, for settings that must not reach process.env. */
+export function withProxyEnvSecrets(env, home = os.homedir()) {
+  return fillFromProxyEnv({ ...env }, readProxyEnv(home), PROXY_ENV_SECRET_KEYS);
+}
+
+/** Copy each key that env leaves unset and `proxy.env` sets. */
+export function fillFromProxyEnv(env, file, keys) {
+  for (const key of keys) {
     if (envUnset(env, key) && file[key] !== undefined && String(file[key]).trim() !== "") {
       env[key] = String(file[key]);
     }
   }
-  applyTrimConfigToEnv(env, home);
   return env;
 }
 

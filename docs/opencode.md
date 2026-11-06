@@ -86,9 +86,9 @@ OpenCode 1 has no context hook, so trimming goes through the LiteLLM proxy:
 ./plugin/scripts/smarter-compact enable opencode
 ```
 
-The plugin starts the proxy in the background when needed (`CONTEXT_PROXY_PORT`, default 4101).
+`enable` starts the proxy in the background (`CONTEXT_PROXY_PORT`, default 4101).
 
-The proxy reads its own environment, so set `CONTEXT_*` variables or `proxy.env`; OpenCode 1 plugin options do not reach it ([reference](configuration.md#opencode-plugin-options)).
+The proxy reads its own environment, so set `CONTEXT_*` variables or `proxy.env`; of the OpenCode 1 plugin options only `stateDir` applies, to session registration and `/compact` flags ([reference](configuration.md#opencode-plugin-options)).
 
 The `server` hook sends `x-smarter-compact-session-id` when your Anthropic `baseURL` is the local proxy, registers the session, and honours `/compact`.
 

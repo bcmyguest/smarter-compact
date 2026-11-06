@@ -30,7 +30,7 @@ function proxiedFromConfig(home) {
  */
 export async function server(input, options = {}) {
   ensureProductEnv();
-  envFromPluginOptions(options);
+  const env = envFromPluginOptions(options);
   const home = process.env.HOME || os.homedir();
   const projectDir = input.directory;
   const proxied = proxiedFromConfig(home);
@@ -41,7 +41,7 @@ export async function server(input, options = {}) {
     },
     "chat.message": async (hookInput, output) => {
       if (isSmartCompactPrompt(messageText(output))) {
-        try { writeForceFlag({ home, env: process.env, sessionId: hookInput.sessionID }); } catch { /* best effort */ }
+        try { writeForceFlag({ home, env, sessionId: hookInput.sessionID }); } catch { /* best effort */ }
       }
     },
     event: async ({ event }) => {
@@ -49,7 +49,7 @@ export async function server(input, options = {}) {
       const id = event.properties?.info?.id;
       if (!id) return;
       try {
-        registerSession({ home, env: process.env, sessionId: id, agent: "opencode", cwd: projectDir });
+        registerSession({ home, env, sessionId: id, agent: "opencode", cwd: projectDir });
       } catch { /* best effort */ }
     },
   };

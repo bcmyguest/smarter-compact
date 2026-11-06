@@ -4,7 +4,7 @@
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ensureProductEnv, PRODUCT, PRODUCT_NAME } from "../plugin/lib/brand.mjs";
+import { ensureProductEnv, PRODUCT, PRODUCT_NAME, stateParent } from "../plugin/lib/brand.mjs";
 import { SMART_COMPACT_BODY, isSmartCompactPrompt, registerSession, writeForceFlag } from "../plugin/lib/context-store.mjs";
 import {
   addStandingInstruction, compactionSummary, logFailOpen, promptTokensFromOpenCode, recallToolNames, recordPromptUsage,
@@ -42,7 +42,7 @@ function remember(map, key, value) {
  * invisible otherwise, so the reason is logged; the `mcp.servers` config entry (docs/opencode.md)
  * is the path that must be relied on, and the bench writes it for every smart trial.
  */
-async function registerSearchTools(ctx, { home, enabled, directory }) {
+async function registerSearchTools(ctx, { home, env, enabled, directory }) {
   if (!enabled) return;
   if (!ctx.mcp?.add || !directory) {
     diag(`recall MCP NOT registered reason=${ctx.mcp?.add ? "no-location-directory" : "no-ctx.mcp.add"} ctx=[${Object.keys(ctx).join(",")}] mcp=[${Object.keys(ctx.mcp ?? {}).join(",")}]`);
@@ -60,9 +60,8 @@ async function registerSearchTools(ctx, { home, enabled, directory }) {
         command: ["node", script],
         environment: {
           HOME: home,
-          SMARTER_COMPACT_STATE_DIR:
-            process.env.SMARTER_COMPACT_STATE_DIR || path.join(home, ".local", "share", PRODUCT),
-          CONTEXT_COMPACTION_RECALL: process.env.CONTEXT_COMPACTION_RECALL || "0",
+          SMARTER_COMPACT_STATE_DIR: stateParent(home, env),
+          CONTEXT_COMPACTION_RECALL: env.CONTEXT_COMPACTION_RECALL || "0",
         },
         enabled: true,
       },
@@ -81,8 +80,12 @@ async function registerSearchTools(ctx, { home, enabled, directory }) {
 export async function setup(ctx, options = {}) {
   ensureProductEnv();
   const home = process.env.HOME || os.homedir();
-  await ensureContextProxyRunning({ home, env: process.env, importMetaUrl: import.meta.url, waitMs: 8000 });
-  const settings = trimSettings(envFromPluginOptions(options), home);
+  const env = envFromPluginOptions(options);
+  // Only the port option reaches the shared proxy: its trim serves other agents, not this plugin.
+  await ensureContextProxyRunning({
+    home, env: { ...process.env, CONTEXT_PROXY_PORT: env.CONTEXT_PROXY_PORT }, importMetaUrl: import.meta.url, waitMs: 8000,
+  });
+  const settings = trimSettings(env, home);
   const projectDir = ctx.location?.directory;
   const measured = new Map();
   const registered = new Set();
@@ -91,7 +94,7 @@ export async function setup(ctx, options = {}) {
   function register(sessionID) {
     if (!sessionID || registered.has(sessionID)) return;
     try {
-      registerSession({ home, env: process.env, sessionId: sessionID, agent: "opencode", cwd: projectDir });
+      registerSession({ home, env, sessionId: sessionID, agent: "opencode", cwd: projectDir });
       registered.add(sessionID);
       while (registered.size > MAX_SESSIONS) registered.delete(registered.values().next().value);
     } catch { /* best effort */ }
@@ -99,7 +102,7 @@ export async function setup(ctx, options = {}) {
 
   function flagSmartCompact(sessionID, text) {
     if (!isSmartCompactPrompt(text)) return false;
-    try { writeForceFlag({ home, env: process.env, sessionId: sessionID }); } catch { /* best effort */ }
+    try { writeForceFlag({ home, env, sessionId: sessionID }); } catch { /* best effort */ }
     return true;
   }
 
@@ -158,7 +161,7 @@ export async function setup(ctx, options = {}) {
   });
   await ctx.session.hook("context", onContext);
   await ctx.session.hook("compaction", onCompaction);
-  await registerSearchTools(ctx, { home, enabled: settings.enabled, directory: projectDir });
+  await registerSearchTools(ctx, { home, env, enabled: settings.enabled, directory: projectDir });
   if (ctx.command?.transform) {
     await ctx.command.transform((editor) => {
       editor.add({

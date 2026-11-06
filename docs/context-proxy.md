@@ -33,7 +33,7 @@ smarter-compact enable claude
 
 Or add `CONTEXT_PROXY_PORT=4200` to `proxy.env`, then run `smarter-compact enable` again so agent URLs match.
 
-The OpenCode 2 `proxyPort` option does not move the auto-started proxy; set `CONTEXT_PROXY_PORT` instead.
+The OpenCode 2 `proxyPort` option sets the port that plugin probes; it starts a proxy there only when an agent config already points at that port. Other agents read `CONTEXT_PROXY_PORT`.
 
 Auto-start is off when `SMARTER_COMPACT_AUTO_PROXY=0`. Logs: `~/.config/smarter-compact/proxy.log`, rotated to `proxy.log.1` at 5 MB on each start.
 

@@ -12,11 +12,11 @@ A setting the proxy reads and OpenCode 2 does not has no effect on OpenCode 2 se
 ## Precedence
 
 1. Process environment.
-2. `~/.config/smarter-compact/proxy.env`, for `CONTEXT_PROXY_PORT` and the [keys listed there](#config-files) only.
-3. `~/.config/smarter-compact/config.toml`, for trim thresholds only.
+2. `~/.config/smarter-compact/proxy.env`, for the [keys listed there](#config-files).
+3. `~/.config/smarter-compact/config.toml`, for trim thresholds, `standing_instruction` and `[context_store]`.
 4. Built-in default.
 
-OpenCode 2 plugin options override the environment for the in-process trim. Under Docker compose, the host shell or `./.env` sets the variables `compose.yaml` lists; `proxy.env` supplies the rest.
+OpenCode plugin options override the environment ([which reach what](#opencode-plugin-options)). Under Docker compose, the host shell or `./.env` sets the variables `compose.yaml` lists; `proxy.env` supplies the rest; the container does not read `config.toml`, so set its settings as variables.
 
 ## Trim
 
@@ -90,8 +90,8 @@ Anthropic route (`/v1/messages`) to Claude models only. Details: [context proxy]
 
 | File | Written by | Read by | Content |
 | --- | --- | --- | --- |
-| `~/.config/smarter-compact/proxy.env` | `smarter-compact enable` | CLI, Docker compose (`env_file`) | `KEY=value` lines. The CLI reads `LITELLM_MASTER_KEY`, `CONTEXT_PROXY_PORT`, and, when unset in the environment, `CONTEXT_TRIM_AT_TOKENS`, `CONTEXT_TRIM_TO_FRACTION`, `CONTEXT_COMPRESS_OVER_TOKENS`, `CONTEXT_COMPACTION_MAX_CHARS`, `CONTEXT_CHARS_PER_TOKEN`, `CONTEXT_STANDING_INSTRUCTION`, `CONTEXT_PROXY_ENABLED`; it ignores other keys |
-| `~/.config/smarter-compact/config.toml` | `smarter-compact context set` | CLI | `[context_proxy] trim_at_tokens` (one threshold for every model) and `[context_proxy.trim_at]` (`<family> = tokens`, `default = tokens`). Applied only when `CONTEXT_TRIM_AT_TOKENS` is unset |
+| `~/.config/smarter-compact/proxy.env` | `smarter-compact enable` | CLI, Docker compose (`env_file`) | `KEY=value` lines. The CLI reads `LITELLM_MASTER_KEY`, `CONTEXT_PROXY_PORT`, and, when unset in the environment, every setting the proxy reads (`PROXY_ENV_CONTEXT_KEYS` in `plugin/lib/brand.mjs`) except `SMARTER_COMPACT_STATE_DIR`; the proxy the CLI starts gets them. `CONTEXT_EMBEDDING_API_KEY` goes to that proxy and to the embedding calls of the MCP server and the OpenCode 2 trim, never into an agent's environment. Other keys are ignored |
+| `~/.config/smarter-compact/config.toml` | `smarter-compact context set` | CLI, hooks, OpenCode 2, MCP, the proxy the CLI starts | `[context_proxy] trim_at_tokens` (one threshold for every model) and `[context_proxy.trim_at]` (`<family> = tokens`, `default = tokens`), applied only when `CONTEXT_TRIM_AT_TOKENS` is unset. `[context_proxy] standing_instruction` (`true`/`false`) sets `CONTEXT_STANDING_INSTRUCTION`. `[context_store]` `ttl_days` (whole number >= 0), `embedding_model`, `embedding_url`, `embedding_timeout_s`, `embedding_max_chars` set `CONTEXT_STORE_TTL_DAYS` and the matching `CONTEXT_EMBEDDING_*`. Each applies only when its variable is unset in the environment and `proxy.env`; an invalid value is ignored and reported on stderr. Docker compose does not read this file |
 
 Edit `config.toml` with the CLI, then restart the proxy or start a new session:
 
@@ -114,10 +114,10 @@ OpenCode 2 maps each option to its variable for the in-process trim (`src/option
 | `trimToFraction` | `CONTEXT_TRIM_TO_FRACTION` | yes |
 | `compressOverTokens` | `CONTEXT_COMPRESS_OVER_TOKENS` | yes |
 | `charsPerToken` | `CONTEXT_CHARS_PER_TOKEN` | yes |
-| `stateDir` | `SMARTER_COMPACT_STATE_DIR` | trim store only; session registration and `/compact` flags use the environment |
+| `stateDir` | `SMARTER_COMPACT_STATE_DIR` | yes: trim store, session registration, `/compact` flags and the registered MCP server |
 | `compactionRecall` | `CONTEXT_COMPACTION_RECALL` | none: OpenCode 2 has no recall |
 | `compactionMaxChars` | `CONTEXT_COMPACTION_MAX_CHARS` | none |
 | `recallTimeoutS` | `CONTEXT_RECALL_TIMEOUT_S` | none |
-| `proxyPort` | `CONTEXT_PROXY_PORT` | none: proxy auto-start reads the environment and `proxy.env` |
+| `proxyPort` | `CONTEXT_PROXY_PORT` | proxy auto-start probes this port, over the environment and `proxy.env`, and starts a proxy there only when an agent config already points at it; the in-process trim does not use it |
 
-OpenCode 1 trims in the proxy, which reads its own environment: set the variables or `proxy.env`, not plugin options.
+OpenCode 1 applies only `stateDir`, to session registration and `/compact` flags. It trims in the proxy, which reads its own environment: set the trim variables or `proxy.env`, not plugin options.
