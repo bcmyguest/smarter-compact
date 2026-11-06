@@ -19,6 +19,13 @@ export const PAGES = [
       'Context management (smart compaction) for coding agents — long sessions with small, cached prompts; every turn kept in a local SQLite store the agent can search.',
   },
   {
+    slug: 'quick-start',
+    source: 'docs/quick-start.md',
+    group: 'Start',
+    title: 'Quick start',
+    description: 'Install smarter-compact and set up integration with Claude Code, Codex, Pi, or OpenCode.',
+  },
+  {
     slug: 'context-management',
     source: 'docs/context-management.md',
     group: 'Guides',
