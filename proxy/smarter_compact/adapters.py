@@ -133,7 +133,8 @@ class AnthropicAdapter:
         return data.get("messages")
 
     def is_pinned(self, item):
-        return False
+        # Claude Code sends part of its system prompt (environment, model, deferred tools) as system messages.
+        return item.get("role") == "system"
 
     def _blocks(self, item):
         content = item.get("content")

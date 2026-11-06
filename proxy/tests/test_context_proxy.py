@@ -528,6 +528,14 @@ class FirstUserPinTests(Base):
         out = self.run_req(anth_request(copy.deepcopy(msgs)), trim_at_tokens=1)["messages"]
         self.assertEqual(out[0], msgs[0])
 
+    def test_anthropic_system_message_survives_trim(self):
+        msgs = anth_history(3)
+        env = {"role": "system", "content": "# Environment\nModel: claude-haiku-5-5"}
+        msgs.insert(1, env)
+        out = self.run_req(anth_request(copy.deepcopy(msgs)), trim_at_tokens=1)["messages"]
+        self.assertEqual(out[:2], msgs[:2])
+        self.assertFalse(any(r["role"] == "system" for r in self.log_rows()))
+
     def test_anthropic_first_user_is_in_flight_turn_unchanged(self):
         msgs = anth_history(1)
         msgs += [{"role": "assistant", "content": [{"type": "tool_use", "id": "tuY", "name": "Read", "input": {}}]},
