@@ -6,7 +6,7 @@ One subreddit, one post. Assets are in `promo/out/` (rebuild with `promo/build.s
 
 ## What to upload
 
-Post **`terminal-demo.mp4`** as a native video. It shows a Claude Code session the way readers know it: three prompts, the trim when the context crosses 95k, then a question about logs that already left the prompt, answered with `smart_compact_sql` and `smart_compact_get`. It ends on the 72% average. Reddit autoplays MP4 in the feed; a GIF gets re-encoded and looks worse.
+Post **`terminal-demo.mp4`** as a native video. It opens with a 6-second diagram of the prompt trimming into the session store, then shows a Claude Code session the way readers know it: three prompts, the trim when the context crosses 95k, then a question about logs that already left the prompt, answered with `smart_compact_sql` and `smart_compact_get`. It ends on the 72% average. Reddit autoplays MP4 in the feed; a GIF gets re-encoded and looks worse.
 
 Put the body below in the post. Then add `card-results-2400x1350.png` (the savings bars) as your first comment, for the people who want the chart.
 

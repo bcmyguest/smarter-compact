@@ -50,6 +50,8 @@
   .gauge u { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--smart); opacity: 0.8; }
   .foot { position: absolute; left: 56px; right: 56px; bottom: 26px; font-size: 13.5px; color: var(--dim); line-height: 1.45; }
 
+  .hero-title { font-size: 56px; font-weight: 800; letter-spacing: -0.03em; line-height: 1.04; }
+  .hero-title em { font-style: normal; color: var(--smart); }
   .headline { position: absolute; left: 56px; top: 150px; font-size: 54px; font-weight: 800; letter-spacing: -0.03em; line-height: 1.06; width: 1088px; }
   .headline em { font-style: normal; color: var(--smart); }
   .sub { font-size: 24px; font-weight: 500; color: var(--muted); letter-spacing: 0; margin-top: 18px; line-height: 1.4; }
@@ -145,6 +147,69 @@ function rowHtml(item, t) {
   return "";
 }
 
+const brand = (extra = "") => `<div class="brand"><div class="logo"></div><span>Smarter Compact</span></div><div class="tag">${extra}</div>`;
+function pitchScene(u, still = false) {
+  if (still) u = 99;
+  const f = (a, d = 0.45) => easeOut(seg(u, a, a + d));
+  const SLOT = 36, BOTTOM = 566, COLX = 690, COLW = 230;
+  const slotTop = (k) => BOTTOM - (k + 1) * SLOT + 6;
+  const ARR = (k) => 0.5 + k * 0.24;              // turn k arrives
+  const TRIM = 2.55, RECALL = 4.35;
+  const TH = slotTop(7) - 4;                     // limit sits above slot 7
+  const flash = still ? 0 : Math.exp(-Math.max(0, u - TRIM) * 5) * (u >= TRIM ? 1 : 0);
+  let blocks = "";
+  const block = (x, y, w, label, style = "", op = 1) =>
+    `<div style="position:absolute;left:${x}px;top:${y}px;width:${w}px;height:30px;border-radius:8px;opacity:${op};font-family:var(--mono);font-size:13px;display:flex;align-items:center;padding:0 12px;white-space:nowrap;overflow:hidden;${style}">${label}</div>`;
+  blocks += block(COLX, slotTop(0), COLW, "system + task · pinned", "background:#22274a;color:var(--muted);border:1px solid #333a6e");
+  for (let k = 1; k <= 8; k++) {
+    const a = f(ARR(k), 0.3);
+    if (a <= 0) continue;
+    let x = COLX, y = slotTop(k) - (1 - a) * 26, w = COLW, op = a;
+    if (k <= 4) {
+      const m = ease(seg(u, TRIM + (k - 1) * 0.08, TRIM + 0.6 + (k - 1) * 0.08));
+      x = lerp(COLX, 990, m); y = lerp(y, 520 - (k - 1) * 34, m); w = lerp(COLW, 128, m);
+    } else {
+      const m = ease(seg(u, TRIM + 0.35, TRIM + 0.85));
+      y = lerp(y, slotTop(k - 3), m);
+    }
+    const glow = k === 2 ? Math.exp(-Math.max(0, u - RECALL) * 4) * (u >= RECALL ? 1 : 0) : 0;
+    blocks += block(x, y, w, `turn ${k}`, `background:${k <= 4 && u > TRIM ? "#2b3170" : "#262b57"};color:var(--ink);border:1px solid ${glow > 0.05 ? "var(--good)" : "var(--smart)"};box-shadow:0 0 ${20 * glow}px rgba(111,220,166,${0.6 * glow})`, op);
+  }
+  const ptr = f(TRIM + 0.6, 0.35);
+  if (ptr > 0) blocks += block(COLX, slotTop(1), COLW, "↳ turns 1–4 in store", "background:transparent;color:var(--smart);border:1px dashed var(--smart)", ptr);
+  // recall: a copy of turn 2's line flies back into the prompt
+  const r = ease(seg(u, RECALL + 0.15, RECALL + 0.8));
+  if (r > 0) {
+    const x = lerp(990, COLX, r), y = lerp(520 - 34, slotTop(6), r) - 50 * Math.sin(Math.PI * r);
+    blocks += block(x, y, lerp(128, COLW, r), "turn 2 · line 412", "background:rgba(111,220,166,0.12);color:var(--good);border:1px solid var(--good)", 1);
+  }
+  const pill = f(RECALL - 0.45, 0.35);
+  const query = 'smart_compact_search("timeout")';
+  const typed = query.slice(0, Math.round(query.length * seg(u, RECALL - 0.4, RECALL + 0.1)));
+  const bullet = (n, t0, text) => `<div style="display:flex;gap:14px;align-items:flex-start;margin-top:18px;opacity:${f(t0)};transform:translateX(${(1 - f(t0)) * -16}px)">
+      <div style="flex:none;width:30px;height:30px;border-radius:50%;background:rgba(139,147,255,0.15);border:1px solid var(--smart);color:var(--smart);font-weight:700;font-size:15px;display:flex;align-items:center;justify-content:center">${n}</div>
+      <div style="font-size:21px;line-height:1.35;color:var(--ink)">${text}</div></div>`;
+  return `
+    ${brand("Claude Code · Codex · OpenCode · Pi")}
+    <div style="position:absolute;left:56px;top:110px;width:580px">
+      <div class="hero-title" style="font-size:48px;opacity:${f(0)};transform:translateY(${(1 - f(0)) * 14}px)">Long agent sessions. <em>Small, cached prompts.</em></div>
+      <div style="margin-top:26px">
+        ${bullet(1, 0.7, "Every turn is saved <b style='color:var(--smart)'>verbatim</b> to a local SQLite store.")}
+        ${bullet(2, TRIM - 0.1, "Older turns leave the prompt, so it stays <b style='color:var(--smart)'>under your limit</b> and the cache keeps hitting.")}
+        ${bullet(3, RECALL - 0.5, "The agent <b style='color:var(--smart)'>searches and queries</b> its history when it needs a detail.")}
+      </div>
+    </div>
+    <div style="position:absolute;left:${COLX}px;top:104px;font-size:13px;font-weight:600;color:var(--muted);letter-spacing:0.08em;opacity:${f(0.3)}">PROMPT</div>
+    <div style="position:absolute;left:990px;top:104px;font-size:13px;font-weight:600;color:var(--muted);letter-spacing:0.08em;opacity:${f(0.3)}">SESSION STORE</div>
+    <div style="position:absolute;left:972px;top:${(still ? 1 : 1) * 300}px;width:164px;height:268px;border-radius:18px;border:1px dashed rgba(139,147,255,${0.4 + 0.5 * flash});background:rgba(23,27,54,0.6);opacity:${f(0.3)};box-shadow:0 0 ${30 * flash}px rgba(139,147,255,${0.3 * flash})"></div>
+    <div style="position:absolute;left:990px;top:128px;font-family:var(--mono);font-size:13px;color:var(--dim);opacity:${f(0.3)}">sessions/&lt;sid&gt;.db</div>
+    <div style="position:absolute;left:${COLX - 8}px;width:${COLW + 16}px;top:${TH}px;border-top:2px dashed rgba(139,147,255,${0.4 + 0.6 * flash});opacity:${f(0.3)}"></div>
+    <div style="position:absolute;left:${COLX + COLW - 120}px;top:${TH - 22}px;width:120px;text-align:right;font-family:var(--mono);font-size:13px;color:var(--smart);opacity:${f(0.3)}">token limit</div>
+    ${blocks}
+    <div style="position:absolute;left:${COLX}px;top:150px;font-family:var(--mono);font-size:14px;color:var(--good);background:#0c0f22;border:1px solid rgba(111,220,166,0.4);border-radius:8px;padding:7px 12px;opacity:${pill};white-space:nowrap">${typed}<span>${typed.length < query.length ? "▍" : ""}</span></div>
+    <div class="foot" style="opacity:${f(RECALL + 0.6)}">Smarter Compact works through MCP tools and a local proxy. It has no API key of its own.</div>`;
+}
+
 function terminalScene(t) {
   let rows = "", H = 0;
   for (const item of SCRIPT) {
@@ -218,10 +283,13 @@ function endScene(u) {
     <div class="foot" style="opacity:${f(3.0)}">Paired list-price cost, Smarter Compact ÷ keep everything, seed-matched trials. ContextBench synthetic tasks, Claude Haiku 5.5, 2–3 pairs per size. Average is the mean of the four ratios (0.28). L1600's interval includes no saving.</div>`;
 }
 
-window.DURATION = T_TERM + T_END;
+const T_PITCH = 6.4;
+window.DURATION = T_PITCH + T_TERM + T_END;
 window.render = function (t) {
   const root = document.getElementById("root");
   if (!window.STILL_BG) document.getElementById("dots").style.transform = `translate(${(-t * 6) % 28}px, ${(-t * 3) % 28}px)`;
+  if (t < T_PITCH) { root.innerHTML = pitchScene(t); root.style.opacity = Math.min(easeOut(seg(t, 0, 0.3)), 1 - ease(seg(t, T_PITCH - 0.3, T_PITCH))); return; }
+  t -= T_PITCH;
   if (t < T_TERM) { root.innerHTML = terminalScene(t); root.style.opacity = 1 - ease(seg(t, T_TERM - 0.35, T_TERM)); }
   else { const u = t - T_TERM; root.innerHTML = endScene(u); root.style.opacity = easeOut(seg(u, 0, 0.3)); }
 };
