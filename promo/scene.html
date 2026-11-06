@@ -182,20 +182,73 @@ function valueAt(pos, which) {
   return lerp(v0, v1, ease(clamp(local / RISE)));
 }
 
-const T_INTRO = 1.9, T_CHART = 10.2, T_Q = 4.8, T_END = 5.6;
+const T_PITCH = 6.4, T_CHART = 10.2, T_SAVE = 7.4;
 const CHART_A = 0.7, CHART_B = 9.0;   // session runs between these (chart-local seconds)
 const posAt = (u) => { const f = seg(u, CHART_A, CHART_B); return NT * (0.8 * f + 0.2 * ease(f)); };
 // chart-local time at which turn index i starts (inverse of posAt)
 function timeOfPos(p) { let lo = CHART_A, hi = CHART_B; for (let k = 0; k < 40; k++) { const m = (lo + hi) / 2; if (posAt(m) < p) lo = m; else hi = m; } return (lo + hi) / 2; }
 const TRIM_T = TRIM_IDX.map((i) => timeOfPos(i));
 
-function introScene(u) {
-  const a = easeOut(seg(u, 0.05, 0.6)), b = easeOut(seg(u, 0.45, 1.0));
-  return `${brand("")}
-    <div class="intro">
-      <h1 style="opacity:${a};transform:translateY(${(1 - a) * 18}px)">A long agent session hits <em style="font-variant-numeric:tabular-nums">${Math.round(762 * ease(seg(u, 0.15, 1.3)))}k tokens</em>.</h1>
-      <p style="opacity:${b};transform:translateY(${(1 - b) * 12}px)">Same task, same model. Keep everything, or trim and search.</p>
-    </div>`;
+function pitchScene(u, still = false) {
+  if (still) u = 99;
+  const f = (a, d = 0.45) => easeOut(seg(u, a, a + d));
+  const SLOT = 36, BOTTOM = 566, COLX = 690, COLW = 230;
+  const slotTop = (k) => BOTTOM - (k + 1) * SLOT + 6;
+  const ARR = (k) => 0.5 + k * 0.24;              // turn k arrives
+  const TRIM = 2.55, RECALL = 4.35;
+  const TH = slotTop(7) - 4;                     // limit sits above slot 7
+  const flash = still ? 0 : Math.exp(-Math.max(0, u - TRIM) * 5) * (u >= TRIM ? 1 : 0);
+  let blocks = "";
+  const block = (x, y, w, label, style = "", op = 1) =>
+    `<div style="position:absolute;left:${x}px;top:${y}px;width:${w}px;height:30px;border-radius:8px;opacity:${op};font-family:var(--mono);font-size:13px;display:flex;align-items:center;padding:0 12px;white-space:nowrap;overflow:hidden;${style}">${label}</div>`;
+  blocks += block(COLX, slotTop(0), COLW, "system + task · pinned", "background:#22274a;color:var(--muted);border:1px solid #333a6e");
+  for (let k = 1; k <= 8; k++) {
+    const a = f(ARR(k), 0.3);
+    if (a <= 0) continue;
+    let x = COLX, y = slotTop(k) - (1 - a) * 26, w = COLW, op = a;
+    if (k <= 4) {
+      const m = ease(seg(u, TRIM + (k - 1) * 0.08, TRIM + 0.6 + (k - 1) * 0.08));
+      x = lerp(COLX, 990, m); y = lerp(y, 520 - (k - 1) * 34, m); w = lerp(COLW, 128, m);
+    } else {
+      const m = ease(seg(u, TRIM + 0.35, TRIM + 0.85));
+      y = lerp(y, slotTop(k - 3), m);
+    }
+    const glow = k === 2 ? Math.exp(-Math.max(0, u - RECALL) * 4) * (u >= RECALL ? 1 : 0) : 0;
+    blocks += block(x, y, w, `turn ${k}`, `background:${k <= 4 && u > TRIM ? "#2b3170" : "#262b57"};color:var(--ink);border:1px solid ${glow > 0.05 ? "var(--good)" : "var(--smart)"};box-shadow:0 0 ${20 * glow}px rgba(111,220,166,${0.6 * glow})`, op);
+  }
+  const ptr = f(TRIM + 0.6, 0.35);
+  if (ptr > 0) blocks += block(COLX, slotTop(1), COLW, "↳ turns 1–4 in store", "background:transparent;color:var(--smart);border:1px dashed var(--smart)", ptr);
+  // recall: a copy of turn 2's line flies back into the prompt
+  const r = ease(seg(u, RECALL + 0.15, RECALL + 0.8));
+  if (r > 0) {
+    const x = lerp(990, COLX, r), y = lerp(520 - 34, slotTop(6), r) - 50 * Math.sin(Math.PI * r);
+    blocks += block(x, y, lerp(128, COLW, r), "turn 2 · line 412", "background:rgba(111,220,166,0.12);color:var(--good);border:1px solid var(--good)", 1);
+  }
+  const pill = f(RECALL - 0.45, 0.35);
+  const query = 'smart_compact_search("timeout")';
+  const typed = query.slice(0, Math.round(query.length * seg(u, RECALL - 0.4, RECALL + 0.1)));
+  const bullet = (n, t0, text) => `<div style="display:flex;gap:14px;align-items:flex-start;margin-top:18px;opacity:${f(t0)};transform:translateX(${(1 - f(t0)) * -16}px)">
+      <div style="flex:none;width:30px;height:30px;border-radius:50%;background:rgba(139,147,255,0.15);border:1px solid var(--smart);color:var(--smart);font-weight:700;font-size:15px;display:flex;align-items:center;justify-content:center">${n}</div>
+      <div style="font-size:21px;line-height:1.35;color:var(--ink)">${text}</div></div>`;
+  return `
+    ${brand("Claude Code · Codex · OpenCode · Pi")}
+    <div style="position:absolute;left:56px;top:110px;width:580px">
+      <div class="hero-title" style="font-size:48px;opacity:${f(0)};transform:translateY(${(1 - f(0)) * 14}px)">Long agent sessions. <em>Small, cached prompts.</em></div>
+      <div style="margin-top:26px">
+        ${bullet(1, 0.7, "Every turn is saved <b style='color:var(--smart)'>verbatim</b> to a local SQLite store.")}
+        ${bullet(2, TRIM - 0.1, "Older turns leave the prompt, so it stays <b style='color:var(--smart)'>under your limit</b> and the cache keeps hitting.")}
+        ${bullet(3, RECALL - 0.5, "The agent <b style='color:var(--smart)'>searches and queries</b> its history when it needs a detail.")}
+      </div>
+    </div>
+    <div style="position:absolute;left:${COLX}px;top:104px;font-size:13px;font-weight:600;color:var(--muted);letter-spacing:0.08em;opacity:${f(0.3)}">PROMPT</div>
+    <div style="position:absolute;left:990px;top:104px;font-size:13px;font-weight:600;color:var(--muted);letter-spacing:0.08em;opacity:${f(0.3)}">SESSION STORE</div>
+    <div style="position:absolute;left:972px;top:${(still ? 1 : 1) * 300}px;width:164px;height:268px;border-radius:18px;border:1px dashed rgba(139,147,255,${0.4 + 0.5 * flash});background:rgba(23,27,54,0.6);opacity:${f(0.3)};box-shadow:0 0 ${30 * flash}px rgba(139,147,255,${0.3 * flash})"></div>
+    <div style="position:absolute;left:990px;top:128px;font-family:var(--mono);font-size:13px;color:var(--dim);opacity:${f(0.3)}">sessions/&lt;sid&gt;.db</div>
+    <div style="position:absolute;left:${COLX - 8}px;width:${COLW + 16}px;top:${TH}px;border-top:2px dashed rgba(139,147,255,${0.4 + 0.6 * flash});opacity:${f(0.3)}"></div>
+    <div style="position:absolute;left:${COLX + COLW - 120}px;top:${TH - 22}px;width:120px;text-align:right;font-family:var(--mono);font-size:13px;color:var(--smart);opacity:${f(0.3)}">token limit</div>
+    ${blocks}
+    <div style="position:absolute;left:${COLX}px;top:150px;font-family:var(--mono);font-size:14px;color:var(--good);background:#0c0f22;border:1px solid rgba(111,220,166,0.4);border-radius:8px;padding:7px 12px;opacity:${pill};white-space:nowrap">${typed}<span>${typed.length < query.length ? "▍" : ""}</span></div>
+    <div class="foot" style="opacity:${f(RECALL + 0.6)}">Smarter Compact works through MCP tools and a local proxy. It has no API key of its own.</div>`;
 }
 
 function chartScene(u, still = false) {
@@ -278,7 +331,7 @@ function chartScene(u, still = false) {
   const landed = still ? trimsDone : TRIM_T.filter((tt) => u - tt >= 0.7).length;
 
   return `
-    ${brand("same task · same model")}
+    ${brand("example · one long log-triage session")}
     <div id="chartwrap">${svg}</div>
     <div id="side" style="opacity:${draw};transform:translateX(${(1 - draw) * 20}px)">
       <div class="meter">
@@ -304,79 +357,43 @@ function chartScene(u, still = false) {
     <div class="foot">Illustration of one log-triage session. Peak prompt and cost per trial are measured means (ContextBench L12800, Claude Haiku 5.5; smart n = 3, keep everything n = 2). Trims follow that run's settings: at 95k, down to about 29k.</div>`;
 }
 
-const LOGWORDS = ["auth-svc", "billing", "gateway", "worker-3", "cache", "scheduler", "auth-svc", "db-pool"];
-const LEVELS = ["INFO ", "WARN ", "ERROR", "INFO ", "DEBUG"];
-function logLine(i) {
-  const r = rng(i * 31 + 5); r();
-  const svc = LOGWORDS[Math.floor(r() * LOGWORDS.length)], lvl = LEVELS[Math.floor(r() * LEVELS.length)];
-  const msg = r() < 0.18 ? "request timeout after 30000ms" : ["ok", "retry scheduled", "conn reused", "flush 42 rows", "cache miss", "lease renewed"][Math.floor(r() * 6)];
-  const hh = String(10 + (i >> 9) % 12).padStart(2, "0"), mm = String((i >> 3) % 60).padStart(2, "0"), ss = String((i * 7) % 60).padStart(2, "0");
-  const line = `${hh}:${mm}:${ss} ${lvl} ${svc.padEnd(10)} ${msg}`;
-  return svc === "auth-svc" && msg.includes("timeout") ? `<span class="hit">${line}</span>` : line;
-}
-
-function questionScene(u) {
-  const a = easeOut(seg(u, 0, 0.5)), b = easeOut(seg(u, 0.5, 1.0));
-  const typedF = seg(u, 1.0, 2.2);
-  const sql = `SELECT count(*) FROM lines\n WHERE text LIKE '%auth-svc%'\n   AND text LIKE '%timeout%';`;
-  const sqlT = sql.slice(0, Math.round(sql.length * typedF));
-  const sqlHtml = sqlT.replace(/(SELECT|FROM|WHERE|AND|LIKE)/g, '<span class="k">$1</span>').replace(/('[^']*'?)/g, '<span class="s">$1</span>');
-  const caret = typedF < 1 || Math.floor(u * 3) % 2 ? "▍" : " ";
-  const res = back(seg(u, 2.45, 2.9));
-  const v = easeOut(seg(u, 2.9, 3.3));
-  // scrolling wall of log lines with a scan bar that never quite finishes
-  const scroll = u * 260, first = Math.floor(scroll / 15);
-  let wall = "";
-  for (let i = 0; i < 15; i++) wall += logLine(first + i) + "\n";
-  const scanY = 186 * (0.5 + 0.45 * Math.sin(u * 5));
-  return `
-    ${brand("same task · same model")}
-    <div id="qcard">
-      <div class="q" style="opacity:${a};transform:translateY(${(1 - a) * 14}px)">
-        <small>Late in the session</small>
-        “How many auth-svc timeouts were in the logs you read earlier?”
-      </div>
-      <div class="cols" style="opacity:${b};transform:translateY(${(1 - b) * 16}px)">
-        <div class="col">
-          <h5><span class="dot" style="background:var(--keep)"></span>Keep everything · ~760k tokens in context</h5>
-          <div class="wall"><div style="transform:translateY(${-(scroll % 15)}px)">${wall}</div><div class="scan" style="top:${scanY}px"></div></div>
-          <div class="verdict" style="color:var(--keep);opacity:${v}">Count score at L12800: 0.00</div>
-        </div>
-        <div class="col">
-          <h5><span class="dot" style="background:var(--smart)"></span>Smarter Compact · ≤ 95k in context</h5>
-          <div class="code"><span class="c">smart_compact_sql</span>
-${sqlHtml}<span style="color:var(--smart)">${typedF > 0 ? caret : ""}</span></div>
-          <div class="result" style="opacity:${clamp(res)};transform:translateY(${(1 - clamp(res)) * 10}px) scale(${0.96 + 0.04 * res})"><span>count(*) · 1 row</span><span>exact, from stored lines ✓</span></div>
-          <div class="verdict" style="color:var(--good);opacity:${v}">Count score at L12800: 1.00</div>
-        </div>
-      </div>
-    </div>
-    <div class="foot" style="opacity:${v}">Means at ContextBench log-triage L12800, Claude Haiku 5.5. Lookup questions: keep everything 0.71, Smarter Compact 1.00. Query and log lines shown are examples.</div>`;
-}
-
-function odo(from, to, f, fmt) { return fmt(lerp(from, to, ease(f))); }
-function endScene(u) {
-  const f = (a, d = 0.5) => easeOut(seg(u, a, a + d));
-  const stat = (i, from, to, fmt, what, ofmt) => {
-    const t0 = 0.45 + i * 0.25, cnt = seg(u, t0 + 0.2, t0 + 1.2), strike = easeOut(seg(u, t0 + 1.1, t0 + 1.45));
-    return `<div class="stat" style="opacity:${f(t0)};transform:translateY(${(1 - f(t0)) * 18}px)">
-      <div class="from">${ofmt}<s style="width:${strike * 104}%"></s></div>
-      <div class="to">${odo(from, to, cnt, fmt)}</div><div class="what">${what}</div></div>`;
-  };
+const SAVINGS = [
+  { task: "kv-store R4000", ratio: 0.130 },
+  { task: "log-triage L1600", ratio: 0.811, ns: true },
+  { task: "log-triage L6400", ratio: 0.109 },
+  { task: "log-triage L12800", ratio: 0.062 },
+];
+const AVG_SAVING = Math.round(100 * (1 - SAVINGS.reduce((a, r) => a + r.ratio, 0) / SAVINGS.length));
+function savingsScene(u, still = false) {
+  if (still) u = 99;
+  const f = (a, d = 0.45) => easeOut(seg(u, a, a + d));
+  const pct = Math.round(AVG_SAVING * ease(seg(u, 0.3, 2.6)));
+  const BAR = 560, X0 = 290;
+  let rows = "";
+  SAVINGS.forEach((r, i) => {
+    const t0 = 0.4 + i * 0.3, top = 236 + i * 56;
+    const grow = ease(seg(u, t0, t0 + 0.5)), shrink = ease(seg(u, t0 + 0.55, t0 + 1.35));
+    const w = BAR * lerp(1, r.ratio, shrink) * grow;
+    const save = Math.round(100 * (1 - r.ratio));
+    rows += `<div style="position:absolute;left:56px;top:${top}px;width:220px;font-size:17px;color:var(--muted);opacity:${f(t0)}">${r.task}</div>
+      <div style="position:absolute;left:${X0}px;top:${top - 2}px;height:12px;width:${BAR * grow}px;border-radius:6px;background:rgba(240,163,94,0.85)"></div>
+      <div style="position:absolute;left:${X0}px;top:${top + 15}px;height:12px;width:${w}px;border-radius:6px;background:var(--smart);box-shadow:0 0 ${12 * (1 - shrink) * grow}px var(--smart-glow)"></div>
+      <div style="position:absolute;left:${X0 + BAR + 24}px;top:${top - 4}px;font-family:var(--mono);font-size:26px;font-weight:700;color:${r.ns ? "var(--muted)" : "var(--ink)"};opacity:${f(t0 + 1.2)}">−${save}%<span style="font-family:Inter;font-size:14px;font-weight:500;color:var(--dim);margin-left:10px">${r.ns ? "not significant" : ""}</span></div>`;
+  });
   const cmd = "npm install -g smarter-compact";
-  const typed = cmd.slice(0, Math.round(cmd.length * seg(u, 2.2, 3.1)));
+  const typed = cmd.slice(0, Math.round(cmd.length * seg(u, 3.6, 4.4)));
   const caret = Math.floor(u * 2.5) % 2 ? "▍" : " ";
   return `
     ${brand("github.com/bcmyguest/smarter-compact")}
-    <div class="headline" style="opacity:${f(0)};transform:translateY(${(1 - f(0)) * 14}px)">Every turn kept. <em>The prompt stays small.</em>
-      <div class="sub">Older turns move to local SQLite, verbatim. The agent searches them on demand.</div></div>
-    <div class="stats">
-      ${stat(0, 762, 95, (v) => `${Math.round(v)}k`, "peak prompt", "762k")}
-      ${stat(1, 6.07, 0.38, (v) => `$${v.toFixed(2)}`, "list-price cost per trial", "$6.07")}
-      ${stat(2, 0, 1, (v) => v.toFixed(2), "count-question score", "0.00")}
-    </div>
-    <div class="install" style="opacity:${f(2.0, 0.3)}"><span class="p">$</span>${typed}<span style="color:var(--good)">${caret}</span></div>
-    <div class="foot" style="opacity:${f(2.0)}">ContextBench log-triage L12800, Claude Haiku 5.5, means over 3 runs (Smarter Compact) and 2 (keep everything); synthetic tasks, not coding sessions. Across all log sizes, eight seed-matched pairs: +0.47 score (95% CI 0.34–0.58). Cost saving is smallest at L1600 (0.81×, interval crosses 1).</div>`;
+    <div class="headline" style="top:100px;opacity:${f(0)};transform:translateY(${(1 - f(0)) * 14}px)">Average cost saving: <em style="font-variant-numeric:tabular-nums">${pct}%</em>
+      <div class="sub">Four benchmark task sizes, same model, same seeds, cost relative to keeping everything.</div></div>
+    <div style="position:absolute;left:${X0}px;top:208px;font-size:13px;color:var(--muted);display:flex;gap:18px;opacity:${f(0.3)}">
+      <span><span class="dot" style="background:var(--keep);margin-right:6px"></span>Keep everything</span>
+      <span><span class="dot" style="background:var(--smart);margin-right:6px"></span>Smarter Compact</span></div>
+    ${rows}
+    <div style="position:absolute;left:56px;top:470px;font-size:19px;color:var(--ink);opacity:${f(2.9)}">Better answers too: <b style="color:var(--good)">+0.47</b> <span style="color:var(--muted)">score on log tasks (95% CI 0.34–0.58)</span></div>
+    <div class="install" style="top:520px;opacity:${f(3.5, 0.3)}"><span class="p">$</span>${still ? cmd : typed}<span style="color:var(--good)">${still ? "" : caret}</span></div>
+    <div class="foot" style="opacity:${f(3.0)}">Paired list-price cost, Smarter Compact ÷ keep everything, seed-matched trials. ContextBench synthetic tasks, Claude Haiku 5.5, 2–3 pairs per size. Average is the mean of the four ratios (0.28). L1600's interval includes no saving.</div>`;
 }
 
 function heroScene(gh) {
@@ -405,16 +422,15 @@ function miniChart() {
   </svg>`;
 }
 
-window.DURATION = T_INTRO + T_CHART + T_Q + T_END;
+window.DURATION = T_PITCH + T_CHART + T_SAVE;
 window.render = function (t) {
   const root = document.getElementById("root");
   if (!window.STILL_BG) document.getElementById("dots").style.transform = `translate(${(-t * 6) % 28}px, ${(-t * 3) % 28}px)`;
   let html, op = 1;
   const fade = (u, d) => Math.min(easeOut(seg(u, 0, 0.3)), 1 - ease(seg(u, d - 0.3, d)));
-  if (t < T_INTRO) { html = introScene(t); op = fade(t, T_INTRO); }
-  else if (t < T_INTRO + T_CHART) { const u = t - T_INTRO; html = chartScene(u); op = fade(u, T_CHART); }
-  else if (t < T_INTRO + T_CHART + T_Q) { const u = t - T_INTRO - T_CHART; html = questionScene(u); op = fade(u, T_Q); }
-  else { const u = t - T_INTRO - T_CHART - T_Q; html = endScene(u); op = easeOut(seg(u, 0, 0.3)); }
+  if (t < T_PITCH) { html = pitchScene(t); op = fade(t, T_PITCH); }
+  else if (t < T_PITCH + T_CHART) { const u = t - T_PITCH; html = chartScene(u); op = fade(u, T_CHART); }
+  else { const u = t - T_PITCH - T_CHART; html = savingsScene(u); op = easeOut(seg(u, 0, 0.3)); }
   root.innerHTML = html;
   root.style.opacity = op;
 };
@@ -423,7 +439,8 @@ window.card = function (name) {
   root.style.opacity = 1;
   if (name === "hero") root.innerHTML = heroScene(false);
   if (name === "gh") { document.body.classList.add("gh"); root.innerHTML = heroScene(true); }
-  if (name === "results") root.innerHTML = endScene(99);
+  if (name === "results") root.innerHTML = savingsScene(0, true);
+  if (name === "pitch") root.innerHTML = pitchScene(0, true);
   if (name === "chart") root.innerHTML = chartScene(99, true);
 };
 window.TRIMS = TRIM_IDX.length;

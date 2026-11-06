@@ -20,23 +20,23 @@ Post on a weekday morning US time, and stay around for the first two hours to an
 
 ## Title options
 
-- **Smarter Compact: older turns of a long agent session go into SQLite, and the agent queries them back. Peak prompt 762k → 95k on a long log task**
-- **I built a context manager for Claude Code: every turn kept verbatim in local SQLite, prompt stays under 95k, agent searches what it needs**
-- **Long Claude Code sessions at 95k tokens instead of 762k: a local SQLite store the agent can search and run SQL on**
+- **Smarter Compact: keeps long coding-agent sessions small by moving older turns to a local SQLite store the agent can search. 72% lower cost on average in benchmarks**
+- **I built a context manager for Claude Code: every turn kept verbatim, prompt stays under your limit, agent queries its own history**
+- **Long Claude Code sessions with small, cached prompts: older turns go to SQLite, the agent searches them when it needs a detail**
 
 ## Body
 
+The video follows the same order as the post: what it does, one example session, then the average saving.
+
 > I built Smarter Compact to keep long coding-agent sessions fast and cheap without losing anything.
 >
-> Once the prompt reaches a token threshold (95k on Haiku), older turns move into a local SQLite file, word for word. The turn after the cut carries a pointer, and the agent gets three MCP tools to pull history back:
+> **What it does**
 >
-> - `smart_compact_search`: full-text and ranked search over every turn
-> - `smart_compact_sql`: read-only SQL, so "how many X" becomes a `count(*)`
-> - `smart_compact_get`: fetch an exact message
+> - Every turn is saved word for word to a local SQLite file.
+> - Once the prompt reaches your token limit (95k on Haiku), older turns leave the prompt. The cut is sticky, so the prompt cache keeps hitting.
+> - The agent gets three MCP tools to pull history back: `smart_compact_search` (full-text, ranked), `smart_compact_sql` (read-only SQL, so "how many X" is a `count(*)`) and `smart_compact_get` (an exact message).
 >
-> The cut is sticky: later requests get the same prefix byte for byte, so the prompt cache keeps hitting.
->
-> **Results** (ContextBench log-triage, largest size, Claude Haiku 5.5, 2–3 runs per arm):
+> **Example: one long log-triage session** (ContextBench L12800, Claude Haiku 5.5)
 >
 > | | Keep everything | Smarter Compact |
 > | --- | --- | --- |
@@ -45,9 +45,9 @@ Post on a weekday morning US time, and stay around for the first two hours to an
 > | Lookup questions | 0.71 | 1.00 |
 > | Count questions | 0.00 | 1.00 |
 >
-> Pooled over all log sizes it scored +0.47 over keep-everything (95% CI 0.34–0.58, eight seed-matched pairs). Claude Code's own compaction never fired in these runs, so it behaved like keep-everything.
+> **On average: 72% lower cost** across four task sizes, seed-matched against keeping everything (−87%, −19%, −89%, −94%). The smallest size's saving isn't significant; on the log tasks, the longer the session, the bigger the saving. Answers got better too: +0.47 score on the log tasks (95% CI 0.34–0.58, eight pairs).
 >
-> Honest limits: these are synthetic tasks and small samples, the cost saving at the smallest size isn't significant, and real-session results (Compact-Bench) are still pending.
+> Honest limits: synthetic tasks, small samples (2–3 runs per size), and real-session results (Compact-Bench) are still pending. Claude Code's own compaction never fired in these runs, so it behaved like keep-everything.
 >
 > Works with Claude Code, Codex, OpenCode and Pi. Local only; it has no API key of its own.
 >
@@ -69,12 +69,13 @@ Post on a weekday morning US time, and stay around for the first two hours to an
 
 ## Numbers that are safe to say
 
-- 762k → 95k peak prompt and $6.07 → $0.38 apply only at log-triage L12800. Don't say "16× cheaper" in general: at L1600 the ratio is 0.81 and its interval crosses 1.
+- **72% average cost saving** is the mean of four paired cost ratios (0.130, 0.811, 0.109, 0.062 → 0.28). Say "on average across four benchmark sizes", not "72% cheaper" flat: per size it ranges from 19% (not significant) to 94%.
+- 762k → 95k peak prompt and $6.07 → $0.38 apply only to the L12800 example.
 - Count questions 0.00 → 1.00 and lookups 0.71 → 1.00 at L12800.
-- +0.47 pooled (95% CI 0.34–0.58), eight pairs.
-- Always mention synthetic tasks, Haiku 5.5, and 2–3 runs per arm.
+- +0.47 pooled score (95% CI 0.34–0.58), eight pairs.
+- Always mention synthetic tasks, Haiku 5.5, and 2–3 runs per size.
 
-The animation's line shape is illustrative; its peaks and costs are measured, and its trims follow that run's settings (at 95k, down to about 29k).
+The example chart's line shape is illustrative; its peaks and costs are measured, and its trims follow that run's settings (at 95k, down to about 29k).
 
 ## Later: other channels
 
