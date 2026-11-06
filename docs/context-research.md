@@ -390,7 +390,7 @@ The 5x price tier above 100K input tokens explains Native's extra cost: at flat 
 | ServerClear | `ScClaudeServerClear` | Anthropic `clear_tool_uses_20250919`, trigger 95K, keep 3, clear at least 5,000; our trim off |
 | Native | `ScClaudeBaseline` | Claude Code's own compaction |
 
-Probe first: [`tb21-h55-publish-probe.json`](../bench/termbench/harbor/jobs/tb21-h55-publish-probe.json), adaptive-rejection-sampler, 1 attempt, Clear, ServerClear and Mask at 40K so each mechanism fires.
+Probe first: [`tb21-h55-publish-probe.json`](../bench/termbench/harbor/jobs/tb21-h55-publish-probe.json), adaptive-rejection-sampler, 1 attempt, Clear, ServerClear and Mask at 40K so each mechanism fires. The probe's Clear arm keeps 3 results, not 10: the first run trimmed twice with at most 10 results in context, so no clear bound formed. The probe passes when `report.py` prints `mechanism did not fire: none` (column `mech`: Clear a `clear_fp` in trim.json, Mask the mask recovery text in a pointer note, ServerClear a non-empty `applied_edits` usage event).
 
 ## Limitations
 

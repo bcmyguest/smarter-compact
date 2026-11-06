@@ -18,6 +18,8 @@ ARMS = ("Smart", "Mask", "Clear", "ServerClear", "Native")
 # Agent class -> arm label; any other ScClaude<Name> class reports as <Name> (NoStrip, Prose, Trim50, ...).
 ARM_LABELS = {"ScClaudeSmarterCompact": "Smart", "ScClaudeMask": "Mask", "ScClaudeServerClear": "ServerClear",
               "ScClaudeClear": "Clear", "ScClaudeBaseline": "Native"}
+# Start of core.mask_text, which a masking trim appends to its pointer note.
+MASK_NOTE = "Older tool outputs in your context read"
 
 
 def arm_of(trial):
@@ -75,6 +77,36 @@ def trim_stats(trial):
     return trims, dropped
 
 
+def mechanism(trial, arm):
+    """Whether the arm's own mechanism fired: "yes", "no", or "-" for arms without one.
+
+    Clear: a trim set a clear bound (trim.json thread "clear_fp"). Mask: a trim note carries the mask recovery text.
+    ServerClear: Anthropic reported a non-empty context_management.applied_edits on some request."""
+    ctx = os.path.join(trial, "agent/smarter-compact/context/sessions")
+    if arm in ("Clear", "Mask"):
+        for path in glob.glob(os.path.join(ctx, "*.trim.json")):
+            try:
+                threads = (json.load(open(path)).get("threads") or {}).values()
+            except (OSError, ValueError):
+                continue
+            if any(t.get("clear_fp") if arm == "Clear" else MASK_NOTE in (t.get("note") or "") for t in threads):
+                return "yes"
+        return "no"
+    if arm == "ServerClear":
+        for db in glob.glob(os.path.join(ctx, "*.db")):
+            conn = sqlite3.connect(db)
+            try:
+                if conn.execute("SELECT 1 FROM events WHERE kind = 'usage' AND applied_edits NOT IN ('', '[]') "
+                                "LIMIT 1").fetchone():
+                    return "yes"
+            except sqlite3.Error:
+                pass
+            finally:
+                conn.close()
+        return "no"
+    return "-"
+
+
 def load(job):
     rows, running = [], []
     for trial in sorted(glob.glob(os.path.join(job, "*__*/"))):
@@ -95,6 +127,7 @@ def load(job):
             "in": agent.get("n_input_tokens") or 0, "out": agent.get("n_output_tokens") or 0,
             "cost": agent.get("cost_usd") or 0.0, "peak": peak, "trims": trims, "dropped": dropped,
             "recall": recall, "recall_err": recall_err, "econn": econn, "compacts": compacts, "offered": offered,
+            "mech": mechanism(trial, arm),
             "restarts": open(watchdog).read().count("restarting") if os.path.exists(watchdog) else 0,
         })
     return rows, running
@@ -134,11 +167,11 @@ def main():
     rows, running = load(args.job)
 
     print(f"{'task':34} {'arm':11} {'rew':>4} {'peak':>8} {'input':>10} {'output':>8} {'cost':>7} "
-          f"{'trims':>5} {'drop':>5} {'recall':>6} exc")
+          f"{'trims':>5} {'drop':>5} {'recall':>6} {'mech':>4} exc")
     for r in sorted(rows, key=lambda r: (r["task"], r["arm"])):
         print(f"{r['task'][:34]:34} {r['arm']:11} {r['reward'] if r['reward'] is not None else '-':>4} {r['peak']:>8,} "
               f"{r['in']:>10,} {r['out']:>8,} {r['cost']:>7.3f} {r['trims']:>5} {r['dropped']:>5} {r['recall']:>6} "
-              f"{r['exc']}")
+              f"{r['mech']:>4} {r['exc']}")
 
     both = {r["task"] for r in rows if r["arm"] == "Smart"} & {r["task"] for r in rows if r["arm"] == "Native"}
     paired = [r for r in rows if r["task"] in both]
@@ -152,6 +185,8 @@ def main():
     print_totals(f"Check: long or smart trimmed ({len(long_tasks | trimmed)})",
                  [r for r in paired if r["task"] in long_tasks | trimmed], arms)
     print(f"\nrunning: {', '.join(running) or 'none'}")
+    missed = [f"{r['arm']}:{r['task']}" for r in rows if r["mech"] == "no"]
+    print(f"mechanism did not fire: {', '.join(missed) or 'none'}")
 
 
 if __name__ == "__main__":

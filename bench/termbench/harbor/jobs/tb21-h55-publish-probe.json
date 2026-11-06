@@ -27,7 +27,7 @@
    "env": {
     "CONTEXT_TRIM_AT_TOKENS": "40000",
     "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "195000",
-    "CONTEXT_CLEAR_KEEP_RESULTS": "10"
+    "CONTEXT_CLEAR_KEEP_RESULTS": "3"
    },
    "kwargs": {}
   },
