@@ -11,7 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { rotateLog } from "./log-rotate.mjs";
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 /** Version 1, executed in order on an empty database. Same strings as SCHEMA in sessiondb.py. */
 export const SCHEMA = [
   "CREATE TABLE messages (seq INTEGER PRIMARY KEY, fingerprint TEXT NOT NULL UNIQUE, thread TEXT NOT NULL, "
@@ -42,10 +42,12 @@ export const MIGRATIONS = [
   [3, ["model TEXT", "thread_root TEXT", "trimmed INTEGER", "input_tokens INTEGER", "cache_read_tokens INTEGER",
     "cache_creation_tokens INTEGER", "output_tokens INTEGER", "breakpoints INTEGER", "breakpoint_at TEXT"]
     .map((c) => `ALTER TABLE events ADD COLUMN ${c}`)],
+  // Usage: the provider's applied context edits (Anthropic context_management.applied_edits) as compact JSON.
+  [4, ["ALTER TABLE events ADD COLUMN applied_edits TEXT"]],
 ];
 export const EVENT_COLUMNS = ["at", "kind", "version", "location", "error", "tokens_before", "tokens_after", "dropped", "model",
   "thread_root", "trimmed", "input_tokens", "cache_read_tokens", "cache_creation_tokens", "output_tokens", "breakpoints",
-  "breakpoint_at"];
+  "breakpoint_at", "applied_edits"];
 export const DB_SUFFIX = ".db";
 export const BUSY_TIMEOUT_MS = 1000;
 export const DEFAULT_TTL_DAYS = 30;

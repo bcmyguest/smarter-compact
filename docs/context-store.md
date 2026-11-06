@@ -75,9 +75,9 @@ A trim keeps the pinned first turn's and the reply's rows `in_context = 1`. `in_
 
 `sessions/<sid>.db` is a SQLite database, one per session, in WAL mode. The proxy (Python `sqlite3`, `proxy/smarter_compact/sessiondb.py`) and the OpenCode 2 plugin (`node:sqlite`, `cli/coding-agent/session-db.mjs`) write it; the MCP tools open it read-only. The file is created mode 600; SQLite gives `-wal` and `-shm` the same mode.
 
-### Schema (`PRAGMA user_version = 3`)
+### Schema (`PRAGMA user_version = 4`)
 
-A writer that finds `user_version = 0` creates these objects in one `BEGIN IMMEDIATE` transaction, in this order and with these exact statements (both writers share the strings, `SCHEMA` then `MIGRATIONS`; the parity test compares `sqlite_master`), then sets `user_version = 3`. A writer that finds an older version runs only the statements after it (version 2 creates the `events` table, version 3 adds its usage columns) in the same kind of transaction; rows already stored are untouched, and older events get `NULL` in the new columns. A writer that finds a newer version leaves the file alone and logs `UnsupportedSchema`; a reader skips it. Readers (`smart_compact_*`, `context_status`) accept versions 1 to 3; a version 1 file has no `events` table, a version 2 file has no usage columns. A schema change appends to `MIGRATIONS`, bumps `user_version` and changes this section first.
+A writer that finds `user_version = 0` creates these objects in one `BEGIN IMMEDIATE` transaction, in this order and with these exact statements (both writers share the strings, `SCHEMA` then `MIGRATIONS`; the parity test compares `sqlite_master`), then sets `user_version = 4`. A writer that finds an older version runs only the statements after it (version 2 creates the `events` table, version 3 adds its usage columns, version 4 `applied_edits`) in the same kind of transaction; rows already stored are untouched, and older events get `NULL` in the new columns. A writer that finds a newer version leaves the file alone and logs `UnsupportedSchema`; a reader skips it. Readers (`smart_compact_*`, `context_status`) accept versions 1 to 4; a version 1 file has no `events` table, a version 2 file has no usage columns, a version 3 file has no `applied_edits`. A schema change appends to `MIGRATIONS`, bumps `user_version` and changes this section first.
 
 ```sql
 CREATE TABLE messages (seq INTEGER PRIMARY KEY, fingerprint TEXT NOT NULL UNIQUE, thread TEXT NOT NULL,
@@ -101,6 +101,8 @@ CREATE TABLE events (id INTEGER PRIMARY KEY, at TEXT NOT NULL, kind TEXT NOT NUL
 ALTER TABLE events ADD COLUMN model TEXT;              -- then, in order: thread_root TEXT, trimmed INTEGER,
 -- input_tokens INTEGER, cache_read_tokens INTEGER, cache_creation_tokens INTEGER, output_tokens INTEGER,
 -- breakpoints INTEGER, breakpoint_at TEXT
+-- version 4
+ALTER TABLE events ADD COLUMN applied_edits TEXT;
 ```
 
 | Column | Values |
@@ -149,6 +151,7 @@ The writer appends one `events` row per trim and per fail-open it can attribute 
 | `trimmed` | Usage only: `0` the request went up whole, `1` it carried an earlier cut, `2` it made a new cut (the request a `trim` row describes) |
 | `input_tokens`, `cache_read_tokens`, `cache_creation_tokens`, `output_tokens` | Usage only: provider-reported counts. `input_tokens` excludes cache reads and writes, so the prompt is their sum. A count the provider did not report is `NULL`, never `0` |
 | `breakpoints`, `breakpoint_at` | Usage, proxy Anthropic route (`/v1/messages`) only: the incoming request's `cache_control` markers, counted before the rewrite, and their positions in prefix order, comma-separated: `tools`, `system`, or `m-<k>` (the k-th message from the end, `m-1` the last; markers inside a `tool_result` count for its message). Other routes and OpenCode leave both `NULL`. No content is stored |
+| `applied_edits` | Usage only: the response's `context_management.applied_edits` as compact JSON, e.g. `[{"cleared_input_tokens":1518,"cleared_tool_uses":2,"type":"clear_tool_uses_20250919"}]`; `[]` when the provider applied none, `NULL` when it did not report the field ([server-side clearing](context-proxy.md#server-side-tool-result-clearing)) |
 
 Usage counts come from the provider's report, not the trim estimate:
 

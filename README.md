@@ -165,6 +165,7 @@ A fail-open sends the request on untrimmed and records the error. The request is
 | `CONTEXT_TRIM_AT_TOKENS` | unset → per-model table | When **set** (env, `proxy.env`, OpenCode `trimAtTokens`, or `smarter-compact context set trim=N`), one threshold for **every** model. When **unset**, the model id is matched against `[context_proxy.trim_at]` in `~/.config/smarter-compact/config.toml` (built-in: `haiku` → 95000, else `default` 125000). Example: `smarter-compact context set haiku=88000`. |
 | `CONTEXT_TRIM_TO_FRACTION` | `0.53` | In-turn tool steps kept while the request stays under this fraction of the threshold |
 | `CONTEXT_TRIM_MIN_GAIN_TOKENS` | `0` | A trim that would free fewer estimated tokens than this waits for a bigger one; `/compact` ignores it; `0` off |
+| `CONTEXT_SERVER_CLEAR` | `0` | `1` adds Anthropic's server-side tool-result clearing to Claude requests ([details](docs/context-proxy.md#server-side-tool-result-clearing)) |
 | `CONTEXT_COMPRESS_OVER_TOKENS` | `4000` | Tool results above this are stored in full and replaced by a short header |
 | `CONTEXT_COMPACTION_RECALL` | `0` by default | `1` asks a memory bank named on the session registration |
 | `CONTEXT_PROXY_PORT` | `4101` | LiteLLM listen port (env overrides `~/.config/smarter-compact/proxy.env`; `smarter-compact enable` writes the port in use) |

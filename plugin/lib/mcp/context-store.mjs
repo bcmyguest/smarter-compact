@@ -56,7 +56,7 @@ const SCHEMA_TEXT = "messages(seq INTEGER PRIMARY KEY, fingerprint, thread, role
   + "line of each message; messages_fts(text) and lines_fts(text): FTS5 indexes whose rowid is messages.seq / lines.id; "
   + "vectors(message_seq, model, dim, blob); events(id, at, kind 'trim'|'fail_open'|'usage', version, location, error, "
   + "tokens_before, tokens_after, dropped, model, thread_root, trimmed 0|1|2, input_tokens, cache_read_tokens, "
-  + "cache_creation_tokens, output_tokens, breakpoints, breakpoint_at), one row per trim, fail-open or model call; "
+  + "cache_creation_tokens, output_tokens, breakpoints, breakpoint_at, applied_edits), one row per trim, fail-open or model call; "
   + "trim token figures estimated, usage counts provider-reported (NULL when not reported).";
 
 export const CONTEXT_STORE_MCP_TOOLS = [

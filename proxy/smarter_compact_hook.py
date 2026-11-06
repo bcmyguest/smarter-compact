@@ -11,7 +11,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from litellm.integrations.custom_logger import CustomLogger  # noqa: E402
 
-from smarter_compact import process_request, process_usage, startup  # noqa: E402
+from smarter_compact import Settings, process_request, process_usage, startup  # noqa: E402
+from smarter_compact.core import STREAM_TAIL_BYTES, note_stream_edits  # noqa: E402
 
 
 class SmarterCompactHook(CustomLogger):
@@ -27,6 +28,25 @@ class SmarterCompactHook(CustomLogger):
         # async_pre_call_hook saw in data; process_usage never raises.
         await asyncio.to_thread(process_usage, kwargs, response_obj)
 
+
+async def _streaming_iterator_hook(self, user_api_key_dict, response, request_data):
+    # Passes every chunk through untouched; keeps the stream's tail for the applied context edits in message_delta.
+    tail = bytearray()
+    async for chunk in response:
+        if isinstance(chunk, (bytes, bytearray, str)):
+            tail += chunk.encode("utf-8") if isinstance(chunk, str) else chunk
+            if len(tail) > 2 * STREAM_TAIL_BYTES:
+                del tail[:-STREAM_TAIL_BYTES]
+        yield chunk
+    call_id = request_data.get("litellm_call_id") or getattr(request_data.get("litellm_logging_obj"), "litellm_call_id", None) \
+        if isinstance(request_data, dict) else None
+    await asyncio.to_thread(note_stream_edits, call_id, bytes(tail))
+
+
+# Only with server-side clearing on: any override takes LiteLLM off its pass-through fast path for every stream.
+_settings = Settings.from_env()
+if _settings.enabled and _settings.server_clear:
+    SmarterCompactHook.async_post_call_streaming_iterator_hook = _streaming_iterator_hook
 
 # Session-file TTL cleanup, once per proxy start (and at most once a day); never blocks or raises.
 startup()

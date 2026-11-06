@@ -26,6 +26,11 @@ DEFAULT_EMBEDDING_URL = "http://127.0.0.1:11434/v1"
 # Seconds per row of an embeddings call, and characters of a row's head sent (docs/context-store.md, "Vectors").
 DEFAULT_EMBEDDING_TIMEOUT_S = 30.0
 DEFAULT_EMBEDDING_MAX_CHARS = 4000
+# Server-side tool-result clearing (CONTEXT_SERVER_CLEAR=1): Anthropic's trigger and keep defaults, and the docs'
+# example clear_at_least (the API itself has none).
+DEFAULT_SERVER_CLEAR_TRIGGER_TOKENS = 100000
+DEFAULT_SERVER_CLEAR_KEEP_TOOL_USES = 3
+DEFAULT_SERVER_CLEAR_AT_LEAST_TOKENS = 5000
 
 
 def _int(env, name, default):
@@ -113,6 +118,12 @@ class Settings:
     mask_observations: bool = False
     # A trim that would free fewer estimated tokens than this is skipped; 0 is off (CONTEXT_TRIM_MIN_GAIN_TOKENS).
     trim_min_gain_tokens: int = 0
+    # Anthropic requests to Claude gain a clear_tool_uses_20250919 context edit (CONTEXT_SERVER_CLEAR=1 turns it on).
+    server_clear: bool = False
+    server_clear_trigger_tokens: int = DEFAULT_SERVER_CLEAR_TRIGGER_TOKENS
+    server_clear_keep_tool_uses: int = DEFAULT_SERVER_CLEAR_KEEP_TOOL_USES
+    # The edit applies only when it frees at least this many input tokens, so a cache break pays off; 0 omits it.
+    server_clear_at_least_tokens: int = DEFAULT_SERVER_CLEAR_AT_LEAST_TOKENS
     # Each new trim appends a mechanical progress note (edited files, build/test runs) (CONTEXT_PROGRESS_NOTE=0 turns it off).
     progress_note: bool = True
     compress_over_tokens: int = DEFAULT_COMPRESS_OVER_TOKENS
@@ -162,6 +173,13 @@ class Settings:
             strip_prose=_flag(env, "CONTEXT_STRIP_PROSE", "0"),
             mask_observations=_flag(env, "CONTEXT_MASK_OBSERVATIONS", "0"),
             trim_min_gain_tokens=_int(env, "CONTEXT_TRIM_MIN_GAIN_TOKENS", 0),
+            server_clear=_flag(env, "CONTEXT_SERVER_CLEAR", "0"),
+            server_clear_trigger_tokens=_positive_int(env, "CONTEXT_SERVER_CLEAR_TRIGGER_TOKENS",
+                                                      DEFAULT_SERVER_CLEAR_TRIGGER_TOKENS),
+            server_clear_keep_tool_uses=max(_int(env, "CONTEXT_SERVER_CLEAR_KEEP_TOOL_USES",
+                                                 DEFAULT_SERVER_CLEAR_KEEP_TOOL_USES), 0),
+            server_clear_at_least_tokens=max(_int(env, "CONTEXT_SERVER_CLEAR_AT_LEAST_TOKENS",
+                                                  DEFAULT_SERVER_CLEAR_AT_LEAST_TOKENS), 0),
             progress_note=_flag(env, "CONTEXT_PROGRESS_NOTE"),
             compress_over_tokens=_int(env, "CONTEXT_COMPRESS_OVER_TOKENS", DEFAULT_COMPRESS_OVER_TOKENS),
             chars_per_token=_positive_float(env, "CONTEXT_CHARS_PER_TOKEN", DEFAULT_CHARS_PER_TOKEN),

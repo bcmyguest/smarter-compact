@@ -5,6 +5,7 @@ process_usage(kwargs, response) after each success; tests call them directly.
 """
 
 import hashlib
+import json
 import re
 import sys
 import threading
@@ -18,7 +19,7 @@ from . import recall as recall_mod
 from . import sessiondb
 from . import status as status_mod
 from . import ttl as ttl_mod
-from .adapters import UnsupportedCallType, adapter_for, strip_reminders
+from .adapters import AnthropicAdapter, UnsupportedCallType, adapter_for, strip_reminders
 from .session import resolve_session_id
 from .settings import Settings
 from .store import RegistrationNotFound, Store, session_lock
@@ -26,11 +27,16 @@ from .tokens import DEFAULT_CHARS_PER_TOKEN, estimate_prompt_tokens, fingerprint
 
 MAX_THREADS = 32
 # Requests awaiting their usage report, by litellm_call_id: (sid, thread root, request chars, usage event fields).
+# Streams' applied context edits wait in _stream_edits under the same bound.
 MAX_PENDING = 256
 RECALL_QUERY_MAX_CHARS = 2000
 # events.trimmed on a usage row: the request went up whole, carried an earlier cut, or made a new cut.
 TRIM_NONE, TRIM_KEPT, TRIM_NEW = 0, 1, 2
 USAGE_FIELDS = ("input_tokens", "cache_read_tokens", "cache_creation_tokens", "output_tokens")
+# Anthropic server-side tool-result clearing (CONTEXT_SERVER_CLEAR=1); the API wants clear_thinking edits first.
+SERVER_CLEAR_EDIT = "clear_tool_uses_20250919"
+# A stream's applied context edits arrive in its final message_delta; this much of the stream's tail is scanned.
+STREAM_TAIL_BYTES = 65536
 # Tool exchanges a cut inside the in-flight turn always keeps; older ones stay while the request fits under
 # trim_to_fraction of the trim threshold.
 MIN_TAIL_STEPS = 3
@@ -139,6 +145,7 @@ RECALL_CLOSE = "</smarter-compact-recall>"
 # openmem spelling, and it must be escaped against ending the block just the same.
 RECALL_TAG_RE = re.compile(r"<(?=/?(?:openmem|smarter-compact)-recall)", re.IGNORECASE | re.ASCII)
 _pending = OrderedDict()
+_stream_edits = OrderedDict()
 _pending_guard = threading.Lock()
 
 
@@ -742,6 +749,8 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, http,
     _await_usage(data.get("litellm_call_id") or call_id, sid, root, request_chars(*context, view), request)
     if not (len(view) == len(original) and all(a is b for a, b in zip(view, original))):
         data[adapter.items_key] = view
+    if settings.server_clear and isinstance(adapter, AnthropicAdapter) and _is_claude(data.get("model")):
+        add_server_clear(data, settings)
     if settings.standing_instruction:
         # After trimming, so the cut, the token estimate and the session id never see it.
         add_standing_instruction(adapter, data)
@@ -756,6 +765,65 @@ def _await_usage(call_id, sid, root, chars, request=None):
         _pending[call_id] = (sid, root, chars, request or {})
         while len(_pending) > MAX_PENDING:
             _pending.popitem(last=False)
+
+
+def add_server_clear(data, settings):
+    """Append a clear_tool_uses_20250919 edit to an Anthropic request's context_management, after any edits the
+    client sent (Claude Code sends clear_thinking_20251015, which must stay first); a client edit of the same type
+    wins. LiteLLM adds the context-management-2025-06-27 beta header for a body that carries the field."""
+    current = data.get("context_management")
+    if current is not None and not (isinstance(current, dict) and isinstance(current.get("edits", []), list)):
+        return
+    edits = list((current or {}).get("edits", []))
+    if any(isinstance(e, dict) and e.get("type") == SERVER_CLEAR_EDIT for e in edits):
+        return
+    edit = {"type": SERVER_CLEAR_EDIT,
+            "trigger": {"type": "input_tokens", "value": settings.server_clear_trigger_tokens},
+            "keep": {"type": "tool_uses", "value": settings.server_clear_keep_tool_uses}}
+    if settings.server_clear_at_least_tokens > 0:
+        edit["clear_at_least"] = {"type": "input_tokens", "value": settings.server_clear_at_least_tokens}
+    data["context_management"] = {**(current or {}), "edits": edits + [edit]}
+
+
+def _is_claude(model):
+    return isinstance(model, str) and "claude" in model.lower()
+
+
+def applied_edits(response):
+    """Compact JSON of a response's context_management.applied_edits (Anthropic body, or LiteLLM's
+    provider_specific_fields), else None."""
+    for obj in (response, _field(response, "provider_specific_fields")):
+        edits = _field(_field(obj, "context_management"), "applied_edits") if obj is not None else None
+        if isinstance(edits, list):
+            return json.dumps(edits, separators=(",", ":"), sort_keys=True)
+    return None
+
+
+def stream_applied_edits(tail):
+    """applied_edits of the last message_delta event in an Anthropic SSE stream's tail (bytes or str), else None."""
+    text = tail.decode("utf-8", "replace") if isinstance(tail, (bytes, bytearray)) else str(tail)
+    found = None
+    for line in text.splitlines():
+        if not line.startswith("data:") or "context_management" not in line:
+            continue
+        try:
+            event = json.loads(line[5:])
+        except ValueError:
+            continue
+        if isinstance(event, dict) and event.get("type") == "message_delta":
+            found = applied_edits(event) or found
+    return found
+
+
+def note_stream_edits(call_id, tail):
+    """Hold a finished stream's applied context edits for its usage event; nothing when it reported none."""
+    edits = stream_applied_edits(tail) if isinstance(call_id, str) and call_id else None
+    if edits is None:
+        return
+    with _pending_guard:
+        _stream_edits[call_id] = edits
+        while len(_stream_edits) > MAX_PENDING:
+            _stream_edits.popitem(last=False)
 
 
 def _field(obj, name):
@@ -863,8 +931,11 @@ def process_usage(kwargs, response, settings=None):
         if not settings.enabled:
             return
         sid, root, chars, request = entry
+        with _pending_guard:
+            streamed = _stream_edits.pop(call_id, None)
         store = Store(settings.context_dir)
-        _record_event(store, sid, "usage", **request, **response_usage_counts(response, kwargs))
+        _record_event(store, sid, "usage", **request, **response_usage_counts(response, kwargs),
+                      applied_edits=applied_edits(response) or streamed)
         tokens = response_prompt_tokens(response, kwargs)
         if tokens is None:
             return

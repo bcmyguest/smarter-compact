@@ -137,3 +137,96 @@ class UsageEventFlowTests(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def tool_history(result_text):
+    return [{"role": "user", "content": "list files"},
+            {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}}]},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": result_text}]},
+            {"role": "assistant", "content": "done"},
+            {"role": "user", "content": "next"}]
+
+
+class ServerClearTests(UsageEventFlowTests):
+    EDIT = {"type": "clear_tool_uses_20250919", "trigger": {"type": "input_tokens", "value": 100000},
+            "keep": {"type": "tool_uses", "value": 3}, "clear_at_least": {"type": "input_tokens", "value": 5000}}
+
+    def req(self, data_extra=None, model="claude-haiku-5-5", call_type="anthropic_messages", **kw):
+        from smarter_compact import process_request
+        data = {"model": model, "system": "SYSTEM", "messages": tool_history("x" * 50), "litellm_call_id": "s1",
+                "proxy_server_request": {"headers": {"x-claude-code-session-id": SID}}, **(data_extra or {})}
+        return process_request(data, call_type, self.settings(**kw), http=lambda *a: None)
+
+    def test_env_defaults(self):
+        from smarter_compact import Settings
+        s = Settings.from_env({})
+        self.assertEqual((s.server_clear, s.server_clear_trigger_tokens, s.server_clear_keep_tool_uses,
+                          s.server_clear_at_least_tokens), (False, 100000, 3, 5000))
+        s = Settings.from_env({"CONTEXT_SERVER_CLEAR": "1", "CONTEXT_SERVER_CLEAR_TRIGGER_TOKENS": "30000",
+                               "CONTEXT_SERVER_CLEAR_KEEP_TOOL_USES": "5", "CONTEXT_SERVER_CLEAR_AT_LEAST_TOKENS": "0"})
+        self.assertEqual((s.server_clear, s.server_clear_trigger_tokens, s.server_clear_keep_tool_uses,
+                          s.server_clear_at_least_tokens), (True, 30000, 5, 0))
+
+    def test_off_by_default(self):
+        self.assertNotIn("context_management", self.req())
+
+    def test_request_shape(self):
+        self.assertEqual(self.req(server_clear=True)["context_management"], {"edits": [self.EDIT]})
+
+    def test_zero_at_least_omits_the_gate(self):
+        edit = self.req(server_clear=True, server_clear_at_least_tokens=0)["context_management"]["edits"][0]
+        self.assertNotIn("clear_at_least", edit)
+
+    def test_merges_after_claude_code_clear_thinking(self):
+        # Claude Code 2.1.318 sends this on every Haiku 5.5 request with thinking (captured trial sessions).
+        sent = {"edits": [{"type": "clear_thinking_20251015", "keep": "all"}]}
+        data = self.req({"context_management": sent}, server_clear=True)
+        self.assertEqual(data["context_management"]["edits"], [{"type": "clear_thinking_20251015", "keep": "all"}, self.EDIT])
+        self.assertEqual(sent, {"edits": [{"type": "clear_thinking_20251015", "keep": "all"}]})
+
+    def test_client_clear_tool_uses_wins(self):
+        own = {"edits": [{"type": "clear_tool_uses_20250919", "keep": {"type": "tool_uses", "value": 9}}]}
+        self.assertEqual(self.req({"context_management": own}, server_clear=True)["context_management"], own)
+
+    def test_only_claude_on_the_anthropic_route(self):
+        self.assertNotIn("context_management", self.req(model="gpt-5", server_clear=True))
+        self.assertNotIn("context_management", self.req(call_type="acompletion", server_clear=True))
+
+    def test_store_keeps_the_full_tool_result(self):
+        self.req({"messages": tool_history("R" * 3000)}, server_clear=True)
+        conn = sqlite3.connect(self.ctx / "sessions" / f"{SID}.db")
+        try:
+            [text] = [r[0] for r in conn.execute("SELECT text FROM messages WHERE kind = 'tool_result'")]
+        finally:
+            conn.close()
+        self.assertEqual(text, "R" * 3000)
+
+    def applied(self):
+        conn = sqlite3.connect(self.ctx / "sessions" / f"{SID}.db")
+        try:
+            return [r[0] for r in conn.execute("SELECT applied_edits FROM events WHERE kind = 'usage'")]
+        finally:
+            conn.close()
+
+    def test_applied_edits_from_a_response(self):
+        self.req(server_clear=True)
+        edits = [{"type": "clear_tool_uses_20250919", "cleared_tool_uses": 8, "cleared_input_tokens": 50000}]
+        process_usage({"litellm_call_id": "s1"}, {"usage": {"input_tokens": 5}, "context_management": {"applied_edits": edits}},
+                      self.settings())
+        self.assertEqual(self.applied(), ['[{"cleared_input_tokens":50000,"cleared_tool_uses":8,"type":"clear_tool_uses_20250919"}]'])
+
+    def test_applied_edits_from_a_stream_and_none_reported(self):
+        self.req(server_clear=True)
+        sse = ('event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},'
+               '"usage":{"output_tokens":3},"context_management":{"applied_edits":[]}}\n\n'
+               'event: message_stop\ndata: {"type":"message_stop"}\n\n')
+        core.note_stream_edits("s1", sse.encode())
+        process_usage({"litellm_call_id": "s1"}, {"usage": {"input_tokens": 5}}, self.settings())
+        self.req({"litellm_call_id": "s2"}, server_clear=True)
+        process_usage({"litellm_call_id": "s2"}, {"usage": {"input_tokens": 5}}, self.settings())
+        self.assertEqual(self.applied(), ["[]", None])
+        self.assertEqual(len(core._stream_edits), 0)
+
+    def test_stream_parse_ignores_other_events(self):
+        self.assertIsNone(core.stream_applied_edits(b'data: {"type":"message_start","context_management":1}\n'))
+        self.assertIsNone(core.stream_applied_edits(b"data: not json context_management\n"))

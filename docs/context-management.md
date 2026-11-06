@@ -162,6 +162,7 @@ Environment variables (OpenCode plugin options use camelCase equivalents — see
 | `CONTEXT_TRIM_MIN_GAIN_TOKENS` | `0` | Skip a trim that would free fewer estimated tokens than this; forced trims ignore it; `0` off |
 | `CONTEXT_STRIP_PROSE` | `0` | Strip tool calls from kept turns, keep their text; `1` on, under review ([research](context-research.md#terminal-bench-21-trim-shape-arms-2026-11-05)) |
 | `CONTEXT_MASK_OBSERVATIONS` | `0` | Keep tool calls in that region, mask their results; wins over prose strip ([research](context-research.md#prose-strip-versus-observation-masking-2026-11-05)) |
+| `CONTEXT_SERVER_CLEAR` | `0` | `1` adds Anthropic's `clear_tool_uses_20250919` edit to Claude requests (proxy only); `CONTEXT_SERVER_CLEAR_TRIGGER_TOKENS` `100000`, `CONTEXT_SERVER_CLEAR_KEEP_TOOL_USES` `3`, `CONTEXT_SERVER_CLEAR_AT_LEAST_TOKENS` `5000` ([details](context-proxy.md#server-side-tool-result-clearing)) |
 | `CONTEXT_PROGRESS_NOTE` | `1` | Add a mechanical progress note to the trim pointer; `0` off ([research](context-research.md#terminal-bench-21-trim-shape-arms-2026-11-05)) |
 | `CONTEXT_COMPRESS_OVER_TOKENS` | `4000` | Tool result compression threshold |
 | `CONTEXT_COMPACTION_RECALL` | `0` | Recall on trim |

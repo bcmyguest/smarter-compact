@@ -47,6 +47,10 @@ Auto-start is off when `SMARTER_COMPACT_AUTO_PROXY=0`. Logs: `~/.config/smarter-
 | `CONTEXT_TRIM_MIN_GAIN_TOKENS` | `0` | Skips a new trim that would free fewer estimated tokens than this (pointer note not counted); a forced trim (`/compact`) ignores it; `0` off. Without it, a trim fires whenever any message can drop: `CONTEXT_TRIM_TO_FRACTION` is a target, not a floor, and a long in-flight turn can leave a trim that frees little |
 | `CONTEXT_STRIP_PROSE` | `0` | Strips tool calls and results from kept turns, keeping their text; `1` on, under review ([research](context-research.md#terminal-bench-21-trim-shape-arms-2026-11-05)) |
 | `CONTEXT_MASK_OBSERVATIONS` | `0` | `1` keeps each tool call in the same region and replaces its result (when longer) with a fixed placeholder; the trim pointer gains how to fetch it back from the store. Wins over `CONTEXT_STRIP_PROSE`. Experimental ([research](context-research.md#prose-strip-versus-observation-masking-2026-11-05)) |
+| `CONTEXT_SERVER_CLEAR` | `0` | `1` adds Anthropic's server-side tool-result clearing edit to Claude requests on `/v1/messages`, [below](#server-side-tool-result-clearing) |
+| `CONTEXT_SERVER_CLEAR_TRIGGER_TOKENS` | `100000` | The edit's `trigger`: clearing starts once the prompt exceeds this many input tokens (Anthropic's default) |
+| `CONTEXT_SERVER_CLEAR_KEEP_TOOL_USES` | `3` | The edit's `keep`: most recent tool use/result pairs never cleared (Anthropic's default) |
+| `CONTEXT_SERVER_CLEAR_AT_LEAST_TOKENS` | `5000` | The edit's `clear_at_least`, the cache-break gate; `0` omits it |
 | `CONTEXT_PROGRESS_NOTE` | `1` | Appends files edited and last build/test commands to the trim pointer; `0` off ([research](context-research.md#terminal-bench-21-trim-shape-arms-2026-11-05)) |
 | `CONTEXT_CHARS_PER_TOKEN` | `2.5` | Estimate before usage calibration |
 | `CONTEXT_COMPRESS_OVER_TOKENS` | `4000` | Tool compression threshold; `0` off |
@@ -59,6 +63,25 @@ Auto-start is off when `SMARTER_COMPACT_AUTO_PROXY=0`. Logs: `~/.config/smarter-
 | `CONTEXT_EMBEDDING_MODEL` | empty | Hybrid search embeddings (optional) |
 
 Secrets: `LITELLM_MASTER_KEY` in `~/.config/smarter-compact/proxy.env` (mode 600), created by `smarter-compact enable`.
+
+## Server-side tool-result clearing
+
+`CONTEXT_SERVER_CLEAR=1` (off by default) asks Anthropic to clear old tool results on its side ([context editing](https://docs.claude.com/en/docs/build-with-claude/context-editing)). On the Anthropic route (`/v1/messages`) to a model whose id contains `claude`, the proxy appends one edit to the request body:
+
+```json
+{"context_management": {"edits": [{"type": "clear_tool_uses_20250919",
+  "trigger": {"type": "input_tokens", "value": 100000},
+  "keep": {"type": "tool_uses", "value": 3},
+  "clear_at_least": {"type": "input_tokens", "value": 5000}}]}}
+```
+
+- **Merge, not replace.** Claude Code already sends `context_management` on its requests, `{"edits": [{"type": "clear_thinking_20251015", "keep": "all"}]}` on all 25,310 requests that carried the field in 400 Terminal-Bench Claude Code transcripts (`keep: "all"` clears nothing); no `clear_tool_uses` edit appeared. The proxy appends after the client's edits (the API wants `clear_thinking` first) and leaves a request that already carries a `clear_tool_uses_20250919` edit unchanged.
+- **Beta header.** LiteLLM's Anthropic messages transform adds `context-management-2025-06-27` to `anthropic-beta` for a body with `context_management` (`litellm/llms/anthropic/messages/native/transformation.py`).
+- **`clear_at_least` is the cache-break gate.** Clearing rewrites the prompt from the first cleared result, so the cached prefix after that point is written again. The edit applies only when it frees at least this many input tokens; otherwise the request goes up uncleared and the cache stays warm.
+- **The store keeps everything.** The session store records the client's request before any edit is applied upstream, so cleared results stay searchable with `smart_compact_search` / `smart_compact_sql`.
+- **Logged per call.** Each `usage` [event](context-store.md#events) gets `applied_edits`: the response's `context_management.applied_edits` as compact JSON (`[]` when nothing cleared, `NULL` when not reported). For a stream, it comes from the final `message_delta`; with the flag on, the hook reads the tail of each stream for it, passing chunks through unchanged.
+
+Live check, 2026-11-05: Claude Code 2.1.318 `claude -p` on `claude-haiku-5-5` through a proxy from this tree (trigger 20000, keep 1, clear_at_least 1000), four `seq` tool calls: five requests, all `200`, the last two recorded `[{"cleared_input_tokens":1518,"cleared_tool_uses":2,"type":"clear_tool_uses_20250919"}]` and `cleared_input_tokens` 1526, cache reads stayed 42,989 and 44,432 tokens on those calls, and the store held all four tool results. Cost $0.16.
 
 ## Token estimate
 
