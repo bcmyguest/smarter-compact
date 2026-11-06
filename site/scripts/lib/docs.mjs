@@ -26,12 +26,25 @@ export const PAGES = [
     description: 'Install smarter-compact and set up integration with Claude Code, Codex, Pi, or OpenCode.',
   },
   {
+    slug: 'agents',
+    source: 'docs/agents.md',
+    group: 'Start',
+    title: 'Agents',
+    description: 'Which coding agents trim through the proxy, which trim in-process, and which get search tools only.',
+  },
+  {
     slug: 'context-management',
     source: 'docs/context-management.md',
     group: 'Guides',
-    title: 'Context management (smart compaction)',
-    label: 'Smart compaction',
-    description: 'How trimming works, ContextBench results, agents, MCP tools.',
+    title: 'How it works',
+    description: 'How trimming works, the session store, MCP tools.',
+  },
+  {
+    slug: 'benchmarks',
+    source: 'docs/benchmarks.md',
+    group: 'Guides',
+    title: 'Benchmarks',
+    description: 'ContextBench results for smart compaction: answer quality, wall time, cost and prompt-cache hits.',
   },
   {
     slug: 'context-proxy',

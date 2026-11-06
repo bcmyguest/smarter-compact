@@ -206,7 +206,7 @@ The cache fix halves the mean cost, from $0.218 to $0.108, and every trial score
 
 ## Run E: held-out seed-matched comparison
 
-Run E used Haiku 5.5, Claude Code strict mode, the same proxy build, and seeds 45–47 for each arm. The primary arms were `e-none` (no compaction), `e-native` (Claude Code default), and `e-smart` (Smarter Compact SQLite search, 95k Haiku threshold, search-tools pointer and cache-stable trim). Tasks were kv R4000 and log L1600/L6400/L12800. Keep-everything has only seeds 45–46 at L12800. `e-native-153k` is a sensitivity arm and is excluded from the primary chart. `e-native` never compacted: 0 compactions in 12 trials, peak prompt 764,310 tokens at L12800, below Claude Code's default Haiku 5.5 auto-compact point of [about 967K](https://code.claude.com/docs/en/model-config). It is a second keep-everything arm, labelled "default native (never compacted)" below. Raw rows are in [openmem `bench/results-E/summary.json`](https://github.com/bcmyguest/openmem/blob/main/bench/results-E/summary.json); the [published chart](context-management.md#benchmarks) is on this site.
+Run E used Haiku 5.5, Claude Code strict mode, the same proxy build, and seeds 45–47 for each arm. The primary arms were `e-none` (no compaction), `e-native` (Claude Code default), and `e-smart` (Smarter Compact SQLite search, 95k Haiku threshold, search-tools pointer and cache-stable trim). Tasks were kv R4000 and log L1600/L6400/L12800. Keep-everything has only seeds 45–46 at L12800. `e-native-153k` is a sensitivity arm and is excluded from the primary chart. `e-native` never compacted: 0 compactions in 12 trials, peak prompt 764,310 tokens at L12800, below Claude Code's default Haiku 5.5 auto-compact point of [about 967K](https://code.claude.com/docs/en/model-config). It is a second keep-everything arm, labelled "default native (never compacted)" below. Raw rows are in [openmem `bench/results-E/summary.json`](https://github.com/bcmyguest/openmem/blob/main/bench/results-E/summary.json); the [published chart](benchmarks.md) is on this site.
 
 The paired log-score advantage was +0.469 against keep-everything (95% bootstrap interval 0.339–0.578, eight pairs) and +0.495 against default native, which never compacted (0.384–0.593, nine pairs). Kv R4000 scored 1.0 in all arms. Smart/none cost ratios were 0.130 [0.128, 0.132] at kv R4000, 0.811 [0.102, 1.528] at log L1600, 0.109 [0.107, 0.111] at L6400, and 0.062 [0.062, 0.063] at L12800. The L1600 interval crosses 1. The [evidence plan](https://github.com/bcmyguest/openmem/blob/main/docs/evidence-plan.md#completed-seed-paired-comparisons) gives each size's score and wall-time interval and explains the bootstrap method.
 
@@ -418,5 +418,6 @@ Probe first: [`tb21-h55-publish-probe.json`](../bench/termbench/harbor/jobs/tb21
 
 ## More
 
-- [Context management](context-management.md) — trim pipeline and ContextBench charts
+- [How it works](context-management.md) — trim pipeline
+- [Benchmarks](benchmarks.md) — ContextBench charts
 - [Context proxy](context-proxy.md) · [Context store](context-store.md)

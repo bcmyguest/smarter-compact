@@ -138,4 +138,4 @@ Claude Code and Codex show the warning as a session-start system message; `enabl
 - **Codex pass-through** requires the dev LiteLLM build noted above.
 - **OpenAI-format clients** need explicit routes in `proxy/config.yaml` unless using Anthropic models (see comments in that file).
 
-Overview and agent matrix: [smart compaction](context-management.md).
+Overview: [how it works](context-management.md). Agent matrix: [agents](agents.md).

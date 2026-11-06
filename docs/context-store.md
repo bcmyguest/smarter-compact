@@ -2,7 +2,7 @@
 
 This file is the context-store contract for **Smarter Compact**. The Python package is `proxy/smarter_compact`; the JavaScript port is `plugin/lib/`. `SMARTER_COMPACT_STATE_DIR` defaults to `~/.local/share/smarter-compact`; files live under `$SMARTER_COMPACT_STATE_DIR/context`. Wire text (`[smarter-compact: …]`, `smart_compact_*`, `<smarter-compact-recall>`) matches OpenMem for compatibility.
 
-See [smart compaction](context-management.md) and [context proxy & port](context-proxy.md).
+See [how it works](context-management.md) and [context proxy & port](context-proxy.md).
 
 The context proxy, the OpenCode plugin (which trims in-process), and the `smart_compact_*` MCP tools exchange state through local files. Below, "proxy" means whichever of the two trims a session. This page is the contract between them; change it before changing any side.
 
