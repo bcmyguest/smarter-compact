@@ -104,7 +104,7 @@ const SCRIPT = [
   [13.7, "res", "→ 2026-11-04T13:58:11Z ERROR auth-svc db-pool timeout after 30000ms (pool 10/10 busy)", 22],
   [14.3, "say", "<b>37 timeouts</b> on Nov 4 before the 14:02 deploy, clustering whenever the pool hit 10/10 busy (e.g. 13:58:11). Counted from the stored log lines, which left the prompt three turns ago.", 58],
 ];
-const T_TERM = 17.4, T_END = 4.6;
+const T_TERM = 17.4, T_END = 7.4;
 
 function rowHtml(item, t) {
   const [t0, kind, p, , typeDur] = item;
@@ -177,18 +177,45 @@ function terminalScene(t) {
     <div class="foot">Illustrative session: the prompts, files and numbers are examples. The trim, the note left in the prompt and the tools are Smarter Compact's own.</div>`;
 }
 
+const SAVINGS = [
+  { task: "kv-store R4000", ratio: 0.130 },
+  { task: "log-triage L1600", ratio: 0.811, ns: true },
+  { task: "log-triage L6400", ratio: 0.109 },
+  { task: "log-triage L12800", ratio: 0.062 },
+];
+const AVG_SAVING = Math.round(100 * (1 - SAVINGS.reduce((a, r) => a + r.ratio, 0) / SAVINGS.length));
 function endScene(u) {
-  const f = (a, d = 0.5) => easeOut(seg(u, a, a + d));
+  const f = (a, d = 0.45) => easeOut(seg(u, a, a + d));
+  // the headline number is the mean of the bars as drawn, so it lands on the average with the last bar
+  const shrinkOf = (i) => ease(seg(u, 0.4 + i * 0.3 + 0.55, 0.4 + i * 0.3 + 1.35));
+  const pct = Math.round(100 * (1 - SAVINGS.reduce((a, r, i) => a + lerp(1, r.ratio, shrinkOf(i)), 0) / SAVINGS.length));
+  const BAR = 560, X0 = 290;
+  let rows = "";
+  SAVINGS.forEach((r, i) => {
+    const t0 = 0.4 + i * 0.3, top = 236 + i * 56;
+    const grow = ease(seg(u, t0, t0 + 0.5)), shrink = ease(seg(u, t0 + 0.55, t0 + 1.35));
+    const w = BAR * lerp(1, r.ratio, shrink) * grow;
+    const save = Math.round(100 * (1 - r.ratio));
+    rows += `<div style="position:absolute;left:56px;top:${top}px;width:220px;font-size:17px;color:var(--muted);opacity:${f(t0)}">${r.task}</div>
+      <div style="position:absolute;left:${X0}px;top:${top - 2}px;height:12px;width:${BAR * grow}px;border-radius:6px;background:rgba(240,163,94,0.85)"></div>
+      <div style="position:absolute;left:${X0}px;top:${top + 15}px;height:12px;width:${w}px;border-radius:6px;background:var(--smart);box-shadow:0 0 ${12 * (1 - shrink) * grow}px var(--smart-glow)"></div>
+      <div style="position:absolute;left:${X0 + BAR + 24}px;top:${top - 4}px;font-family:var(--mono);font-size:26px;font-weight:700;color:${r.ns ? "var(--muted)" : "var(--ink)"};opacity:${f(t0 + 1.2)}">−${save}%<span style="font-family:Inter;font-size:14px;font-weight:500;color:var(--dim);margin-left:10px">${r.ns ? "not significant" : ""}</span></div>`;
+  });
   const cmd = "npm install -g smarter-compact";
-  const typed = cmd.slice(0, Math.round(cmd.length * seg(u, 1.4, 2.2)));
+  const typed = cmd.slice(0, Math.round(cmd.length * seg(u, 3.6, 4.4)));
   const caret = Math.floor(u * 2.5) % 2 ? "▍" : " ";
+  const dot = (c) => `<span style="width:10px;height:10px;border-radius:50%;display:inline-block;background:${c};margin-right:6px"></span>`;
   return `
     <div class="brand"><div class="logo"></div><span>Smarter Compact</span></div>
     <div class="tag">github.com/bcmyguest/smarter-compact</div>
-    <div class="headline" style="opacity:${f(0)};transform:translateY(${(1 - f(0)) * 14}px)">Every turn kept. <em>The prompt stays small.</em>
-      <div class="sub" style="opacity:${f(0.5)}"><b>${Math.round(72 * ease(seg(u, 0.6, 1.8)))}% lower cost on average</b> across four benchmark task sizes,<br>and better answers on the log tasks.</div></div>
-    <div class="install" style="opacity:${f(1.2, 0.3)}"><span class="p">$</span>${typed}<span style="color:var(--good)">${caret}</span></div>
-    <div class="foot" style="opacity:${f(1.6)}">ContextBench synthetic tasks, Claude Haiku 5.5, seed-matched against keeping everything; mean of four paired cost ratios. Per size: −87%, −19% (not significant), −89%, −94%. Log-task score +0.47 (95% CI 0.34–0.58).</div>`;
+    <div class="headline" style="top:96px;font-size:48px;opacity:${f(0)};transform:translateY(${(1 - f(0)) * 14}px)">Average cost saving: <em style="font-variant-numeric:tabular-nums">${pct}%</em>
+      <div class="sub" style="margin-top:12px">Four benchmark task sizes, same model, same seeds, cost relative to keeping everything.</div></div>
+    <div style="position:absolute;left:${X0}px;top:208px;font-size:13px;color:var(--muted);display:flex;gap:18px;opacity:${f(0.3)}">
+      <span>${dot("var(--keep)")}Keep everything</span><span>${dot("var(--smart)")}Smarter Compact</span></div>
+    ${rows}
+    <div style="position:absolute;left:56px;top:470px;font-size:19px;color:var(--ink);opacity:${f(2.9)}">Better answers too: <b style="color:var(--good)">+0.47</b> <span style="color:var(--muted)">score on log tasks (95% CI 0.34–0.58)</span></div>
+    <div class="install" style="top:520px;opacity:${f(3.5, 0.3)}"><span class="p">$</span>${typed}<span style="color:var(--good)">${caret}</span></div>
+    <div class="foot" style="opacity:${f(3.0)}">Paired list-price cost, Smarter Compact ÷ keep everything, seed-matched trials. ContextBench synthetic tasks, Claude Haiku 5.5, 2–3 pairs per size. Average is the mean of the four ratios (0.28). L1600's interval includes no saving.</div>`;
 }
 
 window.DURATION = T_TERM + T_END;
