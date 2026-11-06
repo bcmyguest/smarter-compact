@@ -12,9 +12,9 @@
 
 The agent searches the store with `smart_compact_search`, `smart_compact_sql`, and `smart_compact_get` when it needs a detail back. The cut stays put on later requests, so the prompt cache keeps hitting.
 
-**Learn more:** [Smart compaction](https://bcmyguest.github.io/smarter-compact/context-management.html) (benchmarks and how it trims) · [Context proxy & port](https://bcmyguest.github.io/smarter-compact/context-proxy.html) · [Context store](https://bcmyguest.github.io/smarter-compact/context-store.html)
+**Learn more:** [Smart compaction](https://bcmyguest.github.io/smarter-compact/context-management/) (benchmarks and how it trims) · [Context proxy & port](https://bcmyguest.github.io/smarter-compact/context-proxy/) · [Context store](https://bcmyguest.github.io/smarter-compact/context-store/)
 
-**Benchmarks:** In seed-matched [ContextBench](https://github.com/RulinShao/ContextBench) (Context Language Models, [arXiv:2609.37725](https://arxiv.org/abs/2609.37725); [Hugging Face dataset](https://huggingface.co/datasets/context-language-model/ContextBench)) runs on Haiku 5.5, smart compaction was compared with keep-everything at four task sizes. Cost is the mean of the paired cost ratios. The log-task score interval is a 95% bootstrap over eight pairs from one task family (0.339–0.578; 0.329–0.639 when the bootstrap resamples task sizes; [deviations from the pre-registration](https://bcmyguest.github.io/smarter-compact/context-research.html#deviations-from-the-pre-registration)). kv-store is a small ceiling test (all arms tie at R4000). [Full tables and charts](https://bcmyguest.github.io/smarter-compact/context-management.html#benchmarks) · [methods](https://bcmyguest.github.io/smarter-compact/context-research.html).
+**Benchmarks:** In seed-matched [ContextBench](https://github.com/RulinShao/ContextBench) (Context Language Models, [arXiv:2609.37725](https://arxiv.org/abs/2609.37725); [Hugging Face dataset](https://huggingface.co/datasets/context-language-model/ContextBench)) runs on Haiku 5.5, smart compaction was compared with keep-everything at four task sizes. Cost is the mean of the paired cost ratios. The log-task score interval is a 95% bootstrap over eight pairs from one task family (0.339–0.578; 0.329–0.639 when the bootstrap resamples task sizes; [deviations from the pre-registration](https://bcmyguest.github.io/smarter-compact/context-research/#deviations-from-the-pre-registration)). kv-store is a small ceiling test (all arms tie at R4000). [Full tables and charts](https://bcmyguest.github.io/smarter-compact/context-management/#benchmarks) · [methods](https://bcmyguest.github.io/smarter-compact/context-research/).
 
 <p align="center">
 <img src="docs/media/contextbench-savings.png" alt="Average cost saving 72%: paired cost of Smarter Compact relative to keep everything, kv-store R4000 −87%, log-triage L1600 −19% (not significant), L6400 −89%, L12800 −94%; log-task score +0.47" width="720" />
@@ -222,6 +222,8 @@ npm ci
 npm test
 ./setup_prek.sh   # prek hooks: file hygiene + Conventional Commits on commit-msg
 ```
+
+The docs site (Astro Starlight) builds from `docs/*.md`: `cd site && pnpm install && pnpm test && pnpm build` writes `site/dist/` and fails on a broken link.
 
 CI runs the same `prek run --all-files` plus `npm test` and proxy unit tests. Use `feat:`, `fix:`, `docs:`, `chore:`, etc. so **Prepare release** can bump semver with git-cliff.
 

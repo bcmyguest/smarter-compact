@@ -1,11 +1,15 @@
-# Docs on GitHub Pages from docs/ (Jekyll). One-time: repo Settings → Pages → Source: GitHub Actions.
+# Builds the Starlight site in site/ from docs/*.md and deploys it to GitHub Pages.
+# One-time: repo Settings -> Pages -> Source: GitHub Actions.
+# `pnpm build` fails on a broken doc link, a failed theme contrast check, or a broken link in dist/.
 name: Deploy docs to GitHub Pages
 
 on:
   push:
     branches: [main]
     paths:
+      - "site/**"
       - "docs/**"
+      - "promo/out/github-social-preview-1280x640.png"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -21,19 +25,35 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/configure-pages@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Reads the pnpm version from the packageManager field.
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: site/package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: site/pnpm-lock.yaml
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
         with:
           # Creates/enables Pages (Source: GitHub Actions) when missing; needs repo admin on the token.
           enablement: true
-      - uses: actions/jekyll-build-pages@v1
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm build
+        env:
+          SITE_URL: https://bcmyguest.github.io
+          BASE_PATH: /smarter-compact/
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
-          source: docs
-          destination: ./_site
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: ./_site
+          path: site/dist
 
   deploy:
     needs: build
@@ -42,5 +62,5 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/deploy-pages@v4
-        id: deployment
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
