@@ -14,10 +14,11 @@ import json
 import os
 import sqlite3
 
-ARMS = ("Smart", "Mask", "Clear", "ServerClear", "Native")
-# Agent class -> arm label; any other ScClaude<Name> class reports as <Name> (NoStrip, Prose, Trim50, ...).
-ARM_LABELS = {"ScClaudeSmarterCompact": "Smart", "ScClaudeMask": "Mask", "ScClaudeServerClear": "ServerClear",
-              "ScClaudeClear": "Clear", "ScClaudeBaseline": "Native"}
+ARMS = ("Smart", "Mask-run", "Mask-10", "ServerClear", "Native")
+# Agent class -> arm label (report names only: ScClaudeMask masks older turns, ScClaudeClear all but the newest
+# 10 results); any other ScClaude<Name> class reports as <Name> (NoStrip, Prose, Trim50, ...).
+ARM_LABELS = {"ScClaudeSmarterCompact": "Smart", "ScClaudeMask": "Mask-run", "ScClaudeServerClear": "ServerClear",
+              "ScClaudeClear": "Mask-10", "ScClaudeBaseline": "Native"}
 # Start of core.mask_text, which a masking trim appends to its pointer note.
 MASK_NOTE = "Older tool outputs in your context read"
 
@@ -80,16 +81,16 @@ def trim_stats(trial):
 def mechanism(trial, arm):
     """Whether the arm's own mechanism fired: "yes", "no", or "-" for arms without one.
 
-    Clear: a trim set a clear bound (trim.json thread "clear_fp"). Mask: a trim note carries the mask recovery text.
+    Mask-10: a trim set a clear bound (trim.json thread "clear_fp"). Mask-run: a trim note carries the mask recovery text.
     ServerClear: Anthropic reported a non-empty context_management.applied_edits on some request."""
     ctx = os.path.join(trial, "agent/smarter-compact/context/sessions")
-    if arm in ("Clear", "Mask"):
+    if arm in ("Mask-10", "Mask-run"):
         for path in glob.glob(os.path.join(ctx, "*.trim.json")):
             try:
                 threads = (json.load(open(path)).get("threads") or {}).values()
             except (OSError, ValueError):
                 continue
-            if any(t.get("clear_fp") if arm == "Clear" else MASK_NOTE in (t.get("note") or "") for t in threads):
+            if any(t.get("clear_fp") if arm == "Mask-10" else MASK_NOTE in (t.get("note") or "") for t in threads):
                 return "yes"
         return "no"
     if arm == "ServerClear":
@@ -184,6 +185,10 @@ def main():
                  [r for r in paired if r["task"] in long_tasks], arms)
     print_totals(f"Check: long or smart trimmed ({len(long_tasks | trimmed)})",
                  [r for r in paired if r["task"] in long_tasks | trimmed], arms)
+    # The arms share the request until the first trim, so trimming is not yet the treatment: masking vs plain trimming.
+    cut = [r for r in rows if r["trims"]]
+    print_totals(f"Trimmed trials only ({len(cut)}; Mask-* rows include trims that masked nothing)", cut,
+                 [a for a in arms if any(r["arm"] == a for r in cut)])
     print(f"\nrunning: {', '.join(running) or 'none'}")
     missed = [f"{r['arm']}:{r['task']}" for r in rows if r["mech"] == "no"]
     print(f"mechanism did not fire: {', '.join(missed) or 'none'}")

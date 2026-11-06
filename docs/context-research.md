@@ -382,13 +382,15 @@ The 5x price tier above 100K input tokens explains Native's extra cost: at flat 
 
 **Publish run (planned).** Job [`tb21-h55-publish.json`](../bench/termbench/harbor/jobs/tb21-h55-publish.json): Claude Code on `claude-haiku-5-5`, `CLAUDE_CODE_AUTO_COMPACT_WINDOW=195000` in every arm, 8 tasks (schemelike-metacircular-eval, make-mips-interpreter, make-doom-for-mips, path-tracing-reverse, regex-chess, fix-ocaml-gc, adaptive-rejection-sampler, path-tracing), 3 attempts, 5 arms: 120 trials.
 
-| Arm | Class | Settings |
-| --- | --- | --- |
-| Smart | `ScClaudeSmarterCompact` | trim at 95K |
-| Mask | `ScClaudeMask` | trim at 95K, `CONTEXT_MASK_OBSERVATIONS=1` |
-| Clear | `ScClaudeClear` | trim at 95K, `CONTEXT_CLEAR_KEEP_RESULTS=10` |
-| ServerClear | `ScClaudeServerClear` | Anthropic `clear_tool_uses_20250919`, trigger 95K, keep 3, clear at least 5,000; our trim off |
-| Native | `ScClaudeBaseline` | Claude Code's own compaction |
+| Arm | Report name | Class | Settings |
+| --- | --- | --- | --- |
+| Smart | Smart | `ScClaudeSmarterCompact` | trim at 95K |
+| Mask | Mask-run | `ScClaudeMask` | trim at 95K, `CONTEXT_MASK_OBSERVATIONS=1` |
+| Clear | Mask-10 | `ScClaudeClear` | trim at 95K, `CONTEXT_CLEAR_KEEP_RESULTS=10` |
+| ServerClear | ServerClear | `ScClaudeServerClear` | Anthropic `clear_tool_uses_20250919`, trigger 95K, keep 3, clear at least 5,000; our trim off |
+| Native | Native | `ScClaudeBaseline` | Claude Code's own compaction |
+
+`report.py` prints Mask as Mask-run and Clear as Mask-10; class names, job files and env vars keep Mask and Clear. "Clear" misnames the arm: both mask tool results first and drop whole turns when masking leaves the prompt above the target. Mask-run masks results in turns older than the current run; Mask-10 masks every result but the newest 10, inside the current run too.
 
 Probe first: [`tb21-h55-publish-probe.json`](../bench/termbench/harbor/jobs/tb21-h55-publish-probe.json), adaptive-rejection-sampler, 1 attempt, Clear, ServerClear and Mask at 40K so each mechanism fires. The probe's Clear arm keeps 3 results, not 10: the first run trimmed twice with at most 10 results in context, so no clear bound formed. Its ServerClear arm clears at least 500 tokens, not 5,000: in the first run the prompt passed 98K, but 78K of that was one thinking block (a 196 KB signature) that Claude Code's `clear_thinking_20251015` `keep: "all"` pins, and the tool results older than the last 3 held about 2K tokens (8,000 chars), under `clear_at_least`, so the API applied nothing (`applied_edits` `[]` on all 11 requests). The probe passes when `report.py` prints `mechanism did not fire: none` (column `mech`: Clear a `clear_fp` in trim.json, Mask the mask recovery text in a pointer note, ServerClear a non-empty `applied_edits` usage event).
 
