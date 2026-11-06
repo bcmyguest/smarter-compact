@@ -169,7 +169,7 @@ class MaskObservationsTests(Base):
     def mask(self, msgs, sid="sid-1", **kw):
         return self.run_req(anth_request(copy.deepcopy(msgs), sid=sid), mask_observations=True, **kw)["messages"]
 
-    def test_off_by_default(self):
+    def test_off_keeps_results(self):
         view = self.run_req(anth_request(in_flight_turn(LONG)), trim_at_tokens=1)["messages"]
         self.assertNotIn(MASK_PLACEHOLDER, json.dumps(view))
 
@@ -423,10 +423,10 @@ class ExperimentSettingsTests(unittest.TestCase):
         self.assertEqual((Settings().strip_prose, Settings().progress_note), (False, True))
         s = Settings.from_env({"CONTEXT_STRIP_PROSE": "1", "CONTEXT_PROGRESS_NOTE": "off"})
         self.assertEqual((s.strip_prose, s.progress_note), (True, False))
-        self.assertFalse(Settings.from_env({}).mask_observations)
-        self.assertFalse(Settings().mask_observations)
-        self.assertTrue(Settings.from_env({"CONTEXT_MASK_OBSERVATIONS": "1"}).mask_observations)
-        self.assertFalse(Settings.from_env({"CONTEXT_MASK_OBSERVATIONS": ""}).mask_observations)
+        self.assertTrue(Settings.from_env({}).mask_observations)
+        self.assertTrue(Settings().mask_observations)
+        self.assertFalse(Settings.from_env({"CONTEXT_MASK_OBSERVATIONS": "0"}).mask_observations)
+        self.assertTrue(Settings.from_env({"CONTEXT_MASK_OBSERVATIONS": ""}).mask_observations)
         self.assertTrue(Settings.from_env({"CONTEXT_STANDING_INSTRUCTION": ""}).standing_instruction)
 
 

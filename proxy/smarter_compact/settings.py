@@ -114,8 +114,8 @@ class Settings:
     trim_to_fraction: float = DEFAULT_TRIM_TO_FRACTION
     # Kept items before the strip bound lose their tool_use/tool_result pairs, text stays (off by default; CONTEXT_STRIP_PROSE=1 turns it on).
     strip_prose: bool = False
-    # Same region keeps tool_use, masks tool_result; wins over strip_prose (CONTEXT_MASK_OBSERVATIONS=1 turns it on).
-    mask_observations: bool = False
+    # Same region keeps tool_use, masks tool_result; wins over strip_prose (on by default; CONTEXT_MASK_OBSERVATIONS=0 turns it off).
+    mask_observations: bool = True
     # Each trim first clears every tool_result but the newest N, keeping all turns and calls; turns drop only when
     # that is not enough. 0 is off (CONTEXT_CLEAR_KEEP_RESULTS).
     clear_keep_results: int = 0
@@ -174,7 +174,7 @@ class Settings:
             trim_at_by_model=_int(env, "CONTEXT_TRIM_AT_TOKENS", None) is None,
             trim_to_fraction=_fraction(env, "CONTEXT_TRIM_TO_FRACTION", DEFAULT_TRIM_TO_FRACTION),
             strip_prose=_flag(env, "CONTEXT_STRIP_PROSE", "0"),
-            mask_observations=_flag(env, "CONTEXT_MASK_OBSERVATIONS", "0"),
+            mask_observations=_flag(env, "CONTEXT_MASK_OBSERVATIONS", "1"),
             clear_keep_results=max(_int(env, "CONTEXT_CLEAR_KEEP_RESULTS", 0), 0),
             trim_min_gain_tokens=_int(env, "CONTEXT_TRIM_MIN_GAIN_TOKENS", 0),
             server_clear=_flag(env, "CONTEXT_SERVER_CLEAR", "0"),

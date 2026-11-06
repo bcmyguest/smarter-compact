@@ -87,10 +87,11 @@ class Base(unittest.TestCase):
 
     def settings(self, **kw):
         # The standing instruction has its own tests (StandingInstructionTests); off here keeps the trim views plain.
-        # Prose strip and progress note have theirs (test_trim_experiments); off, at 0.3 depth, the gap counts stay small.
+        # Prose strip, masking and progress note have theirs (test_trim_experiments); off, at 0.3 depth, the gap counts
+        # stay small.
         base = dict(trim_at_tokens=BIG, compress_over_tokens=0, compaction_max_chars=12000,
                     hindsight_url="http://hs.test", context_dir=self.ctx, standing_instruction=False,
-                    trim_to_fraction=0.3, strip_prose=False, progress_note=False)
+                    trim_to_fraction=0.3, strip_prose=False, progress_note=False, mask_observations=False)
         base.update(kw)
         return Settings(**base)
 
