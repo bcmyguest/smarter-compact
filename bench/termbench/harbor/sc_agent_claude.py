@@ -63,6 +63,18 @@ _NODE_RESOLVE = (
     "tail -20 /logs/agent/sc-install.log; exit 1; }; "
     'export PATH="$(dirname "$NODE_BIN"):$PATH"; echo "node at: $NODE_BIN ($(node --version))"; '
 )
+# Job-level bind mount of a static (musl) rtk binary for the *Rtk arms; task images ship glibc 2.36.
+RTK_MOUNT = "/opt/rtk/rtk"
+# Merges rtk's Bash PreToolUse hook (what `rtk init --hook-only` asks for) into <CLAUDE_CONFIG_DIR>/settings.json.
+_RTK_HOOK = """
+import json, os, sys
+p = sys.argv[1]
+d = json.load(open(p)) if os.path.exists(p) else {}
+d.setdefault("hooks", {}).setdefault("PreToolUse", []).append(
+    {"matcher": "Bash", "hooks": [{"type": "command", "command": "rtk hook claude"}]})
+json.dump(d, open(p, "w"), indent=2)
+print("rtk-hook=ok")
+"""
 # Merges the recall MCP server into <CLAUDE_CONFIG_DIR>/.claude.json, pinned to the trial's store
 # and to the Node binary passed as argv[2]; an optional argv[3] JSON object adds server env.
 _MCP_REGISTER = f"""
@@ -187,7 +199,8 @@ class ScClaudeSmarterCompact(ScClaudeBase):
                 # Keep the proxy's log with the trial; it otherwise dies with the container.
                 "mkdir -p ~/.config/smarter-compact && ln -sf /logs/agent/proxy.log "
                 "~/.config/smarter-compact/proxy.log; "
-                f"cd {REPO} && (npm ci --omit=dev || npm install --omit=dev) "
+                # REPO is the host checkout shared by concurrent trials; `npm ci` wipes node_modules under them.
+                f"cd {REPO} && (npm ls --omit=dev >/dev/null 2>&1 || npm ci --omit=dev || npm install --omit=dev) "
                 ">>/logs/agent/sc-install.log 2>&1 && "
                 "./plugin/scripts/smarter-compact enable claude "
                 ">>/logs/agent/sc-install.log 2>&1; "
@@ -295,3 +308,30 @@ class ScClaudeScratchpadClear(ScClaudeScratchpad):
 
     REQUIRES_PROXY_SETTINGS = ("CONTEXT_SCRATCHPAD", "CONTEXT_CLEAR_KEEP_RESULTS")
     DEFAULT_ENV = {"CONTEXT_CLEAR_KEEP_RESULTS": "10", "CONTEXT_MASK_OBSERVATIONS": "1"}
+
+
+class RtkHook:
+    """Mixin: rtk rewrites known Bash commands to its compact-output filters (needs the RTK_MOUNT bind mount)."""
+
+    async def install(self, environment):
+        await super().install(environment)
+        dest = (self.environment_logs_dir / "sessions").as_posix()
+        await self.exec_as_agent(
+            environment,
+            command=(
+                f"[ -x {RTK_MOUNT} ] || {{ echo 'FATAL: rtk not mounted at {RTK_MOUNT}'; exit 1; }}; "
+                # The rewritten command calls bare `rtk`, so it must be on the Bash tool's PATH.
+                f"ln -sf {RTK_MOUNT} /usr/local/bin/rtk 2>/dev/null || ln -sf {RTK_MOUNT} /usr/bin/rtk 2>/dev/null || "
+                "{ echo 'FATAL: cannot put rtk on PATH'; exit 1; }; rtk --version && "
+                f"python3 -c {shlex.quote(_RTK_HOOK)} {dest}/settings.json || "
+                "{ echo 'FATAL: rtk hook not registered'; exit 1; }"
+            ),
+        )
+
+
+class ScClaudeClearRtk(RtkHook, ScClaudeClear):
+    """Mask-10 plus the rtk Bash hook."""
+
+
+class ScClaudeScratchpadClearRtk(RtkHook, ScClaudeScratchpadClear):
+    """ScratchpadClear plus the rtk Bash hook."""
