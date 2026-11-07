@@ -1,6 +1,6 @@
 {
   "name": "smarter-compact",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Context management (smart compaction): trimmed turns stay in a local SQLite store; search what left the window with smart_compact_search.",
   "author": { "name": "B Guest" },
   "hooks": "./hooks/cursor-hooks.json",
