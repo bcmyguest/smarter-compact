@@ -396,7 +396,7 @@ Probe first: [`tb21-h55-publish-probe.json`](../bench/termbench/harbor/jobs/tb21
 
 ## Scratchpad prior art
 
-`CONTEXT_SCRATCHPAD` (off by default) lets the agent save its own task state before a trim. When the prompt reaches `CONTEXT_SCRATCHPAD_NUDGE_AT` (0.75) of the trim threshold, the proxy appends one `<compact-scratchpad-nudge>` to the newest user or tool-result item, once per trim cycle. The agent writes the pad with the `smart_compact_scratchpad` MCP tool (`view`, `create`, `str_replace`, `insert`; 4,000-character cap). At the next trim the pad goes into the trim note as a `<compact-scratchpad>` block, and the file is renamed to `<sid>.<n>.md`. No source below tests this combination (a nudge near the limit, a pad injected at trim and then cleared) on coding or terminal tasks.
+`CONTEXT_SCRATCHPAD` (off by default) lets the agent save its own task state before a trim. When the prompt reaches `CONTEXT_SCRATCHPAD_NUDGE_AT` (0.75) of the trim threshold, the proxy appends one `<compact-scratchpad-nudge>` to the newest user or tool-result item, once per trim cycle. The agent writes the pad with the `smart_compact_scratchpad` MCP tool (`view`, `create`, `str_replace`, `insert`; 2,500-character cap). At the next trim the pad opens the trim note as a labelled `<compact-scratchpad>` block, and the file is renamed to `<sid>.<n>.md`. No source below tests this combination (a nudge near the limit, a pad injected at trim and then cleared) on coding or terminal tasks.
 
 | Source | Mechanism | Reported result | What we took |
 | --- | --- | --- | --- |

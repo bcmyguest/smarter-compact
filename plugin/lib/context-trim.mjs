@@ -75,7 +75,7 @@ export const STANDING_MARKER = "Context management: to fit your context window";
 const TOOL_SEARCH = "ToolSearch";
 const CLAUDE_CODE_PREFIX = "mcp__smarter-compact__";
 // CONTEXT_SCRATCHPAD: the pad's cap and tool name; same as SCRATCHPAD_MAX_CHARS / SCRATCHPAD_TOOL in proxy core.py.
-export const SCRATCHPAD_MAX_CHARS = 4000;
+export const SCRATCHPAD_MAX_CHARS = 2500;
 const SCRATCHPAD_TOOL = "smart_compact_scratchpad";
 const SCRATCHPAD_TOOL_RE = /(?:^|[^a-z0-9])smart_compact_scratchpad$/;
 /** The names the recall tools actually have in a given request.
@@ -840,15 +840,18 @@ export function maskText(sid, names = LEGACY_RECALL_NAMES) {
 /** The once-per-trim-cycle nudge to save task state; same text as scratchpad_nudge in proxy core.py. */
 export function scratchpadNudge(sid, names) {
   const load = names.scratchpadLoad ? ` (load it first by calling ${names.scratchpadLoad})` : "";
-  return "<compact-scratchpad-nudge>Your context will be trimmed soon. If you have task state worth keeping (goal, "
-    + `decisions, facts learned, next steps), write it with ${names.scratchpad}(session_id="${sid}", `
-    + `command="create", file_text=...)${load}; at most ${SCRATCHPAD_MAX_CHARS} characters. It is shown to you `
-    + "after the trim, then cleared.</compact-scratchpad-nudge>";
+  return "<compact-scratchpad-nudge>Your context will be trimmed soon: older turns will be removed. Save what you "
+    + `need to continue with ${names.scratchpad}(session_id="${sid}", command="create", file_text=...)`
+    + `${load}, at most ${SCRATCHPAD_MAX_CHARS} characters. Write, tersely:\n`
+    + "- goal and how it is checked\n- status: what works, what fails\n- decisions and why\n"
+    + "- facts you would otherwise re-discover (paths, commands, values)\n- the exact next step\n"
+    + "No logs, code or command output. It is shown to you after the trim, then cleared."
+    + "</compact-scratchpad-nudge>";
 }
 
-/** The trim note's block carrying the agent's pad, capped at SCRATCHPAD_MAX_CHARS; proxy scratchpad_block. */
+/** The trim note's labelled block carrying the agent's pad, capped at SCRATCHPAD_MAX_CHARS; proxy scratchpad_block. */
 export function scratchpadBlock(text) {
-  return `<compact-scratchpad>\n${text.slice(0, SCRATCHPAD_MAX_CHARS)}\n</compact-scratchpad>`;
+  return `Your notes from before this trim:\n<compact-scratchpad>\n${text.slice(0, SCRATCHPAD_MAX_CHARS)}\n</compact-scratchpad>`;
 }
 
 /** The message with note appended: a text part on a user message, after a tool message's last text result; else null. */
@@ -1268,7 +1271,7 @@ async function trimSession(request, settings, deps, { original, sid, store, item
           note = `[smarter-compact: session ${sid}] ${maskText(sid, toolNames)}`;
         }
         const pad = settings.scratchpad ? store.takeScratchpad(sid) : "";
-        if (pad) note = `${note}\n${scratchpadBlock(pad)}`;
+        if (pad) note = `${scratchpadBlock(pad)}\n${note}`; // first, ahead of the recall instructions
         threads.delete(root);
         const entry = { cut: next, cut_fp: fingerprint(items[next]), note, format: FORMAT, updated: ts };
         if (nextGap !== null) Object.assign(entry, { gap: nextGap, gap_fp: fingerprint(items[nextGap]) });

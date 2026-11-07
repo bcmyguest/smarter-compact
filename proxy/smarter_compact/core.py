@@ -59,7 +59,7 @@ PROGRESS_MAX_FILES = 20
 PROGRESS_MAX_COMMANDS = 5
 PROGRESS_COMMAND_MAX_CHARS = 200
 # CONTEXT_SCRATCHPAD: the pad's cap (the MCP tool's too), and its tool name with any namespace separator.
-SCRATCHPAD_MAX_CHARS = 4000
+SCRATCHPAD_MAX_CHARS = 2500
 SCRATCHPAD_TOOL = "smart_compact_scratchpad"
 _SCRATCHPAD_TOOL_RE = re.compile(r"(?:^|[^a-z0-9])smart_compact_scratchpad$")
 # Tool name -> input keys naming the file it writes (Claude Code's file tools).
@@ -243,16 +243,19 @@ def scratchpad_nudge(sid, names):
     """The once-per-trim-cycle nudge to save task state; fixed for a session and tool name (CONTEXT_SCRATCHPAD)."""
     load = f" (load it first by calling {names['scratchpad_load']})" if names.get("scratchpad_load") else ""
     return (
-        f"<compact-scratchpad-nudge>Your context will be trimmed soon. If you have task state worth keeping (goal, "
-        f"decisions, facts learned, next steps), write it with {names['scratchpad']}(session_id=\"{sid}\", "
-        f"command=\"create\", file_text=...){load}; at most {SCRATCHPAD_MAX_CHARS} characters. It is shown to you "
-        f"after the trim, then cleared.</compact-scratchpad-nudge>"
+        f"<compact-scratchpad-nudge>Your context will be trimmed soon: older turns will be removed. Save what you "
+        f"need to continue with {names['scratchpad']}(session_id=\"{sid}\", command=\"create\", file_text=...)"
+        f"{load}, at most {SCRATCHPAD_MAX_CHARS} characters. Write, tersely:\n"
+        f"- goal and how it is checked\n- status: what works, what fails\n- decisions and why\n"
+        f"- facts you would otherwise re-discover (paths, commands, values)\n- the exact next step\n"
+        f"No logs, code or command output. It is shown to you after the trim, then cleared."
+        f"</compact-scratchpad-nudge>"
     )
 
 
 def scratchpad_block(text):
-    """The trim note's block carrying the agent's pad, capped at SCRATCHPAD_MAX_CHARS."""
-    return f"<compact-scratchpad>\n{text[:SCRATCHPAD_MAX_CHARS]}\n</compact-scratchpad>"
+    """The trim note's labelled block carrying the agent's pad, capped at SCRATCHPAD_MAX_CHARS."""
+    return f"Your notes from before this trim:\n<compact-scratchpad>\n{text[:SCRATCHPAD_MAX_CHARS]}\n</compact-scratchpad>"
 
 
 def _nudged(adapter, items, at, text):
@@ -773,7 +776,7 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                     note = f"[smarter-compact: session {sid}] {mask_text(sid, names)}"
                 pad = store.take_scratchpad(sid) if settings.scratchpad else ""
                 if pad:
-                    note = f"{note}\n{scratchpad_block(pad)}"
+                    note = f"{scratchpad_block(pad)}\n{note}"  # first, ahead of the recall instructions
                 threads.pop(root, None)
                 threads[root] = {"cut": new_cut, "cut_fp": fingerprint(items[new_cut]), "note": note,
                                  "format": adapter.name, "updated": _utc_now()}

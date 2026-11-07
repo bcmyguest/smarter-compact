@@ -47,7 +47,7 @@ const SQL_RESULT_MAX_CHARS = 30_000;
 const SQL_MAX_CHARS = 10_000;
 const STATUS_MAX_HOURS = 24 * 30;
 // CONTEXT_SCRATCHPAD: the pad's cap; the proxy injects at most this much (SCRATCHPAD_MAX_CHARS in core.py).
-export const SCRATCHPAD_MAX_CHARS = 4000;
+export const SCRATCHPAD_MAX_CHARS = 2500;
 const SCRATCHPAD_COMMANDS = ["view", "create", "str_replace", "insert"];
 /** Words that may not appear outside string literals and quoted identifiers in smart_compact_sql. */
 const SQL_FORBIDDEN = new Set([
@@ -175,7 +175,8 @@ export const SCRATCHPAD_MCP_TOOL = {
   name: "smart_compact_scratchpad",
   title: "Task scratchpad that survives context trims",
   description:
-    "A small per-session notes file for task state (goal, decisions, facts learned, next steps), not for logs. "
+    "A small per-session notes file for task state (goal and how it is checked, status, decisions and why, facts "
+    + "you would otherwise re-discover, the exact next step); no logs, code or command output. "
     + "It survives context trims: the next trim note shows it to you, then it is cleared. "
     + `view returns numbered lines; create replaces the whole pad; str_replace needs old_str to occur exactly once; `
     + `insert adds insert_text after line insert_line (0 = top). At most ${SCRATCHPAD_MAX_CHARS} characters.`,
