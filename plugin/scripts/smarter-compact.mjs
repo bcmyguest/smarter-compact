@@ -13,12 +13,14 @@ import { AGENTS, configureAgent, detectInstalledAgents } from "../lib/enable.mjs
 import { installCursorPlugin } from "../lib/install-cursor.mjs";
 import { addPluginMarketplace, PLUGIN_AGENTS } from "../lib/plugins-cli.mjs";
 import { runContextCommand } from "../lib/context-config.mjs";
-import { ensureContextProxyRunning, litellmEnv, packageRoot } from "../lib/proxy-daemon.mjs";
+import { ensureContextProxyRunning, litellmEnv, packageRoot, probeContextProxy } from "../lib/proxy-daemon.mjs";
+import { ensureLitellm, litellmProblem, LITELLM_MIN } from "../lib/litellm.mjs";
 import { summarizeEvents } from "../lib/session-db.mjs";
 
 ensureProductEnv();
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+const LITELLM_MISSING = `litellm is not on PATH. Run ${PRODUCT} enable, which installs litellm >= ${LITELLM_MIN} with uv`;
 
 function repoRoot() {
   return packageRoot(import.meta.url);
@@ -122,6 +124,16 @@ async function enable(argv, enabled) {
   }
 
   const port = resolveProxyPort(home, process.env);
+  // Refuse before any config is written: an agent pointed at a proxy that cannot start loses every request.
+  const autoProxy = !/^(0|false|no)$/i.test(String(process.env.SMARTER_COMPACT_AUTO_PROXY || "1").trim());
+  if (enabled && autoProxy && !(await probeContextProxy(port))) {
+    const litellm = ensureLitellm({ log: (line) => console.error(`${PRODUCT}: ${line}`) });
+    if (!litellm.ok) {
+      console.error(`${PRODUCT}: ${litellmProblem(litellm, PRODUCT)} No agent config changed.`);
+      process.exit(1);
+    }
+    if (litellm.status === "installed") console.error(`${PRODUCT}: installed litellm ${litellm.version}`);
+  }
   const results = targets.map((agent) => ({ agent, ...configureAgent(home, agent, { enabled, port }) }));
   const ok = results.filter((r) => r.ok);
   const bad = results.filter((r) => !r.ok);
@@ -130,7 +142,9 @@ async function enable(argv, enabled) {
     const proxy = await ensureContextProxyRunning({ importMetaUrl: import.meta.url, waitMs: 12_000 });
     if (!proxy.ok) {
       for (const r of ok) console.log(r.message);
-      console.error(`${PRODUCT}: proxy did not start (${proxy.status}${proxy.reason ? `: ${proxy.reason}` : ""}${proxy.log ? `; see ${proxy.log}` : ""})`);
+      console.error(proxy.reason === "litellm-missing"
+        ? `${PRODUCT}: proxy did not start: ${LITELLM_MISSING}.`
+        : `${PRODUCT}: proxy did not start (${proxy.status}${proxy.reason ? `: ${proxy.reason}` : ""}${proxy.log ? `; see ${proxy.log}` : ""})`);
       process.exit(1);
     }
     if (proxy.status === "started") console.error(`${PRODUCT}: proxy listening on http://127.0.0.1:${port}`);
@@ -179,7 +193,7 @@ function proxy() {
   const child = spawn("litellm", ["--config", config, "--host", "127.0.0.1", "--port", port], { env, stdio: "inherit" });
   child.on("error", (err) => {
     console.error(err.code === "ENOENT"
-      ? `litellm is not on PATH. Install the dev build that includes Codex pass-through (LiteLLM v1.109.0-dev.1), then run ${PRODUCT} proxy again.`
+      ? `${LITELLM_MISSING}, then run ${PRODUCT} proxy again.`
       : err.message);
     process.exit(1);
   });

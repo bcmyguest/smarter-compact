@@ -32,6 +32,23 @@ test("ensure skips when no agent points at proxy", async () => {
   assert.equal(r.status, "not-needed");
 });
 
+test("ensure reports litellm-missing at once when litellm is not on PATH", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "sc-nolitellm-"));
+  configureAgent(home, "codex", { enabled: true, port: 4101 });
+  const emptyBin = fs.mkdtempSync(path.join(os.tmpdir(), "sc-bin-"));
+  const started = Date.now();
+  const r = await ensureContextProxyRunning({
+    home,
+    env: { ...process.env, PATH: emptyBin, SMARTER_COMPACT_AUTO_PROXY: "1" },
+    importMetaUrl: import.meta.url,
+    fetch: async () => { throw new Error("down"); },
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.status, "spawn-failed");
+  assert.equal(r.reason, "litellm-missing");
+  assert.ok(Date.now() - started < 3000);
+});
+
 test("resolveProxyPort reads proxy.env when env unset", () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "sc-port-"));
   upsertEnvFile(proxyEnvPath(home), { CONTEXT_PROXY_PORT: "4209" }, { mode: 0o600 });

@@ -74,11 +74,12 @@
     ]
   },
   "scripts": {
-    "test": "node --test tests/plugin.test.mjs tests/opencode-export.test.mjs tests/proxy-daemon.test.mjs tests/context-config.test.mjs tests/recall-mcp.test.mjs tests/context-trim.test.mjs tests/session-db.test.mjs tests/config-wiring.test.mjs tests/scratchpad.test.mjs",
+    "test": "node --test tests/plugin.test.mjs tests/opencode-export.test.mjs tests/proxy-daemon.test.mjs tests/litellm.test.mjs tests/context-config.test.mjs tests/recall-mcp.test.mjs tests/context-trim.test.mjs tests/session-db.test.mjs tests/config-wiring.test.mjs tests/scratchpad.test.mjs",
     "pack:check": "node scripts/check-pack.mjs",
     "version": "node scripts/sync-versions.mjs"
   },
   "dependencies": {
-    "@iarna/toml": "^2.2.5"
+    "@iarna/toml": "^2.2.5",
+    "@renovatebot/pep440": "^6.0.0"
   }
 }

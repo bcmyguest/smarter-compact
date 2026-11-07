@@ -11,6 +11,7 @@ import {
 } from "./brand.mjs";
 import { contextRoot } from "./context-store.mjs";
 import { agentsPointedAtProxy, ensureKey } from "./enable.mjs";
+import { onPath } from "./litellm.mjs";
 import { rotateLog } from "./log-rotate.mjs";
 
 const PROBE_TIMEOUT_MS = 1500;
@@ -202,6 +203,7 @@ async function refreshStale({ home, env, port, importMetaUrl, fetch, exec, waitM
 export function spawnContextProxyDaemon(home, importMetaUrl, env = process.env) {
   const root = packageRoot(importMetaUrl);
   if (!root) return { ok: false, reason: "no-package-root" };
+  if (!onPath("litellm", env)) return { ok: false, reason: "litellm-missing" };
   const port = String(resolveProxyPort(home, env));
   fs.mkdirSync(configDir(home), { recursive: true, mode: 0o700 });
   rotateLog(proxyLogPath(home));

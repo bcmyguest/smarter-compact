@@ -152,6 +152,17 @@ test("install cursor symlinks plugin into ~/.cursor/plugins/local", () => {
   assert.equal(fs.existsSync(path.join(result.dest, ".cursor-plugin", "plugin.json")), true);
 });
 
+test("enable writes no agent config when litellm is missing and no proxy answers", () => {
+  const home = tmpHome();
+  const result = spawnSync(process.execPath, [CLI, "enable", "codex"], {
+    encoding: "utf8",
+    env: { ...process.env, HOME: home, PATH: fs.mkdtempSync(path.join(os.tmpdir(), "sc-bin-")), CONTEXT_PROXY_PORT: "4199" },
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /uv is missing.*No agent config changed/);
+  assert.equal(fs.existsSync(path.join(home, ".codex", "config.toml")), false);
+});
+
 test("status runs against an empty store", () => {
   const home = tmpHome();
   const result = spawnSync(process.execPath, [CLI, "status"], {
