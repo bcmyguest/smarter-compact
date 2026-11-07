@@ -122,8 +122,8 @@ class Store:
         _write_atomic(self._session_path(sid, ".trim.json"), data)
 
     # Agent scratchpad (written by the smart_compact_scratchpad MCP tool)
-    def take_scratchpad(self, sid):
-        """The pad's text, the file then renamed to <sid>.<n>.md (n the next free integer); "" when missing or blank."""
+    def read_scratchpad(self, sid):
+        """The pad's text, kept in place and copied to <sid>.<n>.md (n the next free integer); "" when missing or blank."""
         path = self.scratchpad / f"{sid}.md"
         try:
             text = path.read_bytes().decode("utf-8", "replace")
@@ -135,7 +135,7 @@ class Store:
         while (self.scratchpad / f"{sid}.{n}.md").exists():
             n += 1
         try:
-            os.replace(path, self.scratchpad / f"{sid}.{n}.md")
+            (self.scratchpad / f"{sid}.{n}.md").write_bytes(text.encode("utf-8"))
         except OSError:
             pass
         return text

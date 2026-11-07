@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_context_proxy import SID, Base, anth_history, anth_request  # noqa: E402
 
 from smarter_compact.core import (  # noqa: E402
-    SCRATCHPAD_MAX_CHARS, recall_tool_names, scratchpad_nudge,
+    SCRATCHPAD_LABEL, SCRATCHPAD_MAX_CHARS, recall_tool_names, scratchpad_nudge,
 )
 
 NUDGE_TAG = "<compact-scratchpad-nudge>"
@@ -83,7 +83,7 @@ class ScratchpadTests(Base):
         self.assertIn("p" * (SCRATCHPAD_MAX_CHARS - len("goal: X\n")) + "\\n</compact-scratchpad>", dumped)
         self.assertNotIn("p" * (SCRATCHPAD_MAX_CHARS - len("goal: X\n") + 1), dumped)
         self.assertNotIn(NUDGE_TAG, dumped)
-        self.assertFalse((self.ctx / "scratchpad" / f"{SID}.md").exists())
+        self.assertTrue((self.ctx / "scratchpad" / f"{SID}.md").exists())
         self.assertTrue((self.ctx / "scratchpad" / f"{SID}.1.md").exists())
         self.assertEqual([e["scratchpad_chars"] for e in self.events("trim")], [SCRATCHPAD_MAX_CHARS])
         # The note persists with the pad; the nudge re-arms on the next request's newest item.
@@ -95,6 +95,20 @@ class ScratchpadTests(Base):
         self.pad("second")
         self.force()
         self.on(reply(ask(trimmed, 2), 3))
+        self.assertTrue((self.ctx / "scratchpad" / f"{SID}.2.md").exists())
+
+    def test_pad_persists_into_the_next_trim_without_a_rewrite(self):
+        msgs = ask(anth_history(4), 0)
+        self.on(msgs)
+        self.pad("goal: keep me")
+        self.force()
+        trimmed = reply(msgs, 1)
+        self.on(trimmed)
+        self.force()
+        out = self.on(reply(ask(trimmed, 2), 3))
+        dumped = json.dumps(out["messages"])
+        self.assertIn(json.dumps(SCRATCHPAD_LABEL)[1:-1] + "\\n<compact-scratchpad>\\ngoal: keep me\\n", dumped)
+        self.assertEqual([e["scratchpad_chars"] for e in self.events("trim")], [13, 13])
         self.assertTrue((self.ctx / "scratchpad" / f"{SID}.2.md").exists())
 
     def test_empty_or_missing_pad_injects_nothing(self):

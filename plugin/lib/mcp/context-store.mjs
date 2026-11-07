@@ -177,7 +177,8 @@ export const SCRATCHPAD_MCP_TOOL = {
   description:
     "A small per-session notes file for task state (goal and how it is checked, status, decisions and why, facts "
     + "you would otherwise re-discover, the exact next step); no logs, code or command output. "
-    + "It survives context trims: the next trim note shows it to you, then it is cleared. "
+    + "It persists across context trims and every trim note shows it: write it once, then update it when the goal, "
+    + "plan or a key fact changes. "
     + `view returns numbered lines; create replaces the whole pad; str_replace needs old_str to occur exactly once; `
     + `insert adds insert_text after line insert_line (0 = top). At most ${SCRATCHPAD_MAX_CHARS} characters.`,
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
@@ -717,7 +718,7 @@ function runSql(args, env, cwd) {
   return result;
 }
 
-/** `<root>/scratchpad/<sid>.md`, the file the proxy reads at the next trim (Store.take_scratchpad). */
+/** `<root>/scratchpad/<sid>.md`, the file the proxy reads at every trim (Store.read_scratchpad). */
 function scratchpadPath(env, sid) {
   return path.join(contextRoot(env), "scratchpad", `${sid}.md`);
 }

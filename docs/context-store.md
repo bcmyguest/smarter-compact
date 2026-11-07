@@ -17,7 +17,7 @@ Root: `$SMARTER_COMPACT_STATE_DIR/context`, default `~/.local/share/smarter-comp
 | `sessions/<sid>.trim.json` | proxy | proxy | Proxy-private trim state (cut point, fingerprints, reported-usage samples for the token estimate, see [context-proxy.md](context-proxy.md#token-estimate)). Other components must not depend on its shape. |
 | `sessions/<sid>.db` (+ `-wal`, `-shm`) | proxy | MCP `smart_compact_search`, `smart_compact_sql`, shell `sqlite3` | [Session database](#session-database): every message of the session, in or out of context. The only store of record for message content. |
 | `blobs/<id>.txt` | proxy | MCP `smart_compact_get` | Full text of a compressed tool result, served back in 12,000-char pages. `id` = first 16 hex chars of SHA-256 of the UTF-8 content. |
-| `scratchpad/<sid>.md` | MCP `smart_compact_scratchpad` | proxy | The agent's pad (`CONTEXT_SCRATCHPAD=1`). The next trim copies it, capped at 2,500 characters, into the start of the note and renames it `<sid>.<n>.md` (n the next free integer). |
+| `scratchpad/<sid>.md` | MCP `smart_compact_scratchpad` | proxy | The agent's pad (`CONTEXT_SCRATCHPAD=1`). Every trim copies it, capped at 2,500 characters, into the start of the note under a possibly-stale label, keeps the file, and saves a snapshot `<sid>.<n>.md` (n the next free integer). |
 | `tool-calls.jsonl` | MCP `smart_compact_*` tools | `smarter-compact context stats` | One JSON line per search / sql / get call (`at`, `tool`, hit/row/char counts). Best-effort telemetry; not part of the session rewrite contract. Moves to `tool-calls.jsonl.1` at 5 MB, replacing the previous generation; stats read both. |
 | `.ttl-stamp` | proxy, MCP server | proxy, MCP server | Empty; its mtime records the last [retention](#retention) sweep |
 

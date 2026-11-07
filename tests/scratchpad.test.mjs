@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
-  SCRATCHPAD_MAX_CHARS, recallToolNames, scratchpadNudge, trimContext, trimSettings,
+  SCRATCHPAD_LABEL, SCRATCHPAD_MAX_CHARS, recallToolNames, scratchpadNudge, trimContext, trimSettings,
 } from "../plugin/lib/context-trim.mjs";
 import {
   CONTEXT_STORE_MCP_TOOLS, callContextStoreTool, contextStoreTools,
@@ -112,7 +112,7 @@ test("the pad is injected capped, archived, and the nudge re-arms", withHome(asy
   assert.ok(dumped.includes(`${"p".repeat(kept)}\\n</compact-scratchpad>`));
   assert.ok(!dumped.includes("p".repeat(kept + 1)));
   assert.ok(!dumped.includes(NUDGE_TAG));
-  assert.ok(!fs.existsSync(padFile(home)));
+  assert.ok(fs.existsSync(padFile(home)));
   assert.ok(fs.existsSync(padFile(home, `${SID}.1.md`)));
   assert.deepEqual(events(home, "trim").map((e) => e.scratchpad_chars), [SCRATCHPAD_MAX_CHARS]);
   // The note persists with the pad; the nudge re-arms on the next request's newest item.
@@ -123,6 +123,20 @@ test("the pad is injected capped, archived, and the nudge re-arms", withHome(asy
   writePad(home, "second");
   force(home);
   await on(home, reply(ask(trimmed, 2), 3));
+  assert.ok(fs.existsSync(padFile(home, `${SID}.2.md`)));
+}));
+
+test("the pad persists into the next trim without a rewrite", withHome(async (home) => {
+  const msgs = ask(history(4), 0);
+  await on(home, msgs);
+  writePad(home, "goal: keep me");
+  force(home);
+  const trimmed = reply(msgs, 1);
+  await on(home, trimmed);
+  force(home);
+  const dumped = JSON.stringify(await on(home, reply(ask(trimmed, 2), 3)));
+  assert.ok(dumped.includes(`${JSON.stringify(SCRATCHPAD_LABEL).slice(1, -1)}\\n<compact-scratchpad>\\ngoal: keep me\\n`));
+  assert.deepEqual(events(home, "trim").map((e) => e.scratchpad_chars), [13, 13]);
   assert.ok(fs.existsSync(padFile(home, `${SID}.2.md`)));
 }));
 
