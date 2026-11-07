@@ -194,8 +194,8 @@ test("tool names resolve like the recall tools", () => {
 const padEnv = (home, on = "1") => ({ HOME: home, SMARTER_COMPACT_STATE_DIR: home, CONTEXT_SCRATCHPAD: on });
 const call = (home, args, on) => callContextStoreTool("smart_compact_scratchpad", { session_id: SID, ...args }, { env: padEnv(home, on) });
 
-test("the tool is listed and callable only with CONTEXT_SCRATCHPAD on", withHome(async (home) => {
-  assert.equal(contextStoreTools({}), CONTEXT_STORE_MCP_TOOLS);
+test("the tool is listed by default and hidden with CONTEXT_SCRATCHPAD=0", withHome(async (home) => {
+  assert.deepEqual(contextStoreTools({}).map((t) => t.name).at(-1), "smart_compact_scratchpad");
   assert.equal(contextStoreTools({ CONTEXT_SCRATCHPAD: "0" }), CONTEXT_STORE_MCP_TOOLS);
   assert.deepEqual(contextStoreTools({ CONTEXT_SCRATCHPAD: "1" }).map((t) => t.name).at(-1), "smart_compact_scratchpad");
   await assert.rejects(() => call(home, { command: "view" }, "0"), /unknown tool: smart_compact_scratchpad/);

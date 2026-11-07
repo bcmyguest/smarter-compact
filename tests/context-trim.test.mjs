@@ -180,7 +180,7 @@ test("CONTEXT_TRIM_MIN_GAIN_TOKENS skips a trim that frees too little", async ()
   assert.equal(trimSettings({}, os.tmpdir()).trimMinGainTokens, 0);
   const run = async (gain) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "sc-gain-"));
-    const settings = trimSettings({ CONTEXT_TRIM_AT_TOKENS: "1", CONTEXT_TRIM_MIN_GAIN_TOKENS: String(gain), SMARTER_COMPACT_STATE_DIR: home }, home);
+    const settings = trimSettings({ CONTEXT_TRIM_AT_TOKENS: "1", CONTEXT_TRIM_MIN_GAIN_TOKENS: String(gain), CONTEXT_SCRATCHPAD: "0", SMARTER_COMPACT_STATE_DIR: home }, home);
     try { return await trimContext({ sessionID: SID, messages }, settings); } finally { fs.rmSync(home, { recursive: true, force: true }); }
   };
   assert.equal(await run(1e9), messages);

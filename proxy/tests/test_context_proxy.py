@@ -87,9 +87,9 @@ class Base(unittest.TestCase):
     def settings(self, **kw):
         # The standing instruction has its own tests (StandingInstructionTests); off here keeps the trim views plain.
         # Prose strip, masking and progress note have theirs (test_trim_experiments); off, at 0.3 of trim_at, the gap
-        # counts stay small.
+        # counts stay small. The scratchpad has its own tests (test_scratchpad); off here keeps the nudge out.
         base = dict(trim_at_tokens=BIG, compress_over_tokens=0, context_dir=self.ctx, standing_instruction=False,
-                    strip_prose=False, progress_note=False, mask_observations=False)
+                    strip_prose=False, progress_note=False, mask_observations=False, scratchpad=False)
         base.update(kw)
         base.setdefault("trim_to_tokens", math.ceil(0.3 * base["trim_at_tokens"]))
         return Settings(**base)

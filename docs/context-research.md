@@ -396,7 +396,7 @@ Probe first: [`tb21-h55-publish-probe.json`](../bench/termbench/harbor/jobs/tb21
 
 ## Scratchpad prior art
 
-`CONTEXT_SCRATCHPAD` (off by default) lets the agent save its own task state before a trim. When the prompt reaches `CONTEXT_SCRATCHPAD_NUDGE_AT` (0.75) of the trim threshold, the proxy appends one `<compact-scratchpad-nudge>` to the newest user or tool-result item, once per trim cycle. The agent writes the pad with the `smart_compact_scratchpad` MCP tool (`view`, `create`, `str_replace`, `insert`; 2,500-character cap). The pad persists: every trim opens its note with the current pad as a `<compact-scratchpad>` block labelled possibly stale, and snapshots it to `<sid>.<n>.md`. No source below tests this combination (a nudge near the limit, a pad injected at trim and then cleared) on coding or terminal tasks.
+`CONTEXT_SCRATCHPAD` (on by default since 2026-11-07; off during the runs below) lets the agent save its own task state before a trim. When the prompt reaches `CONTEXT_SCRATCHPAD_NUDGE_AT` (0.75) of the trim threshold, the proxy appends one `<compact-scratchpad-nudge>` to the newest user or tool-result item, once per trim cycle. The agent writes the pad with the `smart_compact_scratchpad` MCP tool (`view`, `create`, `str_replace`, `insert`; 2,500-character cap). The pad persists: every trim opens its note with the current pad as a `<compact-scratchpad>` block labelled possibly stale, and snapshots it to `<sid>.<n>.md`. No source below tests this combination (a nudge near the limit, a pad injected at trim and then cleared) on coding or terminal tasks.
 
 | Source | Mechanism | Reported result | What we took |
 | --- | --- | --- | --- |
@@ -408,7 +408,39 @@ Probe first: [`tb21-h55-publish-probe.json`](../bench/termbench/harbor/jobs/tb21
 | [Compact-Bench](https://arxiv.org/abs/2610.31710) (Sun et al., 2026-10) | Full-history versus summary-only continuation of coding sessions. | LLM summaries keep at most 16.0% of recurring details, mechanical extraction 79.1%; production summaries 15.7% at the first boundary. | The agent's pad is stored and injected verbatim, not summarized. |
 | [Building Effective AI Coding Agents for the Terminal](https://arxiv.org/abs/2603.05344) (Bui, 2026-03) | "Event-driven system reminders" that inject "targeted guidance at the point of decision" rather than "relying solely on the initial system prompt". | None in the abstract. Claims that every-turn reminders turn into noise came from a summary, not the paper (unverified). | One reminder at the point it matters, near the trim. |
 
-The design follows from these results. The Compaction Cliff shows content blended into repeated compaction decays, so the pad travels as a separate `<compact-scratchpad>` block that the trim copies as is. ACE shows repeated whole rewrites erode detail, so the tool takes file-style edits (`str_replace`, `insert`) on a persistent pad instead of one overwritten field. The Manus bookkeeping figure (unverified) and the event-driven reminders of arXiv:2603.05344 point to a sparse prompt, so the proxy nudges once near the limit per trim cycle, not every turn. The experiment is the `CONTEXT_SCRATCHPAD` arm in [`tb21-h55-scratchpad.json`](../bench/termbench/harbor/jobs/tb21-h55-scratchpad.json); not yet run.
+The design follows from these results. The Compaction Cliff shows content blended into repeated compaction decays, so the pad travels as a separate `<compact-scratchpad>` block that the trim copies as is. ACE shows repeated whole rewrites erode detail, so the tool takes file-style edits (`str_replace`, `insert`) on a persistent pad instead of one overwritten field. The Manus bookkeeping figure (unverified) and the event-driven reminders of arXiv:2603.05344 point to a sparse prompt, so the proxy nudges once near the limit per trim cycle, not every turn. The experiment is the `CONTEXT_SCRATCHPAD` arm in [`tb21-h55-scratchpad.json`](../bench/termbench/harbor/jobs/tb21-h55-scratchpad.json); observed use so far: [scratchpad](scratchpad.md#observed-use).
+
+## Terminal-Bench 2.1: scratchpad, RTK and native (2026-11-07)
+
+**Setup.** Claude Code with Haiku 5.5 through the proxy at `f448df6`; eight long TB 2.1 tasks, three attempts per arm; trim at 95,000, trim target 40,000 (`CONTEXT_TRIM_TO_TOKENS`), `CONTEXT_CLEAR_KEEP_RESULTS=10`, `CONTEXT_MASK_OBSERVATIONS=0`, native compaction at 195,000. Both arms add [rtk](https://github.com/rtk-ai/rtk) 1.1.0 (static musl build) as a Bash `PreToolUse` hook, which rewrites commands it knows (`ls`, `cat`, `grep`, `find`) to compact-output equivalents and leaves the rest. The only difference between the arms is the [scratchpad](scratchpad.md), in its persistent form (`88b7fc5`): the pad stays across trims and every trim note shows it, labelled possibly stale. Native is the `tb21-h55-publish` arm: plain Claude Code with no proxy, run on 2026-11-05.
+
+| Task | Native | Clear 10 + rtk | Clear 10 + rtk + scratchpad |
+| --- | --- | --- | --- |
+| adaptive-rejection-sampler | 3/3, $0.057 | 3/3, $0.117 | 3/3, $0.070 |
+| fix-ocaml-gc | 3/3, $0.026 | 3/3, $0.021 | 3/3, $0.018 |
+| make-doom-for-mips | 0/3, $0.367 | 0/3, $0.139 | 0/3, $0.123 |
+| make-mips-interpreter | 2/3, $0.405 | 1/3, $0.139 | 1/3, $0.093 |
+| path-tracing | 3/3, $0.080 | 3/3, $0.047 | 3/3, $0.045 |
+| path-tracing-reverse | 2/2, $0.250 | 3/3, $0.115 | 3/3, $0.087 |
+| regex-chess | 1/1, $0.300 | 3/3, $0.186 | 3/3, $0.116 |
+| schemelike-metacircular-eval | 2/2, $0.153 | 3/3, $0.094 | 2/3, $0.066 |
+| **Passed** | **16/20** | **19/24** | **18/24** |
+
+Cells are passes over scored trials and the mean cost of a trial. An OAuth session that expired mid-run ended three trials (two regex-chess, one schemelike) before their first real step; they were rerun one by one on the same code, and the reruns replace them. Native's two unscored trials are left out.
+
+**Tests.** A permutation test that shuffles arm labels within each task (20,000 draws), on the mean relative per-task difference:
+
+| Comparison | Cost | Passes |
+| --- | --- | --- |
+| Clear 10 + rtk vs native | −47% (p = 0.004) | no difference (p = 1.00) |
+| Scratchpad arm vs native | −75% (p < 0.001) | no difference (p = 0.53) |
+| Scratchpad arm vs clear 10 + rtk | −29% (p = 0.003) | no difference (p = 1.00) |
+
+At 29 of the trials the scratchpad's cost difference was −13% (p = 0.22). Earlier runs pointed both ways: the scratchpad arm cost about 1.5 times clear 10 against `tb21-h55-publish`, where masking and code also differed, and less in the matched `tb21-h55-padcost` pair (Mask-10 1/5, $0.71; scratchpad 4/5, $0.55; stopped at 11 of 12 trials).
+
+**Scratchpad use.** 23 nudges, 14 trials that wrote a pad, 14 of 19 trims carrying one. Two trims carried the same pad as the trim before, because the agent ignored that cycle's nudge; the clear-at-trim version showed no pad there. One trial updated its pad after a trim with `str_replace`, the first edit seen; every other write was `create`.
+
+**Decision.** The scratchpad is on by default from this run. The evidence is the cost difference in one run of 2–3 trials per task; no comparison shows a pass-rate difference, and the cost gap is driven by trajectory length, which varies 2–3× within a task.
 
 ## Limitations
 
@@ -426,7 +458,7 @@ The design follows from these results. The Compaction Cliff shows content blende
 1. Fix counts: exclude tool output from counted lines, add a role filter, and add a count clause to the standing instruction. Deferred.
 2. Add a paraphrase or semantic task (Chroma's semantic needle variant or LongMemEval), so hybrid search is used and measured.
 3. Run Compact-Bench real coding sessions. Superseded for this purpose by the chained SWE protocol above, which gets a long horizon out of instances we already score.
-4. Finish decision-consistency and [scratchpad](#scratchpad-prior-art) tests with a validated Codex context limit before drawing a coding-agent conclusion. The scratchpad experiment is the `CONTEXT_SCRATCHPAD` arm, [`tb21-h55-scratchpad.json`](../bench/termbench/harbor/jobs/tb21-h55-scratchpad.json); not yet run.
+4. Finish decision-consistency and [scratchpad](#scratchpad-prior-art) tests with a validated Codex context limit before drawing a coding-agent conclusion. The scratchpad experiment is the `CONTEXT_SCRATCHPAD` arm, [`tb21-h55-scratchpad.json`](../bench/termbench/harbor/jobs/tb21-h55-scratchpad.json); observed use so far: [scratchpad](scratchpad.md#observed-use).
 5. Run the chained protocol past context saturation, then move to a set with headroom. Checked 2026-11-03 for harder public SWE benchmarks we can self-host:
    - **SWE-bench Pro V2** (Scale AI) is the best fit: ungated `ScaleAI/SWE-bench_Pro` on HF (642 tasks, plus a 51-task `hard` config), per-instance images on `ghcr.io/scaleapi/swe-bench_pro-v2:<instance_id>` with anonymous pull, SWE-bench columns plus `docker_image`, hidden F2P/P2P grading, frontier at roughly 45–60%. Its long-horizon claim rests on task size (gold patches average 107 lines across 4.1 files, ~3x Verified); no per-task step counts are published.
    - **SWE-rebench** (`nebius/SWE-rebench`, 21k tasks, 7.5k prebuilt images, same schema, frontier ~64%, ~2.5M tokens per problem reported on its leaderboard) for volume and contamination control.

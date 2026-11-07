@@ -17,7 +17,7 @@ Root: `$SMARTER_COMPACT_STATE_DIR/context`, default `~/.local/share/smarter-comp
 | `sessions/<sid>.trim.json` | proxy | proxy | Proxy-private trim state (cut point, fingerprints, reported-usage samples for the token estimate, see [context-proxy.md](context-proxy.md#token-estimate)). Other components must not depend on its shape. |
 | `sessions/<sid>.db` (+ `-wal`, `-shm`) | proxy | MCP `smart_compact_search`, `smart_compact_sql`, shell `sqlite3` | [Session database](#session-database): every message of the session, in or out of context. The only store of record for message content. |
 | `blobs/<id>.txt` | proxy | MCP `smart_compact_get` | Full text of a compressed tool result, served back in 12,000-char pages. `id` = first 16 hex chars of SHA-256 of the UTF-8 content. |
-| `scratchpad/<sid>.md` | MCP `smart_compact_scratchpad` | proxy | The agent's pad (`CONTEXT_SCRATCHPAD=1`). Every trim copies it, capped at 2,500 characters, into the start of the note under a possibly-stale label, keeps the file, and saves a snapshot `<sid>.<n>.md` (n the next free integer). |
+| `scratchpad/<sid>.md` | MCP `smart_compact_scratchpad` | proxy | The agent's pad (unless `CONTEXT_SCRATCHPAD=0`). Every trim copies it, capped at 2,500 characters, into the start of the note under a possibly-stale label, keeps the file, and saves a snapshot `<sid>.<n>.md` (n the next free integer). |
 | `tool-calls.jsonl` | MCP `smart_compact_*` tools | `smarter-compact context stats` | One JSON line per search / sql / get call (`at`, `tool`, hit/row/char counts). Best-effort telemetry; not part of the session rewrite contract. Moves to `tool-calls.jsonl.1` at 5 MB, replacing the previous generation; stats read both. |
 | `.ttl-stamp` | proxy, MCP server | proxy, MCP server | Empty; its mtime records the last [retention](#retention) sweep |
 
@@ -148,7 +148,7 @@ The writer appends one `events` row per trim, per scratchpad nudge and per fail-
 | `version` | The writer: `proxy:<12 hex>`, the first 12 hex of SHA-256 over `proxy/smarter_compact/*.py` (each file's name, NUL, bytes, NUL, sorted by name; `core.code_hash`, `proxyCodeVersion`), or `opencode:<package version>` for the OpenCode 2 plugin. Status compares the newest `proxy:` value with the checkout's hash to spot a proxy running old code |
 | `location`, `error` | Fail-open only: `<file>:<line>` (JS adds `:<column>`) and the exception type. Never message content |
 | `tokens_before`, `tokens_after` | Trim only: the writer's calibrated estimate ([token estimate](context-proxy.md#token-estimate)) of the request before and after the cut, not provider-billed counts. `tokens_after` still counts the thinking blocks the cut voids and drops, so status measures the saving as `tokens_before` minus the billed prompt of the next usage row with `trimmed` = 2 |
-| `scratchpad_chars` | Trim only, `CONTEXT_SCRATCHPAD=1`: characters of pad the note carried (`0` none); `NULL` with the flag off |
+| `scratchpad_chars` | Trim only, scratchpad on: characters of pad the note carried (`0` none); `NULL` with the flag off |
 | `dropped` | Trim only: messages absent from the trimmed view (the pointer's `<n>`) |
 | `model` | Usage only: the request's model (proxy: the `model` string sent to LiteLLM; OpenCode: `<providerID>/<modelID>`) |
 | `thread_root` | Usage only: fingerprint of the request's first row, as in `messages.thread` |

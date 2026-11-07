@@ -210,8 +210,8 @@ export function trimSettings(env = process.env, home = env.HOME) {
     maskObservations: flag("CONTEXT_MASK_OBSERVATIONS", "1"),
     // Add a progress note listing edited files and build commands (CONTEXT_PROGRESS_NOTE=0, default on).
     progressNote: flag("CONTEXT_PROGRESS_NOTE"),
-    // Agent scratchpad: one nudge near the threshold, the pad injected into the next trim note (CONTEXT_SCRATCHPAD=1).
-    scratchpad: flag("CONTEXT_SCRATCHPAD", "0"),
+    // Agent scratchpad: one nudge near the threshold, the pad in every trim note (CONTEXT_SCRATCHPAD, default on).
+    scratchpad: flag("CONTEXT_SCRATCHPAD"),
     scratchpadNudgeAt: fraction("CONTEXT_SCRATCHPAD_NUDGE_AT", DEFAULT_SCRATCHPAD_NUDGE_AT),
     // Each trim first clears every tool result but the newest N, keeping all turns and calls; 0 is off.
     clearKeepResults: Math.max(int("CONTEXT_CLEAR_KEEP_RESULTS", 10), 0),

@@ -61,7 +61,7 @@ async function registerSearchTools(ctx, { home, env, enabled, directory }) {
         environment: {
           HOME: home,
           SMARTER_COMPACT_STATE_DIR: stateParent(home, env),
-          // The scratchpad tool is listed only when the server sees the flag; absent when unset.
+          // The server lists the scratchpad tool unless it sees CONTEXT_SCRATCHPAD=0, so forward the flag when set.
           ...(env.CONTEXT_SCRATCHPAD ? { CONTEXT_SCRATCHPAD: env.CONTEXT_SCRATCHPAD } : {}),
         },
         enabled: true,

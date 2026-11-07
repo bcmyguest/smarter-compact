@@ -40,6 +40,21 @@ export const PAGES = [
     description: 'How trimming works, the session store, MCP tools.',
   },
   {
+    slug: 'clearing',
+    source: 'docs/clearing.md',
+    group: 'Guides',
+    title: 'Tool-result clearing and masking',
+    label: 'Clearing and masking',
+    description: 'How a trim replaces old tool outputs with a placeholder instead of deleting turns.',
+  },
+  {
+    slug: 'scratchpad',
+    source: 'docs/scratchpad.md',
+    group: 'Guides',
+    title: 'Scratchpad',
+    description: "The agent's task notes, shown at the top of every trim note (CONTEXT_SCRATCHPAD).",
+  },
+  {
     slug: 'benchmarks',
     source: 'docs/benchmarks.md',
     group: 'Guides',

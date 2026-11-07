@@ -198,9 +198,9 @@ export const SCRATCHPAD_MCP_TOOL = {
   },
 };
 
-/** True when CONTEXT_SCRATCHPAD is on (default off), with the proxy's flag spelling. */
+/** True unless CONTEXT_SCRATCHPAD is off (default on), with the proxy's flag spelling. */
 export function scratchpadEnabled(env = process.env) {
-  return !["", "0", "false", "no", "off"].includes(String(env.CONTEXT_SCRATCHPAD ?? "").trim().toLowerCase());
+  return !["0", "false", "no", "off"].includes(String(env.CONTEXT_SCRATCHPAD || "1").trim().toLowerCase());
 }
 
 /** The tools this server lists: the scratchpad only with CONTEXT_SCRATCHPAD on, so other tool lists stay unchanged. */

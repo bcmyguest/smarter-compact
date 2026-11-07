@@ -145,9 +145,9 @@ class ScClaudeSmarterCompact(ScClaudeBase):
     # Proxy env that defines the arm; applied after the job's env so a job cannot undo it.
     FORCED_ENV = {}
     # Proxy env the arm defaults to; the job's env overrides it. Turn drops only: both masking modes are proxy defaults.
-    DEFAULT_ENV = {"CONTEXT_MASK_OBSERVATIONS": "0", "CONTEXT_CLEAR_KEEP_RESULTS": "0"}
-    # Extra env for the recall MCP server process; empty keeps the registration as before.
-    MCP_ENV = {}
+    DEFAULT_ENV = {"CONTEXT_MASK_OBSERVATIONS": "0", "CONTEXT_CLEAR_KEEP_RESULTS": "0", "CONTEXT_SCRATCHPAD": "0"}
+    # Extra env for the recall MCP server process; the scratchpad is a proxy default, so only its arms offer the tool.
+    MCP_ENV = {"CONTEXT_SCRATCHPAD": "0"}
 
     async def install(self, environment):
         await super().install(environment)
@@ -251,7 +251,7 @@ class ScClaudeCombined(ScClaudeSmarterCompact):
 class ScClaudeMask(ScClaudeSmarterCompact):
     """Keep older tool calls, mask their results (CONTEXT_MASK_OBSERVATIONS=1, the proxy default; wins over prose strip)."""
 
-    DEFAULT_ENV = {"CONTEXT_MASK_OBSERVATIONS": "1", "CONTEXT_CLEAR_KEEP_RESULTS": "0"}
+    DEFAULT_ENV = {"CONTEXT_MASK_OBSERVATIONS": "1", "CONTEXT_CLEAR_KEEP_RESULTS": "0", "CONTEXT_SCRATCHPAD": "0"}
 
 
 class ScClaudeClear(ScClaudeSmarterCompact):
@@ -259,7 +259,7 @@ class ScClaudeClear(ScClaudeSmarterCompact):
     keeping every turn and call; turns drop only when that is not enough."""
 
     REQUIRES_PROXY_SETTINGS = ("CONTEXT_CLEAR_KEEP_RESULTS",)
-    DEFAULT_ENV = {"CONTEXT_CLEAR_KEEP_RESULTS": "10", "CONTEXT_MASK_OBSERVATIONS": "0"}
+    DEFAULT_ENV = {"CONTEXT_CLEAR_KEEP_RESULTS": "10", "CONTEXT_MASK_OBSERVATIONS": "0", "CONTEXT_SCRATCHPAD": "0"}
 
 
 class ScClaudeNoStrip(ScClaudeSmarterCompact):

@@ -22,7 +22,7 @@ const v2 = path.join(repo, "src", "v2.mjs");
 test("recall MCP server exists and lists the session-store tools", async () => {
   assert.ok(fs.existsSync(server), `missing MCP server entrypoint: ${server}`);
   const child = spawn(process.execPath, [server], {
-    env: { ...process.env, OPENMEM_STATE_DIR: fs.mkdtempSync(path.join(os.tmpdir(), "sc-recall-test-")) },
+    env: { ...process.env, CONTEXT_SCRATCHPAD: "", OPENMEM_STATE_DIR: fs.mkdtempSync(path.join(os.tmpdir(), "sc-recall-test-")) },
     stdio: ["pipe", "pipe", "pipe"],
   });
   const lines = [];
@@ -57,7 +57,7 @@ test("recall MCP server exists and lists the session-store tools", async () => {
     const tools = lines.map(toolsReply).find(Boolean);
     assert.deepEqual(
       tools.map((t) => t.name).sort(),
-      ["context_status", "smart_compact_get", "smart_compact_search", "smart_compact_sql"],
+      ["context_status", "smart_compact_get", "smart_compact_scratchpad", "smart_compact_search", "smart_compact_sql"],
     );
   } finally {
     child.kill();

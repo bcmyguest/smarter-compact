@@ -25,7 +25,8 @@ Each request goes through four steps ([context proxy](context-proxy.md) has impl
 | Tool-result compression | A tool result exceeds `compress_over_tokens` | First 40 and last 20 lines stay, behind a `smart_compact_get(id=...)` header; the full text goes to `blobs/<id>.txt` |
 | Store | Every request | Each message goes into `sessions/<sid>.db` once, keyed by a chained fingerprint, with an `in_context` flag ([context store](context-store.md#session-database)) |
 | Trim | The request reaches `trim_at_tokens`, or the user typed `/smarter-compact:compact` | Turns before the last real user turn, and the oldest tool exchanges of a long in-flight turn, leave the context and their rows get `in_context = 0`; a pointer naming `smart_compact_search` / `smart_compact_sql` replaces them. System prompt, tools, the first user turn, the reply before the last user turn, that turn and at least its last 3 tool exchanges stay verbatim, except that signed thinking leaves every kept assistant message but the latest ([why](context-store.md#trim)) |
-| Scratchpad (`CONTEXT_SCRATCHPAD=1`, default off) | The prompt passes `CONTEXT_SCRATCHPAD_NUDGE_AT` of the threshold, then the next trim | One nudge, appended to the newest user or tool message, asks the agent to create the pad once (goal, status, decisions, facts, next step) with `smart_compact_scratchpad` and to update it only on a big change; every trim note opens with the current pad (≤2,500 chars) in a `<compact-scratchpad>` block labelled possibly stale, and snapshots it |
+| [Tool-result clearing and masking](clearing.md) (on by default) | Part of each trim | Every tool result but the 10 newest, and the results in the kept turns before the latest run, become a short placeholder; the calls stay, and each result stays in the store |
+| [Scratchpad](scratchpad.md) (on by default; `CONTEXT_SCRATCHPAD=0` turns it off) | The prompt passes `CONTEXT_SCRATCHPAD_NUDGE_AT` of the threshold, then the next trim | One nudge, appended to the newest user or tool message, asks the agent to create the pad once (goal, status, decisions, facts, next step) with `smart_compact_scratchpad` and to update it only on a big change; every trim note opens with the current pad (≤2,500 chars) in a `<compact-scratchpad>` block labelled possibly stale, and snapshots it |
 | Standing instruction | Every request | A constant system-prompt note tells the agent to call `smart_compact_search` before answering from content it cannot see |
 
 The cut is **sticky**: later requests with the same history get the same rewrite byte for byte, so the prompt cache keeps hitting. A trim invalidates the cache once.
@@ -66,7 +67,7 @@ Which agents trim on the wire, which trim in-process, and which get search tools
 | `smart_compact_sql` | Read-only SQL on one session database |
 | `smart_compact_get` | Text of a compressed tool result by blob id, `BLOB_PAGE_CHARS` (12,000) per call; `offset`/`next_offset` page, `max_chars` (≤100,000) asks for more at once |
 | `context_status` | Trims, fail-opens, writer versions, usage summary |
-| `smart_compact_scratchpad` | Only with `CONTEXT_SCRATCHPAD=1`: `view`, `create`, `str_replace`, `insert` on the session's pad, capped at 2,500 characters |
+| `smart_compact_scratchpad` | Unless `CONTEXT_SCRATCHPAD=0`: `view`, `create`, `str_replace`, `insert` on the session's pad, capped at 2,500 characters |
 
 Wire format and SQL rules: [context store](context-store.md).
 
@@ -76,6 +77,8 @@ Every setting, its default and the component that reads it: [configuration refer
 
 ## More
 
+- [Tool-result clearing and masking](clearing.md) — what a trim replaces instead of deleting turns
+- [Scratchpad](scratchpad.md) — the agent's notes, shown in every trim note
 - [Context proxy](context-proxy.md) — LiteLLM rewrite pipeline
 - [Context store](context-store.md) — schema, trim rules, search tools
 - [OpenCode](opencode.md) — plugin install
