@@ -442,6 +442,16 @@ At 29 of the trials the scratchpad's cost difference was −13% (p = 0.22). Earl
 
 **Decision.** The scratchpad is on by default from this run. The evidence is the cost difference in one run of 2–3 trials per task; no comparison shows a pass-rate difference, and the cost gap is driven by trajectory length, which varies 2–3× within a task.
 
+## Headroom for huge tool results (2026-11-07)
+
+**Question.** Would [headroom-ai](https://github.com/headroomlabs-ai/headroom)'s content router compress tool results over `compress_over_tokens` better than the head/tail cut, with `smart_compact_get` as the only way back? Its retrieval (`ccr_enabled`, `ccr_inject_marker`) and ML text model (`enable_kompress`) were off, so its output had no retrieval marker and was deterministic.
+
+**Offline.** On sample outputs, headroom-ai 0.43.1: a 600-line log went from 34k to 2.3k characters with every ERROR line kept; a 400-row JSON array became a table at 32% of its size, all rows kept; grep output fell to 41%. pytest output, source code and `ls -la` came back unchanged. The generic `UniversalCompressor` was worse than head/tail: it dropped five of six ERROR lines from the log.
+
+**Run.** `tb21-h55-headroom`: the scratchpad arm with headroom-ai 0.41.0 in the proxy's Python, no rtk, eight tasks, one attempt each; 6 of 8 passed. Only four tool results crossed the 4,000-token threshold in all eight trials, and headroom changed none of them: they were progress and build logs, which it leaves alone. In the containers it also lacked ONNX Runtime and used its pure-Python content detection. The run therefore measured the scratchpad without rtk, not headroom.
+
+**Decision.** Not integrated. On these tasks huge tool results are rare and mostly logs; rtk, which filters output where the command runs, gave the measured cost cut. Installing headroom-ai upgrades litellm, which broke a running proxy until the bench pinned litellm's version.
+
 ## Limitations
 
 - The primary run E uses Haiku 5.5 and two or three seeds per cell. Sonnet has two paired seeds on one task. Earlier run B baselines have one or two seeds per cell.
