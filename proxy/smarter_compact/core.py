@@ -64,6 +64,8 @@ SCRATCHPAD_TOOL = "smart_compact_scratchpad"
 # Heads the pad in every trim note; the pad persists across trims, so it may predate recent work.
 SCRATCHPAD_LABEL = "Your scratchpad, kept across trims (possibly stale; update it if the goal, plan or a key fact changed):"
 _SCRATCHPAD_TOOL_RE = re.compile(r"(?:^|[^a-z0-9])smart_compact_scratchpad$")
+# Start of the message in which Claude Code names the MCP tools it defers behind ToolSearch.
+DEFERRED_TOOLS_HEAD = "deferred tools are now available via"
 # Tool name -> input keys naming the file it writes (Claude Code's file tools).
 EDIT_TOOL_PATHS = {"Write": ("file_path",), "Edit": ("file_path",), "MultiEdit": ("file_path",),
                    "NotebookEdit": ("notebook_path", "file_path")}
@@ -89,12 +91,12 @@ def recall_tool_names(tools):
         if isinstance(name, str) and _RECALL_TOOL_RE.search(name):
             found.append(name)
         deferred = deferred or name == TOOL_SEARCH
-    pad = next((n for n in request_tool_names({"tools": tools}) if _SCRATCHPAD_TOOL_RE.search(n)), None)
-    if pad is None:
-        pad = CLAUDE_CODE_PREFIX + SCRATCHPAD_TOOL if deferred else SCRATCHPAD_TOOL
-    # The scratchpad tool, and how to load it when deferred ("" when offered or never loadable).
-    scratchpad = {"scratchpad": pad, "scratchpad_load": f'{TOOL_SEARCH} with query "select:{pad}"'
-                  if deferred and pad == CLAUDE_CODE_PREFIX + SCRATCHPAD_TOOL else ""}
+    offered_pad = next((n for n in request_tool_names({"tools": tools}) if _SCRATCHPAD_TOOL_RE.search(n)), None)
+    pad = offered_pad or (CLAUDE_CODE_PREFIX + SCRATCHPAD_TOOL if deferred else SCRATCHPAD_TOOL)
+    # The scratchpad tool, whether the request offers it, and how to load it when deferred ("" when offered or never
+    # loadable).
+    scratchpad = {"scratchpad": pad, "scratchpad_offered": offered_pad is not None,
+                  "scratchpad_load": f'{TOOL_SEARCH} with query "select:{pad}"' if deferred and not offered_pad else ""}
     if not found and deferred:
         search, sql = CLAUDE_CODE_PREFIX + "smart_compact_search", CLAUDE_CODE_PREFIX + "smart_compact_sql"
         return {"search": search, "sql": sql, "offered": found,
@@ -253,6 +255,21 @@ def scratchpad_nudge(sid, names):
         f"No logs, code or command output. It is kept and shown after every trim; if you already have one, update it "
         f"(str_replace) only when the goal, plan or a key fact changed.</compact-scratchpad-nudge>"
     )
+
+
+def scratchpad_available(names, data):
+    """True when the request offers the scratchpad tool, or Claude Code's deferred-tool list names it."""
+    if names.get("scratchpad_offered"):
+        return True
+    if not names.get("scratchpad_load"):
+        return False
+    texts = [data.get("system")] + [x.get("content") for x in data.get("messages") or [] if isinstance(x, dict)]
+    for content in texts:
+        for text in [content] if isinstance(content, str) else [b.get("text") for b in content or []
+                                                                 if isinstance(b, dict)]:
+            if isinstance(text, str) and DEFERRED_TOOLS_HEAD in text and names["scratchpad"] in text:
+                return True
+    return False
 
 
 def scratchpad_block(text):
@@ -809,9 +826,10 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
         elif thread and cut is None and root not in threads:
             store.save_trim(sid, state)
         nudge = None
+        pad_names = recall_tool_names(request_tool_names(data)) if settings.scratchpad else None
         if settings.scratchpad and not trim and not (threads.get(root) or {}).get("nudge_fp") \
-                and tokens >= trim_at * settings.scratchpad_nudge_at:
-            text = scratchpad_nudge(sid, recall_tool_names(request_tool_names(data)))
+                and tokens >= trim_at * settings.scratchpad_nudge_at and scratchpad_available(pad_names, data):
+            text = scratchpad_nudge(sid, pad_names)
             if _nudged(adapter, items, len(items) - 1, text) is not items:
                 # Recorded on the newest item, so every later request re-renders it unchanged.
                 entry = threads.setdefault(root, {"format": adapter.name, "updated": _utc_now()})

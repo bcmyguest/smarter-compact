@@ -80,6 +80,8 @@ const SCRATCHPAD_TOOL = "smart_compact_scratchpad";
 // Heads the pad in every trim note; same as SCRATCHPAD_LABEL in proxy core.py.
 export const SCRATCHPAD_LABEL = "Your scratchpad, kept across trims (possibly stale; update it if the goal, plan or a key fact changed):";
 const SCRATCHPAD_TOOL_RE = /(?:^|[^a-z0-9])smart_compact_scratchpad$/;
+// Start of the message in which Claude Code names the MCP tools it defers; same as DEFERRED_TOOLS_HEAD in proxy core.py.
+const DEFERRED_TOOLS_HEAD = "deferred tools are now available via";
 /** The names the recall tools actually have in a given request.
  *
  * Every harness namespaces MCP tools its own way, and the separator is not always `_`: OpenCode
@@ -115,8 +117,12 @@ export function recallToolNames(tools) {
   const offeredPad = entries.map((t) => (typeof t === "string" ? t : t?.name))
     .find((n) => typeof n === "string" && SCRATCHPAD_TOOL_RE.test(n));
   const pad = offeredPad || (deferred ? `${CLAUDE_CODE_PREFIX}${SCRATCHPAD_TOOL}` : SCRATCHPAD_TOOL);
-  // The scratchpad tool, and how to load it when deferred ("" when offered or never loadable).
-  const scratchpad = { scratchpad: pad, scratchpadLoad: deferred && !offeredPad ? `${TOOL_SEARCH} with query "select:${pad}"` : "" };
+  // The scratchpad tool, whether the request offers it, and how to load it when deferred ("" when offered or never loadable).
+  const scratchpad = {
+    scratchpad: pad,
+    scratchpadOffered: Boolean(offeredPad),
+    scratchpadLoad: deferred && !offeredPad ? `${TOOL_SEARCH} with query "select:${pad}"` : "",
+  };
   if (!offered.length && deferred) {
     const search = `${CLAUDE_CODE_PREFIX}smart_compact_search`;
     const sql = `${CLAUDE_CODE_PREFIX}smart_compact_sql`;
@@ -851,6 +857,17 @@ export function scratchpadNudge(sid, names) {
     + "(str_replace) only when the goal, plan or a key fact changed.</compact-scratchpad-nudge>";
 }
 
+/** True when the request offers the scratchpad tool, or Claude Code's deferred-tool list names it; proxy scratchpad_available. */
+export function scratchpadAvailable(names, messages) {
+  if (names.scratchpadOffered) return true;
+  if (!names.scratchpadLoad) return false;
+  return (messages || []).some((m) => {
+    const content = m?.content;
+    const texts = typeof content === "string" ? [content] : Array.isArray(content) ? content.map((b) => b?.text) : [];
+    return texts.some((t) => typeof t === "string" && t.includes(DEFERRED_TOOLS_HEAD) && t.includes(names.scratchpad));
+  });
+}
+
 /** The trim note's labelled block carrying the agent's pad, capped at SCRATCHPAD_MAX_CHARS; proxy scratchpad_block. */
 export function scratchpadBlock(text) {
   return `${SCRATCHPAD_LABEL}\n<compact-scratchpad>\n${text.slice(0, SCRATCHPAD_MAX_CHARS)}\n</compact-scratchpad>`;
@@ -1296,7 +1313,8 @@ async function trimSession(request, settings, deps, { original, sid, store, item
       } else if (thread && cut === null && !threads.has(root)) store.saveTrim(sid, state);
     } else if (thread && cut === null && !threads.has(root)) store.saveTrim(sid, state);
     let nudge = null;
-    if (settings.scratchpad && !trim && !threads.get(root)?.nudge_fp && tokens >= trimAt * settings.scratchpadNudgeAt) {
+    if (settings.scratchpad && !trim && !threads.get(root)?.nudge_fp && tokens >= trimAt * settings.scratchpadNudgeAt
+        && scratchpadAvailable(toolNames, original)) {
       const text = scratchpadNudge(sid, toolNames);
       const last = items.length - 1;
       if (nudged(items, last, text) !== items) {

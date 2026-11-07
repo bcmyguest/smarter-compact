@@ -44,14 +44,19 @@ function withHome(fn) {
   };
 }
 
-function run(home, messages, env = {}) {
+// Claude Code's message naming the MCP tools it defers behind ToolSearch.
+const DEFERRED_LIST = "The following deferred tools are now available via ToolSearch. Their schemas are NOT loaded:\n"
+  + "mcp__smarter-compact__smart_compact_search\nmcp__smarter-compact__smart_compact_scratchpad";
+
+function run(home, messages, env = {}, tools = undefined) {
   const settings = trimSettings({ CONTEXT_TRIM_AT_TOKENS: BIG, CONTEXT_TRIM_TO_TOKENS: "3000000", CONTEXT_CHARS_PER_TOKEN: "1",
     CONTEXT_COMPRESS_OVER_TOKENS: "0", CONTEXT_STANDING_INSTRUCTION: "0", CONTEXT_PROGRESS_NOTE: "0",
     CONTEXT_MASK_OBSERVATIONS: "0", SMARTER_COMPACT_STATE_DIR: home, ...env }, home);
-  return trimContext({ sessionID: SID, messages: structuredClone(messages) }, settings);
+  return trimContext({ sessionID: SID, messages: structuredClone(messages), ...(tools ? { tools } : {}) }, settings);
 }
 
-const on = (home, messages) => run(home, messages, { CONTEXT_SCRATCHPAD: "1", CONTEXT_SCRATCHPAD_NUDGE_AT: LOW });
+const on = (home, messages, tools = [{ name: "smart_compact_scratchpad" }]) =>
+  run(home, messages, { CONTEXT_SCRATCHPAD: "1", CONTEXT_SCRATCHPAD_NUDGE_AT: LOW }, tools);
 const ctx = (home) => path.join(home, "context");
 const padFile = (home, name = `${SID}.md`) => path.join(ctx(home), "scratchpad", name);
 const nudgedAt = (view) => view.flatMap((m, j) => (JSON.stringify(m).includes(NUDGE_TAG) ? [j] : []));
@@ -98,6 +103,17 @@ test("no nudge below the threshold or on an assistant item", withHome(async (hom
   assert.deepEqual(nudgedAt(view), []);
   view = await on(home, history(3));
   assert.deepEqual(nudgedAt(view), []);
+}));
+
+test("no nudge when the request offers no scratchpad tool", withHome(async (home) => {
+  assert.deepEqual(nudgedAt(await on(home, ask(history(3), 0), [])), []);
+}));
+
+test("a nudge when Claude Code defers the tool behind ToolSearch", withHome(async (home) => {
+  const msgs = [textMsg("user", DEFERRED_LIST), ...ask(history(3), 0)];
+  const view = await on(home, msgs, [{ name: "ToolSearch" }]);
+  assert.deepEqual(nudgedAt(view), [msgs.length - 1]);
+  assert.match(JSON.stringify(view.at(-1)), /load it first by calling ToolSearch with query \\"select:mcp__smarter-compact__smart_compact_scratchpad\\"/);
 }));
 
 test("the pad is injected capped, archived, and the nudge re-arms", withHome(async (home) => {

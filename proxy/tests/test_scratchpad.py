@@ -18,6 +18,9 @@ from smarter_compact.core import (  # noqa: E402
 NUDGE_TAG = "<compact-scratchpad-nudge>"
 # Any prompt passes this fraction of BIG, so the nudge fires without a trim.
 LOW = 1e-6
+# Claude Code's message naming the MCP tools it defers behind ToolSearch.
+DEFERRED_LIST = ("The following deferred tools are now available via ToolSearch. Their schemas are NOT loaded:\n"
+                 "mcp__smarter-compact__smart_compact_search\nmcp__smarter-compact__smart_compact_scratchpad")
 
 
 def ask(msgs, t):
@@ -45,8 +48,9 @@ class ScratchpadTests(Base):
         finally:
             conn.close()
 
-    def on(self, msgs, **kw):
-        return self.run_req(anth_request(copy.deepcopy(msgs)), scratchpad=True, scratchpad_nudge_at=LOW, **kw)
+    def on(self, msgs, tools=({"name": "Bash"}, {"name": "smart_compact_scratchpad"}), **kw):
+        request = {**anth_request(copy.deepcopy(msgs)), "tools": [dict(t) for t in tools]}
+        return self.run_req(request, scratchpad=True, scratchpad_nudge_at=LOW, **kw)
 
     def nudged(self, out):
         return [j for j, m in enumerate(out["messages"]) if NUDGE_TAG in json.dumps(m)]
@@ -70,6 +74,18 @@ class ScratchpadTests(Base):
         self.assertEqual(self.nudged(out), [])
         out = self.on(anth_history(3))
         self.assertEqual(self.nudged(out), [])
+
+    def test_no_nudge_when_the_request_offers_no_scratchpad_tool(self):
+        out = self.on(ask(anth_history(3), 0), tools=({"name": "Bash"},))
+        self.assertEqual(self.nudged(out), [])
+        self.assertEqual(self.events("nudge"), [])
+
+    def test_nudge_when_claude_code_defers_the_tool_behind_tool_search(self):
+        msgs = [{"role": "system", "content": [{"type": "text", "text": DEFERRED_LIST}]}, *ask(anth_history(3), 0)]
+        out = self.on(msgs, tools=({"name": "Bash"}, {"name": "ToolSearch"}))
+        self.assertEqual(self.nudged(out), [len(msgs) - 1])
+        self.assertIn('load it first by calling ToolSearch with query "select:mcp__smarter-compact__smart_compact_scratchpad"',
+                      out["messages"][-1]["content"][-1]["text"])
 
     def test_pad_is_injected_capped_archived_and_the_nudge_rearms(self):
         msgs = ask(anth_history(4), 0)

@@ -23,7 +23,7 @@ When the estimated prompt passes `CONTEXT_SCRATCHPAD_NUDGE_AT` (default `0.75`) 
 - facts it would otherwise re-discover (paths, commands, values)
 - the exact next step
 
-and to leave out logs, code and command output. If a pad exists, it asks for an update only when the goal, plan or a key fact changed. The nudge re-arms after each trim. A request that trims sends no nudge, so a single step that jumps past the threshold skips it for that cycle.
+and to leave out logs, code and command output. If a pad exists, it asks for an update only when the goal, plan or a key fact changed. The nudge re-arms after each trim. A request that trims sends no nudge, so a single step that jumps past the threshold skips it for that cycle. Nor does a request that cannot reach the tool: the nudge needs `smart_compact_scratchpad` in the request's tools, or, when Claude Code defers MCP tools behind ToolSearch, named in its deferred-tool list.
 
 ## Tool
 
