@@ -2,16 +2,14 @@
 
 The scratchpad is a small notes file the agent keeps for its own task state. Every trim note shows it, so the goal, plan and key facts survive a trim even when the turns that held them leave the context. It is on by default; `CONTEXT_SCRATCHPAD=0` turns it off, set for both the proxy (or the OpenCode 2 plugin) and the MCP server.
 
-```text
-prompt ≥ 0.75 × trim_at, no nudge this cycle
-  → proxy appends <compact-scratchpad-nudge> to the newest item
-agent → smart_compact_scratchpad(command="create", ...)       → scratchpad/<sid>.md
-prompt ≥ trim_at
-  → trim note opens with the pad (labelled possibly stale); copy saved as <sid>.<n>.md
-  → pad file stays; the nudge re-arms
-agent → str_replace / create when the goal, plan or a key fact changes
-next trim → shows the pad again, rewritten or not
-```
+<p align="center">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="media/scratchpad-dark.gif" />
+<img src="media/scratchpad.gif" alt="Animation: the model context fills past nudge 0.75; a compact-scratchpad-nudge block attaches to the newest tool result; the agent calls smart_compact_scratchpad create and the pad fills with goal, status, decisions, facts and next step; at trim_at_tokens tool results 1 to 3 leave the context and the trim note shows the pad, labelled possibly stale, while the pad file stays and a copy is saved as sid.1.md; the nudge re-arms, the agent rewrites the next step with str_replace, and the next trim shows the updated pad and saves sid.2.md" width="720" />
+</picture>
+<br />
+<sub>The nudge prompts the agent to write its pad; every trim note carries the pad, and the pad file outlives each trim.</sub>
+</p>
 
 ## Nudge
 
