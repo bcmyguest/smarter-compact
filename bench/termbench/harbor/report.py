@@ -90,6 +90,15 @@ def trim_stats(trial):
     return trims, dropped, nudges, padded
 
 
+def partial(trial):
+    """(passed, total) verifier tests from the trial's CTRF report; None without one."""
+    try:
+        s = json.load(open(os.path.join(trial, "verifier/ctrf.json")))["results"]["summary"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return (s.get("passed", 0), s.get("tests", 0)) if s.get("tests") else None
+
+
 def mechanism(trial, arm):
     """Whether the arm's own mechanism fired: "yes", "no", or "-" for arms without one.
 
@@ -148,6 +157,7 @@ def load(job):
             "recall": recall, "recall_err": recall_err, "econn": econn, "compacts": compacts, "offered": offered,
             "nudges": nudges, "pad_calls": pad_calls, "padded": padded, "mech": mechanism(trial, arm),
             "restarts": open(watchdog).read().count("restarting") if os.path.exists(watchdog) else 0,
+            "partial": partial(trial),
         })
     return rows, running
 
@@ -164,6 +174,9 @@ def totals(rows):
         t["trimmed_tasks"] += r["trims"] > 0
         t["econn_trials"] += r["econn"] > 0
         t["offered"] += r["offered"]
+        if r["partial"]:
+            t["part_sum"] += r["partial"][0] / r["partial"][1]
+            t["part_n"] += 1
     return out
 
 
@@ -174,13 +187,14 @@ def has_scratchpad(rows):
 
 def print_totals(title, rows, arms=None, pad=False):
     print(f"\n{title}")
-    print(f"{'arm':11} {'pass/n':>7} {'input':>11} {'output':>9} {'cost':>8} {'trims':>6} {'trimmed':>8} "
+    print(f"{'arm':11} {'pass/n':>7} {'part':>5} {'input':>11} {'output':>9} {'cost':>8} {'trims':>6} {'trimmed':>8} "
           f"{'recall':>7} {'rec_err':>8} {'restarts':>9} {'econn':>6} {'compacts':>9} {'tools':>6}"
           + (f" {'nudges':>6} {'padcall':>7} {'padded':>6}" if pad else ""))
     t = totals(rows)
     for arm in arms or arms_in(rows):
         a = t[arm]
-        print(f"{arm:11} {a['pass']:>3}/{a['n']:<3} {a['in']:>11,} {a['out']:>9,} {a['cost']:>8.3f} {a['trims']:>6} "
+        part = f"{a['part_sum'] / a['part_n']:.2f}" if a["part_n"] else "-"
+        print(f"{arm:11} {a['pass']:>3}/{a['n']:<3} {part:>5} {a['in']:>11,} {a['out']:>9,} {a['cost']:>8.3f} {a['trims']:>6} "
               f"{a['trimmed_tasks']:>8} {a['recall']:>7} {a['recall_err']:>8} {a['restarts']:>9} {a['econn_trials']:>6} "
               f"{a['compacts']:>9} {a['offered']:>6}"
               + (f" {a['nudges']:>6} {a['pad_calls']:>7} {a['padded']:>6}" if pad else ""))
@@ -195,11 +209,13 @@ def main():
     pad = has_scratchpad(rows)
 
     # pad: scratchpad nudges sent / scratchpad tool calls / trims that carried a pad.
-    print(f"{'task':34} {'arm':11} {'rew':>4} {'peak':>8} {'input':>10} {'output':>8} {'cost':>7} "
+    # part: verifier tests passed / run (CTRF); the mean of that fraction in the totals.
+    print(f"{'task':34} {'arm':11} {'rew':>4} {'part':>5} {'peak':>8} {'input':>10} {'output':>8} {'cost':>7} "
           f"{'trims':>5} {'drop':>5} {'recall':>6} " + (f"{'pad':>7} " if pad else "") + f"{'mech':>4} exc")
     for r in sorted(rows, key=lambda r: (r["task"], r["arm"])):
         cell = f"{r['nudges']}/{r['pad_calls']}/{r['padded']}"
-        print(f"{r['task'][:34]:34} {r['arm']:11} {r['reward'] if r['reward'] is not None else '-':>4} {r['peak']:>8,} "
+        part = f"{r['partial'][0]}/{r['partial'][1]}" if r["partial"] else "-"
+        print(f"{r['task'][:34]:34} {r['arm']:11} {r['reward'] if r['reward'] is not None else '-':>4} {part:>5} {r['peak']:>8,} "
               f"{r['in']:>10,} {r['out']:>8,} {r['cost']:>7.3f} {r['trims']:>5} {r['dropped']:>5} {r['recall']:>6} "
               + (f"{cell:>7} " if pad else "") + f"{r['mech']:>4} {r['exc']}")
 
