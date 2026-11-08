@@ -11,6 +11,8 @@ HEAD_CHARS = 4000
 TAIL_CHARS = 2000
 MARKER_PREFIX = "[smarter-compact: tool result compressed,"
 _ID_RE = re.compile(r'smart_compact_get\(id="([0-9a-f]{16})"\)')
+# Start of every cleared or masked result's placeholder; detection matches on it (no quote: JSON keeps it as is).
+MASK_PREFIX = "[smarter-compact: tool output cleared to save context;"
 
 
 def blob_id(text):
@@ -27,6 +29,16 @@ def compressed_blob_id(text):
         return None
     m = _ID_RE.search(text.split("\n", 1)[0])
     return m.group(1) if m else None
+
+
+def result_blob_id(text):
+    """Blob holding a tool result's full text: the compressed form's own blob, else blob_id(text)."""
+    return compressed_blob_id(text) or blob_id(text)
+
+
+def mask_placeholder(text):
+    """A cleared result's text, naming its blob (ARC-style id recall); a function of text, so cache-stable."""
+    return f'{MASK_PREFIX} smart_compact_get(id="{result_blob_id(text)}") returns it]'
 
 
 def compress_text(text, over_tokens):

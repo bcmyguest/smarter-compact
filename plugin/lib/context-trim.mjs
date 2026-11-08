@@ -698,16 +698,32 @@ export function render(items, cut, note, first = null, gap = null, decorate = (m
   return out;
 }
 
-/** The message with each tool result whose id is in ids (every one when ids is null) and longer than MASK_PLACEHOLDER replaced by it; itself when none changes. */
+/** The message with each tool result whose id is in ids (every one when ids is null) and longer than its maskPlaceholder replaced by it; itself when none changes. */
 function maskResults(message, ids) {
   const content = parts(message);
   let next = null;
   content.forEach((p, i) => {
-    if (p?.type !== "tool-result" || (ids && !ids.has(p.id)) || cpLen(resultText(p.result)) <= cpLen(MASK_PLACEHOLDER)) return;
+    if (p?.type !== "tool-result" || (ids && !ids.has(p.id))) return;
+    const text = resultText(p.result);
+    const placeholder = maskPlaceholder(text);
+    if (cpLen(text) <= cpLen(placeholder)) return;
     next ??= [...content];
-    next[i] = { ...p, result: { type: p.result?.type === "error" ? "error" : "text", value: MASK_PLACEHOLDER } };
+    next[i] = { ...p, result: { type: p.result?.type === "error" ? "error" : "text", value: placeholder } };
   });
   return next ? { ...message, content: next } : message;
+}
+
+/** Write blobs/<id>.txt for each result the view shows as its maskPlaceholder, before the request leaves. Proxy _write_masked_blobs. */
+function writeMaskedBlobs(store, sent, shown) {
+  for (const [j, x] of shown) {
+    if (x === sent[j]) continue;
+    const now = new Map(parts(x).filter((p) => p?.type === "tool-result").map((p) => [p.id, resultText(p.result)]));
+    for (const p of parts(sent[j])) {
+      if (p?.type !== "tool-result" || !now.has(p.id)) continue;
+      const text = resultText(p.result);
+      if (now.get(p.id) === maskPlaceholder(text) && !compressedBlobId(text)) store.writeBlob(blobId(text), text);
+    }
+  }
 }
 
 /** The message without its tool-call and tool-result parts whose id is in ids: itself when it has none, null when nothing is left. */
@@ -725,7 +741,7 @@ function mergeMessages(a, b) {
 }
 
 /**
- * The message with every tool result longer than MASK_PLACEHOLDER replaced by it when message j sits before the
+ * The message with every tool result longer than its maskPlaceholder replaced by it when message j sits before the
  * clear bound (the first user turn and pinned messages aside); the message itself otherwise. Proxy _cleared.
  */
 export function cleared(message, j, clear, first) {
@@ -833,13 +849,18 @@ export function addStandingInstruction(system, settings, names) {
   return true;
 }
 
-/** A cleared tool result's text; constant, so it renders the same bytes on every request. Same as core.MASK_PLACEHOLDER. */
-export const MASK_PLACEHOLDER = "[smarter-compact: tool output masked to save context; the call is kept and the output is stored, "
-  + "see the trim pointer]";
+/** Start of every cleared or masked result's placeholder; detection matches on it. Same as compress.MASK_PREFIX. */
+export const MASK_PREFIX = "[smarter-compact: tool output cleared to save context;";
 
-/** How to get back a result shown as MASK_PLACEHOLDER; same text as mask_text in proxy/smarter_compact/core.py. */
+/** A cleared result's text, naming its blob; a function of text, so cache-stable. Same as compress.mask_placeholder. */
+export function maskPlaceholder(text) {
+  return `${MASK_PREFIX} smart_compact_get(id="${compressedBlobId(text) || blobId(text)}") returns it]`;
+}
+
+/** How to get back a result shown as a maskPlaceholder; same text as mask_text in proxy/smarter_compact/core.py. */
 export function maskText(sid, names = LEGACY_RECALL_NAMES) {
-  return `Older tool outputs in your context read "${MASK_PLACEHOLDER}". To get one back, find its call with `
+  return `Older tool outputs in your context read "${MASK_PREFIX} smart_compact_get(id="<id>") returns it]". `
+    + "Each names its own id: smart_compact_get with that id returns the full output. If that fails, find its call with "
     + `${names.search}(session_id="${sid}", query=<words from the call>); its output is the first tool_result `
     + `row of the same tool after that seq: ${names.sql}(session_id="${sid}", sql="SELECT text FROM messages `
     + "WHERE kind = 'tool_result' AND name = '<tool>' AND seq > <call seq> ORDER BY seq LIMIT 1\").";
@@ -1280,7 +1301,7 @@ async function trimSession(request, settings, deps, { original, sid, store, item
         // The pointer counts every message absent from the view: dropped, or emptied by the strip.
         dropped = items.length - nextShown.size;
         const masked = (mode === "mask" || nextClearAt !== null) && [...nextShown].some(([j, x]) => x !== items[j]
-          && JSON.stringify(x.content ?? null).includes(MASK_PLACEHOLDER));
+          && JSON.stringify(x.content ?? null).includes(MASK_PREFIX));
         if (dropped || !masked) {
           note = pointerText(sid, dropped, toolNames);
           if (settings.progressNote) note = withProgress(items, next, nextGap, first, settings, note);
@@ -1331,6 +1352,7 @@ async function trimSession(request, settings, deps, { original, sid, store, item
       }
     }
     const ts = utcNow(deps.now?.());
+    writeMaskedBlobs(store, sent, shown);
     storeMessages(store, sid, settings, original, sent, cut, shown, ts, deps);
     if (trim) recordEvent(store, sid, "trim", trim, ts);
     if (nudge) recordEvent(store, sid, "nudge", nudge, ts);

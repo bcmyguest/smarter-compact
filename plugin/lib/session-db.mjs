@@ -764,6 +764,10 @@ export function referencedBlobIds(sessionsDir) {
       for (const row of db.prepare("SELECT DISTINCT blob_id FROM messages WHERE blob_id IS NOT NULL").all()) {
         if (row.blob_id) ids.add(row.blob_id);
       }
+      // A cleared result's placeholder names blobId(text) of its stored row (context-trim.mjs blobId).
+      for (const row of db.prepare("SELECT text FROM messages WHERE kind = 'tool_result' AND blob_id IS NULL").iterate()) {
+        ids.add(crypto.createHash("sha256").update(row.text, "utf8").digest("hex").slice(0, 16));
+      }
     } catch {
       try { db?.close(); } catch { /* already broken */ }
       return null;

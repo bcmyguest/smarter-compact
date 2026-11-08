@@ -6,6 +6,8 @@ import sqlite3
 import time
 from pathlib import Path
 
+from .compress import blob_id
+
 DAY_S = 86400
 STAMP = ".ttl-stamp"
 # Longest first, so `x.trim.json` groups under `x`, not `x.trim`.
@@ -32,7 +34,8 @@ def _sqlite_header(path):
 
 
 def referenced_blob_ids(sessions_dir):
-    """Distinct messages.blob_id values across remaining session databases, or None if any DB is unreadable.
+    """Distinct messages.blob_id values, plus blob_id(text) of each other tool_result row (the blob a cleared
+    result's placeholder names), across remaining session databases, or None if any DB is unreadable.
 
     A missing sessions directory means no references (empty set). Other OS errors fail closed (None).
     """
@@ -54,6 +57,9 @@ def referenced_blob_ids(sessions_dir):
                 for (bid,) in con.execute("SELECT DISTINCT blob_id FROM messages WHERE blob_id IS NOT NULL"):
                     if bid:
                         ids.add(bid)
+                # A cleared result's placeholder names blob_id(text) of its stored row.
+                for (text,) in con.execute("SELECT text FROM messages WHERE kind = 'tool_result' AND blob_id IS NULL"):
+                    ids.add(blob_id(text))
             finally:
                 con.close()
         except sqlite3.Error:

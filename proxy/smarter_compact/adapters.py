@@ -7,7 +7,7 @@ its inputs: methods that change an item return a shallow copy.
 import json
 import re
 
-from .compress import compress_text, compressed_blob_id
+from .compress import compress_text, compressed_blob_id, mask_placeholder
 
 _REMINDER_RE = re.compile(r"<system-reminder>.*?</system-reminder>", re.DOTALL)
 _RESULT_TYPES = ("function_call_output", "custom_tool_call_output", "local_shell_call_output")
@@ -199,16 +199,22 @@ class AnthropicAdapter:
             return item
         return {**item, "content": kept} if kept else None
 
-    def masked_results(self, item, ids, placeholder):
+    def masked_results(self, item, ids):
         """The message with the content of each tool_result whose id is in ids and whose content is longer than
-        placeholder replaced by placeholder (other keys kept): the same object when none changes."""
+        its mask_placeholder replaced by it (other keys kept): the same object when none changes."""
         content = item.get("content")
         if not isinstance(content, list):
             return item
-        out = [{**b, "content": placeholder} if isinstance(b, dict) and b.get("type") == "tool_result"
-               and b.get("tool_use_id") in ids and len(_compact_json(b.get("content", ""))) > len(placeholder)
-               else b for b in content]
+        out = [self._masked(b) if isinstance(b, dict) and b.get("type") == "tool_result"
+               and b.get("tool_use_id") in ids else b for b in content]
         return item if all(a is b for a, b in zip(out, content)) else {**item, "content": out}
+
+    @staticmethod
+    def _masked(block):
+        placeholder = mask_placeholder(_plain_text(block.get("content", ""), ("text",)))
+        if len(_compact_json(block.get("content", ""))) <= len(placeholder):
+            return block
+        return {**block, "content": placeholder}
 
     def same_role(self, a, b):
         return a.get("role") == b.get("role")

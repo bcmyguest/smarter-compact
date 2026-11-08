@@ -5,7 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
-  MASK_PLACEHOLDER,
+  MASK_PREFIX,
+  maskPlaceholder,
   addStandingInstruction,
   pointerText,
   recallToolNames,
@@ -15,6 +16,8 @@ import {
   trimSettings,
   trimToFor,
 } from "../plugin/lib/context-trim.mjs";
+import { callContextStoreTool } from "../plugin/lib/mcp/context-store.mjs";
+import { sweepOrphanBlobs } from "../plugin/lib/session-db.mjs";
 
 // The pointer note and the standing instruction are what make a trimmed-away past recoverable: they
 // are the only text telling the model its past is stored, where to look, and that no summary exists.
@@ -242,7 +245,7 @@ test("trim target defaults by model and parses like the proxy", () => {
 test("off by default a trim drops turns and clears nothing", withHome(async (home) => {
   const messages = clearTurns(HUGE);
   const view = await clearRun(home, messages, requestChars(messages), "0");
-  assert.ok(!JSON.stringify(view).includes(MASK_PLACEHOLDER));
+  assert.ok(!JSON.stringify(view).includes(MASK_PREFIX));
   assert.ok(view.length < messages.length);
 }));
 
@@ -253,7 +256,7 @@ test("clearing keeps every turn and call, the newest N results, and strips old s
   const results = resultsOf(view);
   assert.equal(results.sL, "ok");
   assert.equal(results.s4, `out 4${HUGE}`);
-  for (const k of ["s0", "s1", "s2", "s3"]) assert.equal(results[k], MASK_PLACEHOLDER, k);
+  for (const k of ["s0", "s1", "s2", "s3"]) assert.equal(results[k], maskPlaceholder(resultsOf(messages)[k]), k);
   const calls = view.flatMap((m) => m.content.filter((p) => p.type === "tool-call").map((p) => p.id));
   assert.deepEqual(calls, ["s0", "s1", "s2", "s3", "s4", "sL"]);
   // Signed reasoning before the latest run goes; the latest run keeps its own.
@@ -268,6 +271,22 @@ test("clearing keeps every turn and call, the newest N results, and strips old s
     assert.ok(out.some((t) => t.startsWith("out 3")));
     assert.ok(!out.some((t) => t.startsWith("out 4")));
   } finally { db.close(); }
+}));
+
+test("a cleared result's placeholder id round-trips through smart_compact_get", withHome(async (home) => {
+  const messages = clearTurns(HUGE);
+  const view = await clearRun(home, messages, requestChars(messages));
+  const original = resultsOf(messages);
+  const cleared = Object.entries(resultsOf(view)).filter(([, v]) => v.startsWith(MASK_PREFIX));
+  assert.deepEqual(cleared.map(([k]) => k), ["s0", "s1", "s2", "s3"]);
+  const opts = { env: { ...process.env, HOME: home, SMARTER_COMPACT_STATE_DIR: home } };
+  for (const [k, placeholder] of cleared) {
+    const id = /smart_compact_get\(id="([0-9a-f]{16})"\)/.exec(placeholder)[1];
+    const got = await callContextStoreTool("smart_compact_get", { id, max_chars: 100_000 }, opts);
+    assert.deepEqual([got.found, got.text], [true, original[k]], k);
+  }
+  // The orphan sweep keeps them: each is blobId of a stored tool_result row.
+  assert.deepEqual(sweepOrphanBlobs(path.join(home, "context")), []);
 }));
 
 test("clearing drops turns only when it is not enough", withHome(async (home) => {
@@ -376,7 +395,7 @@ test("masking runs under default settings: results masked, calls kept", withHome
   const off = await expRun(home, messages, OFF, "other");
   assert.deepEqual(idsIn(view, "tool-call"), idsIn(off, "tool-call"));
   const results = resultsOf(view);
-  assert.equal(results.s3, MASK_PLACEHOLDER);
+  assert.equal(results.s3, maskPlaceholder(`built${LONG}`));
   assert.equal(results.s4, `contents${LONG}`);
   assert.equal(resultsOf(off).s3, `built${LONG}`);
   assert.deepEqual(view.map((m) => m.role), off.map((m) => m.role));
@@ -397,7 +416,7 @@ test("a masking trim that drops turns names the masked-output recovery in its po
   assert.ok(!noteOf(off).includes("Older tool outputs"));
   // Short results mask nowhere, so the pointer has no recovery line.
   const short = await expRun(home, inFlightTurn(), MASK, "short");
-  assert.ok(!JSON.stringify(short).includes(MASK_PLACEHOLDER));
+  assert.ok(!JSON.stringify(short).includes(MASK_PREFIX));
   assert.ok(!noteOf(short).includes("Older tool outputs"));
 }));
 
@@ -435,7 +454,7 @@ test("prose strip keeps the pair of a message before a system message; masking d
   const strip = await expRun(home, messages, STRIP);
   assert.ok(strip.some((m) => m.role === "system"));
   assert.equal(resultsOf(strip).s3, `built${LONG}`);
-  assert.equal(resultsOf(await expRun(home, messages, MASK, "mask")).s3, MASK_PLACEHOLDER);
+  assert.equal(resultsOf(await expRun(home, messages, MASK, "mask")).s3, maskPlaceholder(`built${LONG}`));
 }));
 
 test("masked sizes let the in-turn gap keep more steps", withHome(async (home) => {
@@ -462,5 +481,5 @@ test("a masked error result stays an error", withHome(async (home) => {
   const steps = STEPS.map((s, k) => (k === 3 ? ["Bash", { command: "make build" }, "Exit code 2", true] : s));
   const view = await expRun(home, inFlightTurn(LONG, steps), MASK);
   const part = view.flatMap((m) => parts(m)).find((p) => p.type === "tool-result" && p.id === "s3");
-  assert.deepEqual(part.result, { type: "error", value: MASK_PLACEHOLDER });
+  assert.deepEqual(part.result, { type: "error", value: maskPlaceholder(`Exit code 2${LONG}`) });
 }));

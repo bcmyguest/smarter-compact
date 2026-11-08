@@ -7,11 +7,13 @@ A trim can shrink the context without deleting turns: it replaces old tool outpu
 | `CONTEXT_CLEAR_KEEP_RESULTS` | `10` | Every tool result except the 10 newest, across the whole kept context |
 | `CONTEXT_MASK_OBSERVATIONS` | `1` | The tool results in the kept region before the latest run of tool calls, except the message right before that run |
 
-A replaced result reads:
+A replaced result names its own blob:
 
 ```text
-[smarter-compact: tool output masked to save context; the call is kept and the output is stored, see the trim pointer]
+[smarter-compact: tool output cleared to save context; smart_compact_get(id="<id>") returns it]
 ```
+
+`<id>` is the first 16 hex characters of the SHA-256 of the result's text (the [blob id](context-store.md#location)), so every later request renders the same bytes and the prompt cache holds. A result is replaced only when its text is longer than its placeholder. Before the request leaves, the proxy (or the OpenCode 2 plugin) writes the original text to `blobs/<id>.txt`; a result already [compressed](context-proxy.md) names the blob its compression wrote.
 
 ## Clearing (`CONTEXT_CLEAR_KEEP_RESULTS`)
 
@@ -25,7 +27,9 @@ With clearing on, masking mostly touches results clearing has already replaced.
 
 ## Getting a result back
 
-Every result stays in the session database. The trim note tells the agent how to fetch one: find the call with `smart_compact_search`, then read the next `tool_result` row of the same tool with `smart_compact_sql`:
+One call returns a cleared result: `smart_compact_get(id="<id>")` with the id from its placeholder, in 12,000-character pages. Addressable Recall Compaction ([ARC](https://arxiv.org/abs/2607.25066)) motivates this: recalling compacted tool outputs by id beat similarity search on needle-in-a-haystack, 99.40% against 88.12%.
+
+The trim note says so, and keeps the older route as a fallback, since every result also stays in the session database: find the call with `smart_compact_search`, then read the next `tool_result` row of the same tool with `smart_compact_sql`:
 
 ```sql
 SELECT text FROM messages

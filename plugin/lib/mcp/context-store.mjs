@@ -104,10 +104,12 @@ export const CONTEXT_STORE_MCP_TOOLS = [
   },
   {
     name: "smart_compact_get",
-    title: "Read a compressed tool result",
+    title: "Read a compressed or cleared tool result",
     description:
-      "Return the text of a tool result the context proxy compressed, by the 16-hex id from "
-      + '[smarter-compact: tool result compressed … smart_compact_get(id="<id>")] or a smart_compact_search blob_ids entry. '
+      "Return the text of a tool result the context proxy compressed or cleared, by the 16-hex id from "
+      + '[smarter-compact: tool result compressed … smart_compact_get(id="<id>")], '
+      + '[smarter-compact: tool output cleared to save context; smart_compact_get(id="<id>") returns it] '
+      + 'or a smart_compact_search blob_ids entry. '
       + `Returns at most ${BLOB_PAGE_CHARS} characters per call so one recall cannot re-inflate the window the trim `
       + `just freed: page with offset (next_offset), or pass max_chars (up to ${BLOB_MAX_CHARS}) when the whole `
       + "result really is needed at once.",

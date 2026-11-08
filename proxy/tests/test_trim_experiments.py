@@ -14,7 +14,7 @@ from test_context_proxy import BIG, Base, anth_history, anth_request  # noqa: E4
 
 from smarter_compact import Settings  # noqa: E402
 from smarter_compact.adapters import AnthropicAdapter  # noqa: E402
-from smarter_compact.core import MASK_PLACEHOLDER  # noqa: E402
+from smarter_compact.core import MASK_PREFIX, mask_placeholder  # noqa: E402
 from smarter_compact.tokens import request_chars  # noqa: E402
 
 # Step k of the in-flight turn: (tool name, input, result text, is_error).
@@ -172,7 +172,7 @@ class MaskObservationsTests(Base):
 
     def test_off_keeps_results(self):
         view = self.run_req(anth_request(in_flight_turn(LONG)), trim_at_tokens=1)["messages"]
-        self.assertNotIn(MASK_PLACEHOLDER, json.dumps(view))
+        self.assertNotIn(MASK_PREFIX, json.dumps(view))
 
     def test_masks_results_keeps_calls_text_and_latest_run(self):
         msgs = in_flight_turn(LONG)
@@ -182,7 +182,7 @@ class MaskObservationsTests(Base):
         self.assertEqual(ids_in(view, "tool_use", "id"), ids_in(off, "tool_use", "id"))
         self.assertEqual(ids_in(view, "tool_use", "id"), ids_in(view, "tool_result", "tool_use_id"))
         results = results_in(view)
-        self.assertEqual(results["s3"], MASK_PLACEHOLDER)
+        self.assertEqual(results["s3"], mask_placeholder("built" + LONG))
         # s4's result is the message right before the latest run: kept, as prose strip keeps it.
         self.assertEqual(results["s4"], "contents" + LONG)
         self.assertEqual(json.dumps(view[-2:]), json.dumps(msgs[-2:]))
@@ -197,7 +197,7 @@ class MaskObservationsTests(Base):
         msgs[at]["content"][0]["is_error"] = True
         masked = next(b for m in self.mask(msgs, trim_at_tokens=1) if isinstance(m["content"], list)
                       for b in m["content"] if b.get("type") == "tool_result" and b.get("tool_use_id") == "s3")
-        self.assertEqual(masked, {"type": "tool_result", "tool_use_id": "s3", "content": MASK_PLACEHOLDER,
+        self.assertEqual(masked, {"type": "tool_result", "tool_use_id": "s3", "content": mask_placeholder("built" + LONG),
                                   "is_error": True})
         msgs[at] = {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "s3", "content": "short"}]}
         self.assertEqual(results_in(self.mask(msgs, sid="other", trim_at_tokens=1))["s3"], "short")
@@ -208,7 +208,7 @@ class MaskObservationsTests(Base):
         at = next(i for i, m in enumerate(msgs) if m["role"] == "user" and "'s3'" in str(m["content"])) + 1
         msgs.insert(at, {"role": "system", "content": "<total_tokens>1 tokens left</total_tokens>"})
         view = self.mask(msgs, trim_at_tokens=1)
-        self.assertEqual(results_in(view)["s3"], MASK_PLACEHOLDER)
+        self.assertEqual(results_in(view)["s3"], mask_placeholder("built" + LONG))
         self.assertEqual([m["role"] for m in view],
                          [m["role"] for m in self.run_req(anth_request(copy.deepcopy(msgs), sid="other"),
                                                           trim_at_tokens=1)["messages"]])
@@ -276,7 +276,7 @@ class MaskObservationsTests(Base):
 
     def test_short_results_masked_nowhere_and_no_recovery_line(self):
         view = self.mask(in_flight_turn(), trim_at_tokens=1)
-        self.assertNotIn(MASK_PLACEHOLDER, json.dumps(view))
+        self.assertNotIn(MASK_PREFIX, json.dumps(view))
         self.assertNotIn("Older tool outputs", view[2]["content"][0]["text"])
 
 
@@ -304,7 +304,7 @@ class ClearResultsTests(Base):
         msgs = in_flight_turn(HUGE)
         view = self.run_req(anth_request(copy.deepcopy(msgs)), trim_at_tokens=full_tokens(msgs),
                             chars_per_token=1.0)["messages"]
-        self.assertNotIn(MASK_PLACEHOLDER, json.dumps(view))
+        self.assertNotIn(MASK_PREFIX, json.dumps(view))
         self.assertLess(len(view), len(msgs))
 
     def test_clears_all_but_newest_n_and_keeps_every_turn_and_call(self):
@@ -318,7 +318,7 @@ class ClearResultsTests(Base):
         # The 2 newest results stay; every older one longer than the placeholder is cleared.
         self.assertEqual((results["sL"], results["s4"]), ("ok", "contents" + HUGE))
         for k in ("tu0", "tu1", "s0", "s1", "s2", "s3"):
-            self.assertEqual(results[k], MASK_PLACEHOLDER, k)
+            self.assertEqual(results[k], mask_placeholder(results_in(msgs)[k]), k)
         texts = [b.get("text") for m in view if isinstance(m.get("content"), list) for b in m["content"]]
         self.assertIn("step 3", texts)
         # The note rides on the first user turn and names recovery, not a drop.
@@ -336,7 +336,7 @@ class ClearResultsTests(Base):
         self.assertIn("Older tool outputs", view[2]["content"][0]["text"])
         kept = results_in(view)
         self.assertEqual((kept["sL"], kept["s4"]), ("ok", "contents" + LONG))
-        self.assertEqual(kept["s3"], MASK_PLACEHOLDER)
+        self.assertEqual(kept["s3"], mask_placeholder("built" + LONG))
 
     def test_sticky_prefix_across_requests(self):
         msgs = in_flight_turn(HUGE)
@@ -365,7 +365,7 @@ class ClearResultsTests(Base):
         results = results_in(view)
         self.assertEqual(len(view), len(more))
         self.assertEqual((results["sM"], results["sL"]), ("later" + HUGE, "ok"))
-        self.assertEqual(results["s4"], MASK_PLACEHOLDER)
+        self.assertEqual(results["s4"], mask_placeholder("contents" + HUGE))
 
     def test_signed_thinking_stripped_before_the_edit(self):
         msgs = in_flight_turn(HUGE)
@@ -384,6 +384,19 @@ class ClearResultsTests(Base):
         self.assertNotIn("contents" + HUGE, out)
         kept = [r["text"] for r in self.db_rows("sid-1", "in_context = 1 AND kind = 'tool_use'")]
         self.assertIn("make build", " ".join(kept))
+
+    def test_placeholder_id_names_a_blob_of_the_original(self):
+        msgs = in_flight_turn(HUGE)
+        view = self.clear(msgs, trim_at_tokens=full_tokens(msgs))
+        original = results_in(msgs)
+        cleared = {k: v for k, v in results_in(view).items() if v.startswith(MASK_PREFIX)}
+        self.assertEqual(sorted(cleared), ["s0", "s1", "s2", "s3", "tu0", "tu1"])
+        for k, placeholder in cleared.items():
+            bid = re.search(r'smart_compact_get\(id="([0-9a-f]{16})"\)', placeholder).group(1)
+            self.assertEqual((self.ctx / "blobs" / f"{bid}.txt").read_text(encoding="utf-8"), original[k], k)
+        # The orphan sweep keeps them: each is blob_id of a stored tool_result row.
+        from smarter_compact import ttl
+        self.assertEqual(ttl.sweep_orphan_blobs(self.ctx), [])
 
 
 class ProgressNoteTests(Base):

@@ -20,6 +20,7 @@ from . import sessiondb
 from . import status as status_mod
 from . import ttl as ttl_mod
 from .adapters import AnthropicAdapter, UnsupportedCallType, adapter_for
+from .compress import MASK_PREFIX, blob_id, compressed_blob_id, mask_placeholder
 from .session import resolve_session_id
 from .settings import Settings
 from .store import Store, session_lock
@@ -71,9 +72,6 @@ DEFERRED_TOOLS_HEAD = "deferred tools are now available via"
 EDIT_TOOL_PATHS = {"Write": ("file_path",), "Edit": ("file_path",), "MultiEdit": ("file_path",),
                    "NotebookEdit": ("notebook_path", "file_path")}
 SHELL_TOOLS = ("Bash",)
-# CONTEXT_MASK_OBSERVATIONS: constant, so a masked result renders the same bytes on every request.
-MASK_PLACEHOLDER = ("[smarter-compact: tool output masked to save context; the call is kept and the output is stored, "
-                    "see the trim pointer]")
 # A shell command that builds or tests: a word of it starts one of these.
 _BUILD_RE = re.compile(
     r"(?:^|[\s;&|(/])(?:py\.?test|tox|nox|make|cmake|ctest|ninja|cargo (?:build|test|check)|go (?:build|test|vet)"
@@ -246,10 +244,11 @@ def pointer_text(sid, dropped, names=None):
 
 
 def mask_text(sid, names=None):
-    """How to get back a result shown as MASK_PLACEHOLDER: its call's row, then the next tool_result row."""
+    """How to get back a result shown as a mask_placeholder: its own smart_compact_get call, else search then sql."""
     names = names or _LEGACY_NAMES
     return (
-        f"Older tool outputs in your context read \"{MASK_PLACEHOLDER}\". To get one back, find its call with "
+        f"Older tool outputs in your context read \"{MASK_PREFIX} smart_compact_get(id=\"<id>\") returns it]\". "
+        f"Each names its own id: smart_compact_get with that id returns the full output. If that fails, find its call with "
         f'{names["search"]}(session_id="{sid}", query=<words from the call>); its output is the first tool_result '
         f'row of the same tool after that seq: {names["sql"]}(session_id="{sid}", sql="SELECT text FROM messages '
         f"WHERE kind = 'tool_result' AND name = '<tool>' AND seq > <call seq> ORDER BY seq LIMIT 1\")."
@@ -419,10 +418,10 @@ def strip_reasoning(adapter, items, keep, bound, cut, note, prose=False, shown=N
     the cache. A message left empty is dropped (adapter.without_reasoning).
 
     With prose, the prose_ids pairs go too and adjacent stripped items of one role merge into one message. With
-    prose == "mask", each prose_ids tool_use stays and its tool_result content becomes MASK_PLACEHOLDER.
+    prose == "mask", each prose_ids tool_use stays and its tool_result content becomes its mask_placeholder.
 
     Every tool_result of a kept item before `clear` (the first user turn and pinned items aside) also becomes
-    MASK_PLACEHOLDER; its tool_use and the item's other blocks stay (_cleared).
+    its mask_placeholder; its tool_use and the item's other blocks stay (_cleared).
 
     shown, when given, maps the index of every item that reaches the view to its stripped form (no note, unmerged).
     """
@@ -439,7 +438,7 @@ def strip_reasoning(adapter, items, keep, bound, cut, note, prose=False, shown=N
                 if x is None:
                     continue
             if ids and not adapter.is_pinned(x) and prose == "mask":
-                x = adapter.masked_results(x, ids, MASK_PLACEHOLDER)
+                x = adapter.masked_results(x, ids)
             elif ids and not adapter.is_pinned(x):
                 x = adapter.without_tool_calls(x, ids)
                 if x is None:
@@ -462,7 +461,7 @@ def _cleared(adapter, x, j, clear, first):
     """x with every tool_result masked when items[j] sits before the clear bound; x itself otherwise."""
     if clear is None or j >= clear or j == first or adapter.is_pinned(x):
         return x
-    return adapter.masked_results(x, adapter.result_ids(x), MASK_PLACEHOLDER)
+    return adapter.masked_results(x, adapter.result_ids(x))
 
 
 def _clears_more(adapter, items, keep, old, new, first):
@@ -609,7 +608,7 @@ def _prose_sizes(adapter, items, cut, sizes, mode=True):
     if not ids:
         return
     for j in _prose_region(adapter, items, keep, bound, cut, mode):
-        x = adapter.masked_results(items[j], ids, MASK_PLACEHOLDER) if mode == "mask" \
+        x = adapter.masked_results(items[j], ids) if mode == "mask" \
             else adapter.without_tool_calls(items[j], ids)
         sizes[j] = request_chars(x) if x is not None else 0
 
@@ -657,6 +656,21 @@ def _rows_kept(adapter, shown, sent, item, names):
         out.append(hit or row[1] == "thinking")
         p += hit
     return out
+
+
+def _write_masked_blobs(store, adapter, sent, shown):
+    """Write blobs/<id>.txt for each result the view shows as its mask_placeholder, before the request leaves.
+
+    sent: the items render saw; shown: render's index map. A compressed result's blob already exists."""
+    if not hasattr(adapter, "masked_results"):
+        return
+    for j, x in shown.items():
+        if x is sent[j]:
+            continue
+        now = adapter.tool_results(x)
+        for rid, (_, text) in adapter.tool_results(sent[j]).items():
+            if rid in now and now[rid][1] == mask_placeholder(text) and compressed_blob_id(text) is None:
+                store.write_blob(blob_id(text), text)
 
 
 def _store_messages(store, sid, adapter, original, items, cut, view, settings):
@@ -798,7 +812,7 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                 dropped = len(items) - len(new_shown)
                 names = recall_tool_names(request_tool_names(data))
                 masked = (mode == "mask" or new_clear is not None) and any(
-                    x is not items[j] and MASK_PLACEHOLDER in str(x.get("content")) for j, x in new_shown.items())
+                    x is not items[j] and MASK_PREFIX in str(x.get("content")) for j, x in new_shown.items())
                 if dropped or not masked:
                     note = pointer_text(sid, dropped, names)
                     if settings.progress_note:
@@ -855,6 +869,7 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                 sent, shown = _nudged(adapter, items, len(items) - 1, text), {}
                 view = render(adapter, sent, cut, note, first, gap, strip, mode, shown, clear)
                 nudge = {"tokens_before": tokens}
+        _write_masked_blobs(store, adapter, sent, shown)
         _store_messages(store, sid, adapter, original, sent, cut, shown, settings)
         if trim:
             _record_event(store, sid, "trim", **trim)
