@@ -121,3 +121,7 @@ runs at.
 Per-trial `meta.json` additionally records `difficulty`, `category`, `image`, `workdir`,
 `capture_port`, the trim/recall counts, and `req_*` request-capture facts for the smart
 arm.
+
+## Harbor runs: verifiers without a GitHub download
+
+Terminal-Bench 2.x verifiers install uv 0.9.5 from astral.sh and Python 3.13 from GitHub on every trial. In the TB2.1 runs of 2026-11-07, about 16 of 35 failures were these downloads returning 504, in every arm. `harbor/pin-verifier-uv.sh <dataset> <out dir>` copies the dataset with each verifier using a uv and Python mounted at `/opt/sc-uv` instead; the job then adds a bind mount of `/tmp/opencode/sc-uv` at `/opt/sc-uv` and points its dataset path at the copy. The agent's environment is unchanged except for that directory.
