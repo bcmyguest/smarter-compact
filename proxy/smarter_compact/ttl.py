@@ -1,12 +1,13 @@
 """TTL cleanup of session files (docs/context-store.md, "Retention"). Same rules as sweepContextStore in
 cli/coding-agent/session-db.mjs."""
 
+import json
 import os
 import sqlite3
 import time
 from pathlib import Path
 
-from .compress import blob_id
+from .compress import blob_id, clearable_strings
 
 DAY_S = 86400
 STAMP = ".ttl-stamp"
@@ -35,7 +36,8 @@ def _sqlite_header(path):
 
 def referenced_blob_ids(sessions_dir):
     """Distinct messages.blob_id values, plus blob_id(text) of each other tool_result row (the blob a cleared
-    result's placeholder names), across remaining session databases, or None if any DB is unreadable.
+    result's placeholder names) and of each clearable string of a tool_use row's input (a cleared input's blobs),
+    across remaining session databases, or None if any DB is unreadable.
 
     A missing sessions directory means no references (empty set). Other OS errors fail closed (None).
     """
@@ -60,11 +62,22 @@ def referenced_blob_ids(sessions_dir):
                 # A cleared result's placeholder names blob_id(text) of its stored row.
                 for (text,) in con.execute("SELECT text FROM messages WHERE kind = 'tool_result' AND blob_id IS NULL"):
                     ids.add(blob_id(text))
+                # A cleared tool-input string's placeholder names blob_id of that string (compress.input_placeholder).
+                for (text,) in con.execute("SELECT text FROM messages WHERE kind = 'tool_use'"):
+                    ids.update(blob_id(s) for s in clearable_strings(_input_value(text)))
             finally:
                 con.close()
         except sqlite3.Error:
             return None
     return ids
+
+
+def _input_value(text):
+    """A stored tool_use row's input: its JSON, else the text itself (a freeform input)."""
+    try:
+        return json.loads(text)
+    except ValueError:
+        return text
 
 
 def sweep_orphan_blobs(root):

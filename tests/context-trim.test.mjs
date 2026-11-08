@@ -5,7 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
+  INPUT_MASK_PREFIX,
   MASK_PREFIX,
+  blobId,
+  inputPlaceholder,
+  maskedInput,
   maskPlaceholder,
   addStandingInstruction,
   pointerText,
@@ -559,4 +563,136 @@ test("a masked error result stays an error", withHome(async (home) => {
   const view = await expRun(home, inFlightTurn(LONG, steps), MASK);
   const part = view.flatMap((m) => parts(m)).find((p) => p.type === "tool-result" && p.id === "s3");
   assert.deepEqual(part.result, { type: "error", value: maskPlaceholder(`Exit code 2${LONG}`) });
+}));
+
+// CONTEXT_CLEAR_INPUTS_OVER_CHARS: same contract as proxy/tests/test_clear_inputs.py.
+const BAR = 2000;
+const fileBody = (k, n = 6000) => `file ${k}\n${"w".repeat(n)}`;
+
+function writeTurns(steps = 5, n = 6000) {
+  const messages = [textMsg("user", "the task")];
+  for (let k = 0; k < steps; k++) {
+    const input = { file_path: `/app/f${k}.py`, content: fileBody(k, n), mode: 420, dry: false,
+      meta: { notes: ["short", "n".repeat(n / 2)], tag: "t" } };
+    messages.push({ role: "assistant", content: [{ type: "text", text: `step ${k}` }, { type: "tool-call", id: `w${k}`, name: "write", input }] });
+    messages.push({ role: "tool", content: [{ type: "tool-result", id: `w${k}`, name: "write", result: { type: "text", value: "written" } }] });
+  }
+  messages.push({ role: "assistant", content: [{ type: "tool-call", id: "wL", name: "bash", input: { command: "ls" } }] });
+  messages.push({ role: "tool", content: [{ type: "tool-result", id: "wL", name: "bash", result: { type: "text", value: "ok" } }] });
+  return messages;
+}
+
+const inputsOf = (view) => Object.fromEntries(view.flatMap((m) => parts(m).filter((p) => p.type === "tool-call").map((p) => [p.id, p.input])));
+const stringsOf = (v) => (typeof v === "string" ? [v] : Array.isArray(v) ? v.flatMap(stringsOf)
+  : v && typeof v === "object" ? Object.values(v).flatMap(stringsOf) : []);
+
+async function inputsRun(home, messages, env = {}, sid = SID) {
+  const settings = trimSettings({ CONTEXT_TRIM_AT_TOKENS: String(requestChars(messages)), CONTEXT_CLEAR_KEEP_RESULTS: "2",
+    CONTEXT_CLEAR_FIT: "0.5", CONTEXT_TRIM_TO_TOKENS: String(LOW_TARGET), CONTEXT_CHARS_PER_TOKEN: "1",
+    CONTEXT_COMPRESS_OVER_TOKENS: "0", CONTEXT_STANDING_INSTRUCTION: "0", CONTEXT_PROGRESS_NOTE: "0",
+    CONTEXT_MASK_OBSERVATIONS: "0", CONTEXT_SCRATCHPAD: "0", SMARTER_COMPACT_STATE_DIR: home, ...env }, home);
+  return trimContext({ sessionID: sid, messages: structuredClone(messages) }, settings);
+}
+
+test("CONTEXT_CLEAR_INPUTS_OVER_CHARS defaults to 2000 and parses like the proxy", () => {
+  assert.equal(trimSettings({}, os.tmpdir()).clearInputsOverChars, 2000);
+  assert.equal(trimSettings({ CONTEXT_CLEAR_INPUTS_OVER_CHARS: "500" }, os.tmpdir()).clearInputsOverChars, 500);
+  assert.equal(trimSettings({ CONTEXT_CLEAR_INPUTS_OVER_CHARS: "0" }, os.tmpdir()).clearInputsOverChars, 0);
+  assert.equal(trimSettings({ CONTEXT_CLEAR_INPUTS_OVER_CHARS: "-1" }, os.tmpdir()).clearInputsOverChars, 0);
+  assert.equal(trimSettings({ CONTEXT_CLEAR_INPUTS_OVER_CHARS: "x" }, os.tmpdir()).clearInputsOverChars, 2000);
+});
+
+test("an input string is cleared strictly over the bar, nested ones too, other fields untouched", () => {
+  for (const [n, cleared] of [[BAR - 1, false], [BAR, false], [BAR + 1, true]]) {
+    assert.equal(maskedInput("a".repeat(n), BAR) !== "a".repeat(n), cleared, String(n));
+  }
+  // Code points, as the proxy counts: 2000 astral characters are 4000 UTF-16 units and stay.
+  assert.equal(maskedInput("😀".repeat(BAR), BAR), "😀".repeat(BAR));
+  const astral = "😀".repeat(BAR + 1);
+  assert.equal(maskedInput(astral, BAR), inputPlaceholder(astral));
+  assert.ok(inputPlaceholder(astral).includes(` ${BAR + 1} chars; smart_compact_get(id="${blobId(astral)}")`));
+  const big = "b".repeat(3000);
+  const value = { path: "/x", n: 5, flag: true, none: null, list: ["s", big, { deep: big }], obj: { k: big } };
+  const out = maskedInput(value, BAR);
+  assert.deepEqual(Object.keys(out), Object.keys(value));
+  assert.deepEqual(out, { path: "/x", n: 5, flag: true, none: null,
+    list: ["s", inputPlaceholder(big), { deep: inputPlaceholder(big) }], obj: { k: inputPlaceholder(big) } });
+  const small = { path: "/x", list: ["s"] };
+  assert.equal(maskedInput(small, BAR), small);
+  const placeholder = inputPlaceholder("c".repeat(5000));
+  assert.ok(placeholder.startsWith(INPUT_MASK_PREFIX));
+  assert.equal(maskedInput(placeholder, 1), placeholder);
+  assert.equal(maskedInput("d".repeat(50), 1), "d".repeat(50));
+});
+
+test("a call's input is cleared with its result, and clearing alone now settles the trim", withHome(async (home) => {
+  const messages = writeTurns();
+  const view = await inputsRun(home, messages);
+  assert.deepEqual(view.map((m) => m.role), messages.map((m) => m.role));
+  assert.ok(requestChars(view) < 0.5 * requestChars(messages));
+  assert.ok(!JSON.stringify(view).includes("earlier messages are NOT"));
+  const [got, orig] = [inputsOf(view), inputsOf(messages)];
+  assert.deepEqual([got.w4, got.wL], [orig.w4, orig.wL]);
+  for (let k = 0; k < 4; k++) {
+    const [a, b] = [got[`w${k}`], orig[`w${k}`]];
+    assert.deepEqual(Object.keys(a), Object.keys(b));
+    assert.deepEqual(a, { ...b, content: inputPlaceholder(b.content), meta: { notes: ["short", inputPlaceholder(b.meta.notes[1])], tag: "t" } });
+  }
+  // Off, clearing results alone frees almost nothing, so the trim drops turns.
+  const other = fs.mkdtempSync(path.join(os.tmpdir(), "sc-clear-"));
+  try {
+    const off = await inputsRun(other, messages, { CONTEXT_CLEAR_INPUTS_OVER_CHARS: "0" });
+    assert.ok(off.length < messages.length);
+    assert.ok(JSON.stringify(off).includes("earlier messages are NOT"));
+  } finally { fs.rmSync(other, { recursive: true, force: true }); }
+}));
+
+test("cleared inputs re-render byte-identical across requests", withHome(async (home) => {
+  const messages = writeTurns();
+  let prev = await inputsRun(home, messages);
+  let more = messages;
+  for (let k = 0; k < 2; k++) {
+    more = [...more,
+      { role: "assistant", content: [{ type: "tool-call", id: `n${k}`, name: "write", input: { file_path: `/n${k}`, content: fileBody(k) } }] },
+      { role: "tool", content: [{ type: "tool-result", id: `n${k}`, name: "write", result: { type: "text", value: "written" } }] }];
+    const view = await inputsRun(home, more, { CONTEXT_TRIM_AT_TOKENS: "1000000000" });
+    assert.equal(JSON.stringify(view.slice(0, prev.length)), JSON.stringify(prev));
+    assert.equal(inputsOf(view)[`n${k}`].content, fileBody(k));
+    prev = view;
+  }
+}));
+
+test("a cleared input's blob round-trips through smart_compact_get and survives the sweep", withHome(async (home) => {
+  const view = await inputsRun(home, writeTurns());
+  const texts = new Set([0, 1, 2, 3].flatMap((k) => [fileBody(k), "n".repeat(3000)]));
+  const placeholders = Object.values(inputsOf(view)).flatMap(stringsOf).filter((s) => s.startsWith(INPUT_MASK_PREFIX));
+  assert.equal(placeholders.length, 8);
+  const opts = { env: { ...process.env, HOME: home, SMARTER_COMPACT_STATE_DIR: home } };
+  for (const p of placeholders) {
+    const id = /smart_compact_get\(id="([0-9a-f]{16})"\)/.exec(p)[1];
+    const got = await callContextStoreTool("smart_compact_get", { id, max_chars: 100_000 }, opts);
+    assert.ok(got.found && texts.has(got.text), id);
+  }
+  const blobs = path.join(home, "context", "blobs");
+  fs.writeFileSync(path.join(blobs, "ffffffffffffffff.txt"), "orphan");
+  assert.deepEqual(sweepOrphanBlobs(path.join(home, "context")), ["ffffffffffffffff"]);
+  assert.equal(fs.readdirSync(blobs).length, 5); // 4 file bodies, 1 shared notes string
+}));
+
+test("CONTEXT_CLEAR_INPUTS_OVER_CHARS=0 gives the old bytes", async () => {
+  const messages = writeTurns();
+  const views = [];
+  for (const bar of ["0", "1000000000"]) {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "sc-clear-"));
+    try { views.push(await inputsRun(home, messages, { CONTEXT_CLEAR_INPUTS_OVER_CHARS: bar })); } finally { fs.rmSync(home, { recursive: true, force: true }); }
+  }
+  assert.ok(!JSON.stringify(views[0]).includes(INPUT_MASK_PREFIX));
+  assert.equal(JSON.stringify(views[0]), JSON.stringify(views[1]));
+  const orig = inputsOf(messages);
+  for (const [k, v] of Object.entries(inputsOf(views[0]))) assert.deepEqual(v, orig[k], k);
+});
+
+test("masked observations clear their calls' inputs too", withHome(async (home) => {
+  const view = await expRun(home, writeTurns(), { ...MASK, CONTEXT_CLEAR_KEEP_RESULTS: "0" });
+  assert.ok(Object.values(inputsOf(view)).some((v) => JSON.stringify(v).includes(INPUT_MASK_PREFIX)));
 }));

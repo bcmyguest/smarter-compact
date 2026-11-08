@@ -1,12 +1,13 @@
 # Tool-result clearing and masking
 
-A trim can shrink the context without deleting turns: it replaces old tool outputs with a short placeholder and keeps every call, so the agent still sees what it did, only not what it read. Two settings do this, and both are on by default.
+A trim can shrink the context without deleting turns: it replaces old tool outputs with a short placeholder and keeps every call, so the agent still sees what it did, only not what it read. Two settings do this, and both are on by default; a third shrinks the long inputs of those calls.
 
 | Setting | Default | What a trim replaces |
 | --- | --- | --- |
 | `CONTEXT_CLEAR_KEEP_RESULTS` | `10` | Every tool result except the 10 newest, across the whole kept context |
 | `CONTEXT_CLEAR_FIT` | `0.63` | Nothing itself: clearing alone settles a trim once the prompt fits under this fraction of the threshold |
 | `CONTEXT_MASK_OBSERVATIONS` | `1` | The tool results in the kept region before the latest run of tool calls, except the message right before that run |
+| `CONTEXT_CLEAR_INPUTS_OVER_CHARS` | `2000` | Each string over this many characters in the input of a call whose result is cleared, masked or evicted; `0` off |
 
 A replaced result names its own blob:
 
@@ -25,6 +26,16 @@ When a request reaches the trim threshold, the proxy first tries clearing alone:
 Masking applies to the turns a trim keeps. In the region before the latest run of tool calls, each tool result whose call is also in that region becomes the placeholder; the message right before the latest run keeps its results. Masking wins over `CONTEXT_STRIP_PROSE`, which would remove the calls as well. `0` turns it off.
 
 With clearing on, masking mostly touches results clearing has already replaced.
+
+## Input clearing (`CONTEXT_CLEAR_INPUTS_OVER_CHARS`)
+
+Clearing keeps every call whole, so a written file, an edit's old and new strings, or a heredoc in a Bash command stays in the prompt after its result is gone. With input clearing on, every string field of a call's input longer than `N` characters (strictly over; nested strings in objects and arrays too) becomes a placeholder when that call's result is cleared, masked or [evicted](eviction.md), in the same step:
+
+```text
+[smarter-compact: tool input cleared to save context; 8412 chars; smart_compact_get(id="<id>") returns it]
+```
+
+`<id>` is the blob id of the original string, written to `blobs/<id>.txt` before the request leaves. Every other field stays: keys, order, file paths, short arguments, numbers and booleans, so the input is still valid JSON of the same shape. The rule needs no tool list, so it works for every harness: Anthropic `tool_use.input`, OpenAI Chat and Responses function arguments, and the OpenCode 2 / Pi plugin's tool calls. A call counts as cleared when its result sits before the clear bound, even when the result itself is too short to replace (a Write's "File written"). The bound only moves forward, so later requests re-render the same bytes. The clear-fit estimate counts the shrunk inputs, so clearing alone settles more trims. The TTL sweep keeps these blobs: it keeps the blob id of every string of a stored call's input that a placeholder could name. `0` turns it off and restores the earlier bytes.
 
 ## Getting a result back
 
@@ -60,5 +71,12 @@ Before `CONTEXT_CLEAR_FIT`, clearing alone had to land under the target, which a
 | 0.8 | 28 | 25 | 1.40 | 9.4 | 27.0 |
 
 Clearing alone leaves a median of about 64,000 tokens in these trajectories, because clearing keeps every tool call whole: right after such a trim, calls' inputs (Bash commands and written files) fill about 40% of the prompt, the system prompt and tools 27%, and tool results 25%; at `0.8` it settles most trims, but the smaller headroom adds a trim in 7 of 20 trials. The replay re-sends what the agent did, so it measures requests, not pass rates.
+
+The same replay at `0.63` with input clearing (`CONTEXT_CLEAR_INPUTS_OVER_CHARS`):
+
+| Input clearing | Trims | Settled by clearing alone | Messages dropped per trial | Result placeholders per trial | Input placeholders per trial | Median estimate after a trim |
+| --- | --- | --- | --- | --- | --- | --- |
+| off | 21 | 6 | 36.2 | 9.2 | 0 | 40,400 |
+| `2000` | 22 | 12 | 21.9 | 17.6 | 1.1 | 43,600 |
 
 No run has tested the shipped default, clearing and masking together, without the scratchpad. The research behind clearing, and how this masking differs from the papers' observation masking: [context research](context-research.md#clearing-versus-turn-deletion-2026-11-05). Anthropic's server-side alternative: [context proxy](context-proxy.md#server-side-tool-result-clearing).

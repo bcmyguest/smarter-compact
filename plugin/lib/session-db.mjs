@@ -732,6 +732,9 @@ export function sessionOf(name) {
  * (ttl.py referenced_blob_ids). Fail closed so a corrupt DB cannot orphan its blobs into deletion.
  */
 const SQLITE_MAGIC = Buffer.from("SQLite format 3\0");
+// Start of a cleared tool-input string's placeholder and its length besides the count digits; context-trim.mjs.
+const INPUT_MASK_PREFIX = "[smarter-compact: tool input cleared to save context;";
+const INPUT_PLACEHOLDER_FIXED = INPUT_MASK_PREFIX.length + ' chars; smart_compact_get(id="'.length + 16 + '") returns it]'.length + 1;
 
 /** True when path starts with the SQLite magic (avoids opening placeholder .db files that would rewrite -wal). */
 function sqliteHeader(file) {
@@ -744,6 +747,22 @@ function sqliteHeader(file) {
   } finally {
     fs.closeSync(fd);
   }
+}
+
+/** A stored tool_use row's input: its JSON, else the text itself (a freeform input); ttl.py _input_value. */
+function inputValue(text) {
+  try { return JSON.parse(text); } catch { return text; }
+}
+
+/** Every string of value a cleared input may name as a blob, at any bar; ttl.py clearable_strings. */
+function clearableStrings(value) {
+  if (typeof value === "string") {
+    const n = Array.from(value).length;
+    return n > INPUT_PLACEHOLDER_FIXED + String(n).length && !value.startsWith(INPUT_MASK_PREFIX) ? [value] : [];
+  }
+  if (Array.isArray(value)) return value.flatMap(clearableStrings);
+  if (value && typeof value === "object") return Object.values(value).flatMap(clearableStrings);
+  return [];
 }
 
 export function referencedBlobIds(sessionsDir) {
@@ -767,6 +786,12 @@ export function referencedBlobIds(sessionsDir) {
       // A cleared result's placeholder names blobId(text) of its stored row (context-trim.mjs blobId).
       for (const row of db.prepare("SELECT text FROM messages WHERE kind = 'tool_result' AND blob_id IS NULL").iterate()) {
         ids.add(crypto.createHash("sha256").update(row.text, "utf8").digest("hex").slice(0, 16));
+      }
+      // A cleared tool-input string's placeholder names blobId of that string (context-trim.mjs inputPlaceholder).
+      for (const row of db.prepare("SELECT text FROM messages WHERE kind = 'tool_use'").iterate()) {
+        for (const text of clearableStrings(inputValue(row.text))) {
+          ids.add(crypto.createHash("sha256").update(text, "utf8").digest("hex").slice(0, 16));
+        }
       }
     } catch {
       try { db?.close(); } catch { /* already broken */ }

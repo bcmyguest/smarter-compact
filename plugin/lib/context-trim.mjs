@@ -166,6 +166,8 @@ export const TRIM_NEW = 2;
 export const DEFAULT_SCRATCHPAD_NUDGE_AT = 0.75;
 // Clearing alone settles a trim under this fraction of the threshold, leaving headroom before the next; same as proxy.
 export const DEFAULT_CLEAR_FIT = 0.63;
+// A cleared tool call's input strings over this many characters become placeholders; same as proxy settings.py.
+export const DEFAULT_CLEAR_INPUTS_OVER_CHARS = 2000;
 /** Part types whose payload is binary; each is charged a flat 6400 characters (about 1600 tokens). */
 const BINARY_BLOCK_TYPES = new Set(["image", "document", "input_image", "input_file", "image_url", "file", "media"]);
 const BINARY_BLOCK_CHARS = 6400;
@@ -225,6 +227,8 @@ export function trimSettings(env = process.env, home = env.HOME) {
     clearKeepResults: Math.max(int("CONTEXT_CLEAR_KEEP_RESULTS", 10), 0),
     // Clearing alone is accepted under max(target, clearFit x trimAt); 0 < x < 1, lower leaves more headroom (CONTEXT_CLEAR_FIT).
     clearFit: fraction("CONTEXT_CLEAR_FIT", DEFAULT_CLEAR_FIT),
+    // Wherever a tool result is cleared or masked, its call's input strings over N chars become placeholders; 0 is off.
+    clearInputsOverChars: Math.max(int("CONTEXT_CLEAR_INPUTS_OVER_CHARS", DEFAULT_CLEAR_INPUTS_OVER_CHARS), 0),
     compressOverTokens: int("CONTEXT_COMPRESS_OVER_TOKENS", DEFAULT_COMPRESS_OVER_TOKENS),
     charsPerToken: positive("CONTEXT_CHARS_PER_TOKEN", DEFAULT_CHARS_PER_TOKEN),
     contextDir: contextRoot(home, env),
@@ -657,11 +661,12 @@ export function chooseGap(items, cut, after, first, fits) {
  * kept assistant messages before `strip` (default: the latest assistant run; see withoutReasoning). `decorate(message)`
  * adds per-message parts at render time only; trimming, fingerprints and log rows always see the undecorated messages.
  * `mode` (regionMode) also strips the proseIds tool pairs (true; adjacent stripped messages of one role merge) or
- * masks their results ("mask"); every tool result before `clear` is masked too (cleared). `shown`, a Map when given,
+ * masks their results ("mask"); every tool result before `clear` is masked too (cleared). Wherever a result is
+ * masked so are its call's input strings over `inputs` chars (maskInputs). `shown`, a Map when given,
  * gets each index that reaches the view mapped to its sent form (no note, undecorated, unmerged). Proxy render.
  */
 export function render(items, cut, note, first = null, gap = null, decorate = (m) => m, strip = null, clear = null,
-  mode = false, shown = null) {
+  mode = false, shown = null, inputs = 0) {
   if (cut === null) {
     if (shown) items.forEach((x, j) => shown.set(j, x));
     return items.map(decorate);
@@ -670,6 +675,7 @@ export function render(items, cut, note, first = null, gap = null, decorate = (m
   const run = latestRunStart(items);
   const bound = strip === null ? run : Math.min(strip, run);
   const ids = mode ? proseIds(items, keep, bound, cut, mode) : new Set();
+  const calls = inputs > 0 ? clearedCalls(items, clear, first) : new Set();
   const out = [];
   let mergeable = false;
   for (let j = 0; j < items.length; j++) {
@@ -679,14 +685,14 @@ export function render(items, cut, note, first = null, gap = null, decorate = (m
     if (j !== cut && j < bound) {
       x = withoutReasoning(x);
       if (x === null) continue;
-      if (ids.size && !isPinned(x) && mode === "mask") x = maskResults(x, ids);
+      if (ids.size && !isPinned(x) && mode === "mask") x = maskInputs(maskResults(x, ids), ids, inputs);
       else if (ids.size && !isPinned(x)) {
         x = withoutToolCalls(x, ids);
         if (x === null) continue;
         region = true;
       }
     }
-    x = cleared(x, j, clear, first);
+    x = cleared(x, j, clear, first, inputs, calls);
     shown?.set(j, x);
     if (j === cut) x = prependNote(decorate(x), note);
     else {
@@ -717,7 +723,25 @@ function maskResults(message, ids) {
   return next ? { ...message, content: next } : message;
 }
 
-/** Write blobs/<id>.txt for each result the view shows as its maskPlaceholder, before the request leaves. Proxy _write_masked_blobs. */
+/** The message with each tool call whose id is in ids carrying maskedInput(input, over); itself when off or none changes. Proxy masked_inputs. */
+function maskInputs(message, ids, over) {
+  if (!(over > 0) || !ids?.size) return message;
+  const content = parts(message);
+  let next = null;
+  content.forEach((p, i) => {
+    if (p?.type !== "tool-call" || !ids.has(p.id) || !("input" in p)) return;
+    const input = maskedInput(p.input, over);
+    if (input === p.input) return;
+    next ??= [...content];
+    next[i] = { ...p, input };
+  });
+  return next ? { ...message, content: next } : message;
+}
+
+/**
+ * Write blobs/<id>.txt for each result the view shows as its maskPlaceholder, and each tool-input string it shows as
+ * its inputPlaceholder, before the request leaves. Proxy _write_masked_blobs.
+ */
 function writeMaskedBlobs(store, sent, shown) {
   for (const [j, x] of shown) {
     if (x === sent[j]) continue;
@@ -726,6 +750,11 @@ function writeMaskedBlobs(store, sent, shown) {
       if (p?.type !== "tool-result" || !now.has(p.id)) continue;
       const text = resultText(p.result);
       if (now.get(p.id) === maskPlaceholder(text) && !compressedBlobId(text)) store.writeBlob(blobId(text), text);
+    }
+    const inputs = new Map(parts(x).filter((p) => p?.type === "tool-call").map((p) => [p.id, p.input]));
+    for (const p of parts(sent[j])) {
+      if (p?.type !== "tool-call" || !inputs.has(p.id)) continue;
+      for (const text of clearedInputs(p.input, inputs.get(p.id))) store.writeBlob(blobId(text), text);
     }
   }
 }
@@ -746,11 +775,22 @@ function mergeMessages(a, b) {
 
 /**
  * The message with every tool result longer than its maskPlaceholder replaced by it when message j sits before the
- * clear bound (the first user turn and pinned messages aside); the message itself otherwise. Proxy _cleared.
+ * clear bound (the first user turn and pinned messages aside), and the inputs of its calls in `calls` (clearedCalls)
+ * over `inputs` chars; the message itself otherwise. Proxy _cleared.
  */
-export function cleared(message, j, clear, first) {
+export function cleared(message, j, clear, first, inputs = 0, calls = null) {
   if (clear === null || j >= clear || j === first || isPinned(message)) return message;
-  return maskResults(message, null);
+  return maskInputs(maskResults(message, null), calls, inputs);
+}
+
+/** Call ids whose result the clear bound clears: every result of a message before it (first and pinned aside). Proxy _cleared_calls. */
+export function clearedCalls(items, clear, first) {
+  const ids = new Set();
+  if (clear === null) return ids;
+  for (let j = 0; j < Math.min(clear, items.length); j++) {
+    if (j !== first && !isPinned(items[j])) for (const id of resultIds(items[j])) ids.add(id);
+  }
+  return ids;
 }
 
 /**
@@ -773,9 +813,12 @@ function nextClear(items, keepResults, clear) {
   return bounds.length ? Math.max(...bounds) : null;
 }
 
-/** Whether bound next masks a result of a kept message that bound old leaves whole. */
-const clearsMore = (items, keep, old, next, first) => next !== null
-  && [...keep].some((j) => (old === null || j >= old) && cleared(items[j], j, next, first) !== items[j]);
+/** Whether bound next masks a result (or an input) of a kept message that bound old leaves whole. */
+function clearsMore(items, keep, old, next, first, inputs = 0) {
+  if (next === null) return false;
+  const calls = inputs > 0 ? clearedCalls(items, next, first) : null;
+  return [...keep].some((j) => (old === null || j >= old) && cleared(items[j], j, next, first, inputs, calls) !== items[j]);
+}
 
 /** Index where the trailing run of assistant messages ending at the last one starts; items.length if none. */
 export function latestRunStart(items) {
@@ -861,6 +904,50 @@ export function maskPlaceholder(text) {
   return `${MASK_PREFIX} smart_compact_get(id="${compressedBlobId(text) || blobId(text)}") returns it]`;
 }
 
+/** Start of every cleared tool-input string's placeholder; never re-masked. Same as compress.INPUT_MASK_PREFIX. */
+export const INPUT_MASK_PREFIX = "[smarter-compact: tool input cleared to save context;";
+// Characters of an input placeholder besides its count digits; same as compress._INPUT_PLACEHOLDER_FIXED.
+const INPUT_PLACEHOLDER_FIXED = INPUT_MASK_PREFIX.length + ' chars; smart_compact_get(id="'.length + 16 + '") returns it]'.length + 1;
+
+/** A cleared tool-input string, naming its length and blob; a function of text, so cache-stable. Same as compress.input_placeholder. */
+export function inputPlaceholder(text) {
+  return `${INPUT_MASK_PREFIX} ${cpLen(text)} chars; smart_compact_get(id="${blobId(text)}") returns it]`;
+}
+
+/** Whether a tool-input string over `over` chars becomes its inputPlaceholder: longer than it, not one already. */
+export function inputClearable(text, over = 0) {
+  if (text.length <= over) return false;
+  const n = cpLen(text);
+  return n > over && n > INPUT_PLACEHOLDER_FIXED + String(n).length && !text.startsWith(INPUT_MASK_PREFIX);
+}
+
+/** value (a tool call's input) with every string, nested ones too, that inputClearable over `over` replaced by its inputPlaceholder; itself when none changes. Proxy masked_input. */
+export function maskedInput(value, over) {
+  if (typeof value === "string") return inputClearable(value, over) ? inputPlaceholder(value) : value;
+  if (Array.isArray(value)) {
+    const out = value.map((v) => maskedInput(v, over));
+    return out.every((v, i) => v === value[i]) ? value : out;
+  }
+  if (isObject(value) && !ArrayBuffer.isView(value)) {
+    let changed = false;
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = maskedInput(v, over);
+      changed ||= out[k] !== v;
+    }
+    return changed ? out : value;
+  }
+  return value;
+}
+
+/** The strings of value that shown carries as their inputPlaceholder (walked in parallel). Proxy cleared_inputs. */
+function clearedInputs(value, shown) {
+  if (typeof value === "string") return typeof shown === "string" && shown !== value && shown === inputPlaceholder(value) ? [value] : [];
+  if (Array.isArray(value) && Array.isArray(shown)) return value.flatMap((v, i) => (i < shown.length ? clearedInputs(v, shown[i]) : []));
+  if (isObject(value) && isObject(shown)) return Object.entries(value).flatMap(([k, v]) => (k in shown ? clearedInputs(v, shown[k]) : []));
+  return [];
+}
+
 /** How to get back a result shown as a maskPlaceholder; same text as mask_text in proxy/smarter_compact/core.py. */
 export function maskText(sid, names = LEGACY_RECALL_NAMES) {
   return `Older tool outputs in your context read "${MASK_PREFIX} smart_compact_get(id="<id>") returns it]". `
@@ -877,7 +964,8 @@ export function scratchpadNudge(sid, names) {
     + `scratchpad yet, create one with ${names.scratchpad}(session_id="${sid}", command="create", `
     + `file_text=...)${load}, at most ${SCRATCHPAD_MAX_CHARS} characters. Write, tersely:\n`
     + "- goal and how it is checked\n- status: what works, what fails\n- decisions and why\n"
-    + "- facts you would otherwise re-discover (paths, commands, values)\n- the exact next step\n"
+    + "- facts you would otherwise re-discover (paths, commands, values)\n"
+    + "- files you wrote (paths) and what each holds\n- the exact next step\n"
     + "No logs, code or command output. It is kept and shown after every trim; if you already have one, update it "
     + "(str_replace) only when the goal, plan or a key fact changed.</compact-scratchpad-nudge>";
 }
@@ -969,23 +1057,24 @@ function proseIds(items, keep, bound, cut, mode) {
 }
 
 /** Shrink sizes (requestChars per message) to what prose stripping (or masking) leaves before the latest run. */
-function proseSizes(items, cut, sizes, mode) {
+function proseSizes(items, cut, sizes, mode, inputs = 0) {
   const keep = new Set(items.keys());
   const bound = latestRunStart(items);
   const ids = proseIds(items, keep, bound, cut, mode);
   if (!ids.size) return;
   for (const j of proseRegion(items, keep, bound, cut, mode)) {
-    const x = mode === "mask" ? maskResults(items[j], ids) : withoutToolCalls(items[j], ids);
+    const x = mode === "mask" ? maskInputs(maskResults(items[j], ids), ids, inputs) : withoutToolCalls(items[j], ids);
     sizes[j] = x === null ? 0 : requestChars(x);
   }
 }
 
-/** requestChars per message after prose stripping or masking (mode) and clearing before `clear`. Proxy _trim_sizes. */
-function trimSizes(items, cut, mode, clear, first) {
+/** requestChars per message after prose stripping or masking (mode) and clearing before `clear`, inputs over `inputs` chars included. Proxy _trim_sizes. */
+function trimSizes(items, cut, mode, clear, first, inputs = 0) {
   const sizes = items.map((x) => requestChars(x));
-  if (mode) proseSizes(items, cut, sizes, mode);
+  if (mode) proseSizes(items, cut, sizes, mode, inputs);
+  const calls = inputs > 0 ? clearedCalls(items, clear, first) : null;
   for (let j = 0; j < (clear ?? 0); j++) {
-    const x = cleared(items[j], j, clear, first);
+    const x = cleared(items[j], j, clear, first, inputs, calls);
     if (x !== items[j]) sizes[j] = Math.min(sizes[j], requestChars(x));
   }
   return sizes;
@@ -1255,7 +1344,8 @@ async function trimSession(request, settings, deps, { original, sid, store, item
     const mode = regionMode(settings);
     // The items as sent: the recorded nudge stays on its item, byte-identical, until the next trim.
     let sent = nudged(items, nudgeAt, threads.has(root) ? thread.nudge : null);
-    let rendered = render(sent, cut, note, first, gap, decorate, strip, clear, mode, shown);
+    const inputs = settings.clearInputsOverChars ?? 0;
+    let rendered = render(sent, cut, note, first, gap, decorate, strip, clear, mode, shown, inputs);
     const force = store.forceRequested(sid);
     const ratio = settings.charsPerToken > 0 ? settings.charsPerToken : DEFAULT_CHARS_PER_TOKEN;
     const toolNames = recallToolNames(request.tools);
@@ -1278,13 +1368,13 @@ async function trimSession(request, settings, deps, { original, sid, store, item
       if (nextClearAt !== null && first !== null) {
         // Clearing first: the current cut, or the first user turn (dropping nothing), with the newer bound.
         const [anchor, anchorGap] = cut !== null ? [cut, gap] : [first, null];
-        if (under(trimSizes(items, anchor, mode, nextClearAt, first), anchor, anchorGap, clearBound)) [next, nextGap] = [anchor, anchorGap];
+        if (under(trimSizes(items, anchor, mode, nextClearAt, first, inputs), anchor, anchorGap, clearBound)) [next, nextGap] = [anchor, anchorGap];
       }
       if (next === null) {
         next = chooseCut(items, cut === null ? -1 : cut, first);
         if (next === null) next = cut !== null ? cut : lastTurnIndex(items);
         if (next !== null) {
-          const sizes = trimSizes(items, next, mode, nextClearAt, first);
+          const sizes = trimSizes(items, next, mode, nextClearAt, first, inputs);
           const after = next === cut && gap !== null ? gap : next + 1;
           nextGap = chooseGap(items, next, after, first, (g) => under(sizes, next, g));
           if (nextGap === null && next === cut) nextGap = gap;
@@ -1293,10 +1383,10 @@ async function trimSession(request, settings, deps, { original, sid, store, item
       let dropped = next !== null ? droppable(items, next, nextGap, first).length : 0;
       let moved = dropped > 0 && (next !== cut || nextGap !== gap);
       // A newer clear bound alone moves the trim when it masks a result the current bound left whole.
-      if (next !== null && !moved) moved = clearsMore(items, keptIndices(items, next, nextGap, first), clear, nextClearAt, first);
+      if (next !== null && !moved) moved = clearsMore(items, keptIndices(items, next, nextGap, first), clear, nextClearAt, first, inputs);
       const nextShown = new Map();
       if (moved) {
-        const bare = render(items, next, "", first, nextGap, decorate, latestRunStart(items), nextClearAt, mode, nextShown);
+        const bare = render(items, next, "", first, nextGap, decorate, latestRunStart(items), nextClearAt, mode, nextShown, inputs);
         if (!force && settings.trimMinGainTokens > 0) {
           // A cut freeing fewer estimated tokens (pointer note not counted) waits for a bigger one.
           moved = tokens - estimatePromptTokens(baseChars + requestChars(bare), state.usage, root, ratio) >= settings.trimMinGainTokens;
@@ -1307,7 +1397,7 @@ async function trimSession(request, settings, deps, { original, sid, store, item
         // The pointer counts every message absent from the view: dropped, or emptied by the strip.
         dropped = items.length - nextShown.size;
         const masked = (mode === "mask" || nextClearAt !== null) && [...nextShown].some(([j, x]) => x !== items[j]
-          && JSON.stringify(x.content ?? null).includes(MASK_PREFIX));
+          && [MASK_PREFIX, INPUT_MASK_PREFIX].some((prefix) => JSON.stringify(x.content ?? null).includes(prefix)));
         if (dropped || !masked) {
           note = pointerText(sid, dropped, toolNames);
           if (settings.progressNote) note = withProgress(items, next, nextGap, first, settings, note);
@@ -1329,7 +1419,7 @@ async function trimSession(request, settings, deps, { original, sid, store, item
         store.saveTrim(sid, state);
         if (force) store.clearForce(sid);
         shown = new Map();
-        rendered = render(items, next, note, first, nextGap, decorate, strip, nextClearAt, mode, shown);
+        rendered = render(items, next, note, first, nextGap, decorate, strip, nextClearAt, mode, shown, inputs);
         cut = next;
         gap = nextGap;
         clear = nextClearAt;
@@ -1353,7 +1443,7 @@ async function trimSession(request, settings, deps, { original, sid, store, item
         store.saveTrim(sid, state);
         sent = nudged(items, last, text);
         shown = new Map();
-        rendered = render(sent, cut, note, first, gap, decorate, strip, clear, mode, shown);
+        rendered = render(sent, cut, note, first, gap, decorate, strip, clear, mode, shown, inputs);
         nudge = { tokens_before: tokens };
       }
     }

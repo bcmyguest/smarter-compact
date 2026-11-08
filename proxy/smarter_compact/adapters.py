@@ -7,7 +7,7 @@ its inputs: methods that change an item return a shallow copy.
 import json
 import re
 
-from .compress import compress_text, compressed_blob_id, mask_placeholder
+from .compress import compress_text, compressed_blob_id, mask_placeholder, masked_input
 
 _REMINDER_RE = re.compile(r"<system-reminder>.*?</system-reminder>", re.DOTALL)
 _RESULT_TYPES = ("function_call_output", "custom_tool_call_output", "local_shell_call_output")
@@ -40,6 +40,24 @@ def _compact_json(value):
         except ValueError:
             return value
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=False)
+
+
+def _json_args(raw):
+    """A JSON-string arguments value parsed, or None when it is not a JSON object or array."""
+    if not isinstance(raw, str):
+        return None
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        return None
+    return value if isinstance(value, (dict, list)) else None
+
+
+def _masked_args(raw, over):
+    """JSON-string arguments with masked_input applied, re-encoded compactly; raw itself when none changes."""
+    value = _json_args(raw)
+    masked = masked_input(value, over) if value is not None else value
+    return raw if masked is value else json.dumps(masked, ensure_ascii=False, separators=(",", ":"))
 
 
 def _parts_text(parts, text_types):
@@ -216,6 +234,24 @@ class AnthropicAdapter:
             return block
         return {**block, "content": placeholder}
 
+    def masked_inputs(self, item, ids, over):
+        """The message with each tool_use whose id is in ids carrying masked_input(input, over): the same object when
+        none changes."""
+        content = item.get("content")
+        if not isinstance(content, list) or over <= 0:
+            return item
+        out = []
+        for b in content:
+            hit = isinstance(b, dict) and b.get("type") == "tool_use" and b.get("id") in ids and "input" in b
+            new = masked_input(b["input"], over) if hit else None
+            out.append({**b, "input": new} if hit and new is not b["input"] else b)
+        return item if all(a is b for a, b in zip(out, content)) else {**item, "content": out}
+
+    def call_inputs(self, item):
+        """{id: input} of the message's tool_use blocks."""
+        return {b.get("id"): b.get("input") for b in self._blocks(item) or ()
+                if isinstance(b, dict) and b.get("type") == "tool_use"}
+
     def same_role(self, a, b):
         return a.get("role") == b.get("role")
 
@@ -385,6 +421,25 @@ class ChatAdapter:
             return None
         return out
 
+    def masked_inputs(self, item, ids, over):
+        """The message with each tool call whose id is in ids carrying masked_input over its JSON arguments: the
+        same object when none changes."""
+        calls = item.get("tool_calls")
+        if not isinstance(calls, list) or over <= 0:
+            return item
+        out = []
+        for c in calls:
+            fn = c.get("function") if isinstance(c, dict) and c.get("id") in ids else None
+            args = _masked_args(fn.get("arguments"), over) if isinstance(fn, dict) else None
+            out.append({**c, "function": {**fn, "arguments": args}} if args is not None
+                       and args is not fn.get("arguments") else c)
+        return item if all(a is b for a, b in zip(out, calls)) else {**item, "tool_calls": out}
+
+    def call_inputs(self, item):
+        """{id: parsed arguments} of the message's tool calls."""
+        return {c.get("id"): _json_args((c.get("function") or {}).get("arguments"))
+                for c in item.get("tool_calls") or () if isinstance(c, dict)}
+
     def tool_names(self, items):
         names = {}
         for item in items:
@@ -502,6 +557,27 @@ class ResponsesAdapter:
         if item.get("type") == "reasoning" and _litellm_thinking(item.get("encrypted_content")):
             return None
         return item
+
+    def masked_inputs(self, item, ids, over):
+        """The call item, its call_id in ids, with masked_input over its arguments (JSON), input or action: the same
+        object when none changes."""
+        if item.get("type") not in _CALL_TYPES or item.get("call_id") not in ids or over <= 0:
+            return item
+        for key in ("arguments", "input", "action"):
+            if key in item:
+                raw = item[key]
+                new = _masked_args(raw, over) if key == "arguments" else masked_input(raw, over)
+                return item if new is raw else {**item, key: new}
+        return item
+
+    def call_inputs(self, item):
+        """{call_id: input} of a call item (arguments parsed)."""
+        if item.get("type") not in _CALL_TYPES:
+            return {}
+        for key in ("arguments", "input", "action"):
+            if key in item:
+                return {item.get("call_id"): _json_args(item[key]) if key == "arguments" else item[key]}
+        return {}
 
     def tool_names(self, items):
         return {i.get("call_id"): i.get("name", "shell" if i.get("type") == "local_shell_call" else None)

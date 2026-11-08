@@ -21,7 +21,7 @@ from . import sessiondb
 from . import status as status_mod
 from . import ttl as ttl_mod
 from .adapters import AnthropicAdapter, UnsupportedCallType, adapter_for
-from .compress import MASK_PREFIX, blob_id, compressed_blob_id, mask_placeholder
+from .compress import INPUT_MASK_PREFIX, MASK_PREFIX, blob_id, cleared_inputs, compressed_blob_id, mask_placeholder
 from .session import resolve_session_id
 from .settings import Settings
 from .store import Store, session_lock
@@ -266,7 +266,8 @@ def scratchpad_nudge(sid, names):
         f"scratchpad yet, create one with {names['scratchpad']}(session_id=\"{sid}\", command=\"create\", "
         f"file_text=...){load}, at most {SCRATCHPAD_MAX_CHARS} characters. Write, tersely:\n"
         f"- goal and how it is checked\n- status: what works, what fails\n- decisions and why\n"
-        f"- facts you would otherwise re-discover (paths, commands, values)\n- the exact next step\n"
+        f"- facts you would otherwise re-discover (paths, commands, values)\n"
+        f"- files you wrote (paths) and what each holds\n- the exact next step\n"
         f"No logs, code or command output. It is kept and shown after every trim; if you already have one, update it "
         f"(str_replace) only when the goal, plan or a key fact changed.</compact-scratchpad-nudge>"
     )
@@ -385,21 +386,22 @@ def choose_gap(adapter, items, cut, after, first, fits):
 
 
 def render(adapter, items, cut, note, first=None, gap=None, strip=None, prose=False, shown=None, clear=None,
-           evict=None):
+           evict=None, inputs=0):
     """The kept items (kept_indices) in order, the cut turn carrying the note, with signed reasoning stripped from
     kept assistant items before `strip` (default: the latest assistant run; see strip_reasoning), and with prose
     their tool call/result pairs too (prose_ids), or with prose == "mask" those results masked instead; every tool
     result before `clear` is masked too (CONTEXT_CLEAR_KEEP_RESULTS), and every result whose call id is in `evict`
-    (CONTEXT_EVICTION). shown, when given, gets the strip_reasoning index map."""
+    (CONTEXT_EVICTION). Wherever a result is masked so are its call's input strings over `inputs` chars
+    (CONTEXT_CLEAR_INPUTS_OVER_CHARS). shown, when given, gets the strip_reasoning index map."""
     if cut is None:
-        view = [_evicted(adapter, x, j, evict, first) for j, x in enumerate(items)] if evict else items
+        view = [_evicted(adapter, x, j, evict, first, inputs) for j, x in enumerate(items)] if evict else items
         if shown is not None:
             shown.update(enumerate(view))
         return view
     keep = kept_indices(adapter, items, cut, gap, first)
     run = latest_run_start(adapter, items)
     return strip_reasoning(adapter, items, keep, run if strip is None else min(strip, run), cut, note, prose, shown,
-                           clear, first, evict)
+                           clear, first, evict, inputs)
 
 
 def latest_run_start(adapter, items):
@@ -413,7 +415,7 @@ def latest_run_start(adapter, items):
 
 
 def strip_reasoning(adapter, items, keep, bound, cut, note, prose=False, shown=None, clear=None, first=None,
-                    evict=None):
+                    evict=None, inputs=0):
     """The kept items, the cut turn carrying the note, with signed reasoning removed from assistant items before
     `bound`.
 
@@ -428,11 +430,13 @@ def strip_reasoning(adapter, items, keep, bound, cut, note, prose=False, shown=N
 
     Every tool_result of a kept item before `clear` (the first user turn and pinned items aside) also becomes
     its mask_placeholder; its tool_use and the item's other blocks stay (_cleared). So does every result whose call
-    id is in evict (_evicted).
+    id is in evict (_evicted). Each masked result's call also gets its input strings over `inputs` chars masked
+    (_masked_inputs).
 
     shown, when given, maps the index of every item that reaches the view to its stripped form (no note, unmerged).
     """
     ids = prose_ids(adapter, items, keep, bound, cut, prose) if prose else set()
+    calls = _cleared_calls(adapter, items, clear, first) if inputs > 0 else set()
     out = []
     mergeable = False
     for j, x in enumerate(items):
@@ -445,13 +449,13 @@ def strip_reasoning(adapter, items, keep, bound, cut, note, prose=False, shown=N
                 if x is None:
                     continue
             if ids and not adapter.is_pinned(x) and prose == "mask":
-                x = adapter.masked_results(x, ids)
+                x = _masked_inputs(adapter, adapter.masked_results(x, ids), ids, inputs)
             elif ids and not adapter.is_pinned(x):
                 x = adapter.without_tool_calls(x, ids)
                 if x is None:
                     continue
                 region = True
-        x = _evicted(adapter, _cleared(adapter, x, j, clear, first), j, evict, first)
+        x = _evicted(adapter, _cleared(adapter, x, j, clear, first, inputs, calls), j, evict, first, inputs)
         if shown is not None:
             shown[j] = x
         if j == cut:
@@ -464,19 +468,37 @@ def strip_reasoning(adapter, items, keep, bound, cut, note, prose=False, shown=N
     return out
 
 
-def _cleared(adapter, x, j, clear, first):
-    """x with every tool_result masked when items[j] sits before the clear bound; x itself otherwise."""
+def _cleared(adapter, x, j, clear, first, inputs=0, calls=()):
+    """x with every tool_result masked when items[j] sits before the clear bound, and the inputs of its calls in
+    calls (_cleared_calls) over `inputs` chars; x itself otherwise."""
     if clear is None or j >= clear or j == first or adapter.is_pinned(x):
         return x
-    return adapter.masked_results(x, adapter.result_ids(x))
+    return _masked_inputs(adapter, adapter.masked_results(x, adapter.result_ids(x)), calls, inputs)
 
 
-def _evicted(adapter, x, j, evict, first):
-    """x with each tool result whose call id is in evict masked (CONTEXT_EVICTION); x itself when none is."""
+def _cleared_calls(adapter, items, clear, first):
+    """Call ids whose result the clear bound clears: every result of an item before it (first and pinned aside)."""
+    if clear is None:
+        return set()
+    return set().union(*(adapter.result_ids(items[j]) for j in range(min(clear, len(items)))
+                         if j != first and not adapter.is_pinned(items[j]))) - {None}
+
+
+def _masked_inputs(adapter, x, ids, inputs):
+    """x with the input strings over `inputs` chars of its calls in ids masked; x itself when off or none is."""
+    if inputs <= 0 or not ids or not hasattr(adapter, "masked_inputs"):
+        return x
+    found = adapter.call_ids(x) & ids
+    return adapter.masked_inputs(x, found, inputs) if found else x
+
+
+def _evicted(adapter, x, j, evict, first, inputs=0):
+    """x with each tool result whose call id is in evict masked (CONTEXT_EVICTION), and those calls' inputs over
+    `inputs` chars; x itself when none is."""
     if not evict or j == first or adapter.is_pinned(x):
         return x
     ids = adapter.result_ids(x) & evict
-    return adapter.masked_results(x, ids) if ids else x
+    return _masked_inputs(adapter, adapter.masked_results(x, ids) if ids else x, evict, inputs)
 
 
 def _eviction(adapter, items, thread, settings, first):
@@ -502,19 +524,22 @@ def _evict_state(thread):
     return {k: v for k, v in (thread or {}).items() if k in EVICT_KEYS}
 
 
-def _clears_more(adapter, items, keep, old, new, first):
-    """Whether bound new masks a result of a kept item that bound old leaves whole."""
-    return new is not None and any(_cleared(adapter, items[j], j, new, first) is not items[j]
+def _clears_more(adapter, items, keep, old, new, first, inputs=0):
+    """Whether bound new masks a result (or an input) of a kept item that bound old leaves whole."""
+    calls = _cleared_calls(adapter, items, new, first) if inputs > 0 else set()
+    return new is not None and any(_cleared(adapter, items[j], j, new, first, inputs, calls) is not items[j]
                                    for j in keep if old is None or j >= old)
 
 
-def _trim_sizes(adapter, items, cut, mode, clear, first):
-    """request_chars per item after prose stripping or masking (mode) and clearing before `clear`."""
+def _trim_sizes(adapter, items, cut, mode, clear, first, inputs=0):
+    """request_chars per item after prose stripping or masking (mode) and clearing before `clear`, cleared and masked
+    inputs over `inputs` chars included."""
     sizes = [request_chars(x) for x in items]
     if mode:
-        _prose_sizes(adapter, items, cut, sizes, mode)
+        _prose_sizes(adapter, items, cut, sizes, mode, inputs)
+    calls = _cleared_calls(adapter, items, clear, first) if inputs > 0 else set()
     for j in range(clear or 0):
-        x = _cleared(adapter, items[j], j, clear, first)
+        x = _cleared(adapter, items[j], j, clear, first, inputs, calls)
         if x is not items[j]:
             sizes[j] = min(sizes[j], request_chars(x))
     return sizes
@@ -637,7 +662,7 @@ def _command_status(result):
     return "failed" if is_error else "ok"
 
 
-def _prose_sizes(adapter, items, cut, sizes, mode=True):
+def _prose_sizes(adapter, items, cut, sizes, mode=True, inputs=0):
     """Shrink sizes (request_chars per item) to what prose stripping (or masking) leaves of each item before the
     latest run."""
     keep = set(range(len(items)))
@@ -646,7 +671,7 @@ def _prose_sizes(adapter, items, cut, sizes, mode=True):
     if not ids:
         return
     for j in _prose_region(adapter, items, keep, bound, cut, mode):
-        x = adapter.masked_results(items[j], ids) if mode == "mask" \
+        x = _masked_inputs(adapter, adapter.masked_results(items[j], ids), ids, inputs) if mode == "mask" \
             else adapter.without_tool_calls(items[j], ids)
         sizes[j] = request_chars(x) if x is not None else 0
 
@@ -697,7 +722,8 @@ def _rows_kept(adapter, shown, sent, item, names):
 
 
 def _write_masked_blobs(store, adapter, sent, shown):
-    """Write blobs/<id>.txt for each result the view shows as its mask_placeholder, before the request leaves.
+    """Write blobs/<id>.txt for each result the view shows as its mask_placeholder, and each tool-input string it
+    shows as its input_placeholder, before the request leaves.
 
     sent: the items render saw; shown: render's index map. A compressed result's blob already exists."""
     if not hasattr(adapter, "masked_results"):
@@ -708,6 +734,12 @@ def _write_masked_blobs(store, adapter, sent, shown):
         now = adapter.tool_results(x)
         for rid, (_, text) in adapter.tool_results(sent[j]).items():
             if rid in now and now[rid][1] == mask_placeholder(text) and compressed_blob_id(text) is None:
+                store.write_blob(blob_id(text), text)
+        if not hasattr(adapter, "call_inputs"):
+            continue
+        shown_inputs = adapter.call_inputs(x)
+        for cid, value in adapter.call_inputs(sent[j]).items():
+            for text in cleared_inputs(value, shown_inputs[cid]) if cid in shown_inputs else ():
                 store.write_blob(blob_id(text), text)
 
 
@@ -811,14 +843,15 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
             store.save_trim(sid, state)
         # The items as sent: the recorded nudge stays on its item, byte-identical, until the next trim.
         sent = _nudged(adapter, items, nudge_at, threads.get(root, {}).get("nudge"))
-        view = render(adapter, sent, cut, note, first, gap, strip, mode, shown, clear, evict)
+        inputs = settings.clear_inputs_over_chars
+        view = render(adapter, sent, cut, note, first, gap, strip, mode, shown, clear, evict, inputs)
         force = store.force_requested(sid)
         ratio = settings.chars_per_token if settings.chars_per_token > 0 else DEFAULT_CHARS_PER_TOKEN
         base_chars = request_chars(*context)
         tokens = estimate_prompt_tokens(base_chars + request_chars(view), state.get("usage"), root, ratio)
         evict_event = None
         if evicted:
-            before = render(adapter, sent, cut, note, first, gap, strip, mode, None, clear, evict - evicted)
+            before = render(adapter, sent, cut, note, first, gap, strip, mode, None, clear, evict - evicted, inputs)
             evict_event = {"tokens_before": estimate_prompt_tokens(base_chars + request_chars(before),
                                                                    state.get("usage"), root, ratio),
                            "tokens_after": tokens, "dropped": len(evicted)}
@@ -832,7 +865,7 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
             if new_clear is not None and first is not None:
                 # Clearing first: the current cut, or the first user turn (dropping nothing), with the newer bound.
                 anchor, anchor_gap = (cut, gap) if cut is not None else (first, None)
-                sizes = _trim_sizes(adapter, items, anchor, mode, new_clear, first)
+                sizes = _trim_sizes(adapter, items, anchor, mode, new_clear, first, inputs)
                 chars = base_chars + sum(sizes[j] for j in kept_indices(adapter, items, anchor, anchor_gap, first))
                 # Accepted under clear_fit x trim_at, not just target; the headroom below trim_at defers the next trim.
                 if estimate_prompt_tokens(chars, state.get("usage"), root, ratio) < max(target,
@@ -843,7 +876,7 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                 if new_cut is None:
                     new_cut = cut if cut is not None else last_turn_index(adapter, items)
                 if new_cut is not None:
-                    sizes = _trim_sizes(adapter, items, new_cut, mode, new_clear, first)
+                    sizes = _trim_sizes(adapter, items, new_cut, mode, new_clear, first, inputs)
 
                     def fits(g):
                         chars = base_chars + sum(sizes[j] for j in kept_indices(adapter, items, new_cut, g, first))
@@ -858,11 +891,11 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
             if new_cut is not None and not moved:
                 # A newer clear bound alone moves the trim when it masks a result the current bound left whole.
                 moved = _clears_more(adapter, items, kept_indices(adapter, items, new_cut, new_gap, first), clear,
-                                     new_clear, first)
+                                     new_clear, first, inputs)
             if moved:
                 new_strip, new_shown = latest_run_start(adapter, items), {}
                 bare = render(adapter, items, new_cut, "", first, new_gap, new_strip, mode, new_shown, new_clear,
-                              evict)
+                              evict, inputs)
                 if not force and settings.trim_min_gain_tokens > 0:
                     # A cut freeing fewer estimated tokens (pointer note not counted) waits for a bigger one.
                     freed = tokens - estimate_prompt_tokens(base_chars + request_chars(bare), state.get("usage"), root, ratio)
@@ -872,7 +905,8 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                 dropped = len(items) - len(new_shown)
                 names = recall_tool_names(request_tool_names(data))
                 masked = (mode == "mask" or new_clear is not None) and any(
-                    x is not items[j] and MASK_PREFIX in str(x.get("content")) for j, x in new_shown.items())
+                    x is not items[j] and (MASK_PREFIX in str(x.get("content")) or INPUT_MASK_PREFIX in str(x))
+                    for j, x in new_shown.items())
                 if dropped or not masked:
                     note = pointer_text(sid, dropped, names)
                     if settings.progress_note:
@@ -903,7 +937,8 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                 if force:
                     store.clear_force(sid)
                 shown = {}
-                view = render(adapter, items, new_cut, note, first, new_gap, strip, mode, shown, new_clear, evict)
+                view = render(adapter, items, new_cut, note, first, new_gap, strip, mode, shown, new_clear, evict,
+                              inputs)
                 cut, gap, clear = new_cut, new_gap, new_clear
                 after = estimate_prompt_tokens(base_chars + request_chars(view), state.get("usage"), root, ratio)
                 trim = {"tokens_before": tokens, "tokens_after": after, "dropped": dropped}
@@ -928,7 +963,7 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                     threads.pop(next(iter(threads)))
                 store.save_trim(sid, state)
                 sent, shown = _nudged(adapter, items, len(items) - 1, text), {}
-                view = render(adapter, sent, cut, note, first, gap, strip, mode, shown, clear, evict)
+                view = render(adapter, sent, cut, note, first, gap, strip, mode, shown, clear, evict, inputs)
                 nudge = {"tokens_before": tokens}
         _write_masked_blobs(store, adapter, sent, shown)
         _store_messages(store, sid, adapter, original, sent, cut, shown, settings)
