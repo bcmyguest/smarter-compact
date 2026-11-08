@@ -6,6 +6,7 @@ process_usage(kwargs, response) after each success; tests call them directly.
 
 import hashlib
 import json
+import os
 import re
 import sys
 import threading
@@ -180,6 +181,18 @@ def _where(exc):
 def _log_error(exc):
     """One stderr line: exception type and location only, never message content."""
     print(f"smarter-compact: fail-open {type(exc).__name__} at {_where(exc)}", file=sys.stderr, flush=True)
+
+
+def _log_shape(sid, call_type, data, items, adapter):
+    """CONTEXT_DEBUG_SHAPES=1: one stderr line per request with its shape as received; counts only, never content."""
+    system = data.get("system")
+    system_chars = len(system) if isinstance(system, str) else len(json.dumps(system)) if system else 0
+    tools = data.get("tools")
+    roots = [x for x in items if not adapter.is_pinned(x)]
+    roles = "".join((x.get("role") or x.get("type") or "?")[0] for x in items[-12:])
+    print(f"smarter-compact: shape sid={sid} call={call_type} items={len(items)} pinned={len(items) - len(roots)} "
+          f"system_chars={system_chars} tools={len(tools) if isinstance(tools, list) else 0} "
+          f"root={fingerprint(roots[0])[:8] if roots else '-'} tail_roles={roles}", file=sys.stderr, flush=True)
 
 
 def _record_event(store, sid, kind, **fields):
@@ -680,6 +693,8 @@ def _rewrite(data, call_type, settings, route, call_id):
         items = [adapter.compress_item(x, settings.compress_over_tokens, store.write_blob) for x in original]
 
     sid = resolve_session_id(data, adapter, original)
+    if os.environ.get("CONTEXT_DEBUG_SHAPES") == "1":
+        _log_shape(sid, call_type, data, original, adapter)
     try:
         return _rewrite_session(data, adapter, original, items, sid, store, settings, call_id)
     except Exception as exc:

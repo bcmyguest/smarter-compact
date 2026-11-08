@@ -107,6 +107,10 @@ http_headers = { "x-litellm-api-key" = "Bearer <LITELLM_MASTER_KEY>" }
 
 `smarter-compact enable codex` writes this block and keeps ChatGPT login via `requires_openai_auth`.
 
+## Debug request shapes
+
+Set `CONTEXT_DEBUG_SHAPES=1` (environment or `~/.config/smarter-compact/proxy.env`) and restart the proxy. Each request then writes one line to `~/.config/smarter-compact/proxy.log`, as received from the client: item count, pinned items, system prompt size in characters, tool count, the thread root fingerprint and the roles of the last 12 items. It logs counts only, never message content. Use it to tell whether a short request left the client short or was cut in the proxy.
+
 ## Run it in Docker (from this repo)
 
 `compose.yaml` at the repo root runs the same proxy without installing LiteLLM: it starts the pinned LiteLLM image with `./proxy` mounted at `/app/proxy`, so **the requests are rewritten by the code in this checkout** — `docker compose restart context-proxy` is the deploy step.
