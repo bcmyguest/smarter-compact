@@ -73,11 +73,20 @@ test("ensureLitellm installs with uv when litellm is missing", () => {
 test("ensureLitellm upgrades an old litellm in uv's bin dir", () => {
   const bin = tmpDir("sc-ll-");
   litellmStub(bin, "1.105.1");
-  uvStub(bin, { bin, version: "1.110.0.dev1" });
-  assert.deepEqual(ensureLitellm({ env: { PATH: bin } }), { ok: true, status: "installed", version: "1.110.0.dev1" });
+  uvStub(bin, { bin });
+  assert.deepEqual(ensureLitellm({ env: { PATH: bin } }), { ok: true, status: "installed", version: "1.109.0rc1" });
 });
 
-test("ensureLitellm replaces a 1.109.0 dev build, which predates the minimum", () => {
+test("ensureLitellm replaces a newer litellm with the pinned one", () => {
+  const bin = tmpDir("sc-ll-");
+  const log = path.join(bin, "uv.log");
+  litellmStub(bin, "1.110.0.dev1");
+  uvStub(bin, { bin });
+  assert.deepEqual(ensureLitellm({ env: { PATH: bin } }), { ok: true, status: "installed", version: "1.109.0rc1" });
+  assert.equal(fs.readFileSync(log, "utf8"), "tool install --force litellm[proxy]==1.109.0rc1\n");
+});
+
+test("ensureLitellm replaces a 1.109.0 dev build, which predates the pin", () => {
   const bin = tmpDir("sc-ll-");
   litellmStub(bin, "1.109.0.dev2");
   uvStub(bin, { bin });

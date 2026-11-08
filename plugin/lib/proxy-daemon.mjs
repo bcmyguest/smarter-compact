@@ -71,9 +71,16 @@ function proxyPidPath(home) {
 }
 
 /** Environment for a proxy this package starts: env, then `proxy.env` settings and secrets, then fixed keys. */
+/**
+ * LiteLLM's environment. A proxy started from an agent routed through it (a session hook in Claude Code) inherits
+ * ANTHROPIC_BASE_URL pointing at itself; LiteLLM would forward every call back to its own port, so drop it, and the
+ * client's x-litellm-api-key header with it.
+ */
 export function litellmEnv(home, root, port, env) {
   const merged = withProxyEnvSecrets(env, home);
   ensureProductEnv(merged, home);
+  if (pointsAtProxy(merged.ANTHROPIC_BASE_URL, port)) delete merged.ANTHROPIC_BASE_URL;
+  if (/x-litellm-api-key/i.test(merged.ANTHROPIC_CUSTOM_HEADERS || "")) delete merged.ANTHROPIC_CUSTOM_HEADERS;
   return {
     ...merged,
     PYTHONPATH: path.join(root, "proxy"),
@@ -81,6 +88,15 @@ export function litellmEnv(home, root, port, env) {
     SMARTER_COMPACT_STATE_DIR: stateParent(home, env),
     CONTEXT_PROXY_PORT: port,
   };
+}
+
+function pointsAtProxy(url, port) {
+  try {
+    const u = new URL(url);
+    return ["127.0.0.1", "localhost", "[::1]"].includes(u.hostname) && u.port === String(port);
+  } catch {
+    return false;
+  }
 }
 
 function readJson(file) {

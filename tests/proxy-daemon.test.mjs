@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { ensureProductEnv, resolveProxyPort } from "../plugin/lib/brand.mjs";
 import { agentsPointedAtProxy, configureAgent, proxyEnvPath } from "../plugin/lib/enable.mjs";
 import { upsertEnvFile } from "../plugin/lib/file-io.mjs";
-import { ensureContextProxyRunning, packageRoot, probeContextProxy } from "../plugin/lib/proxy-daemon.mjs";
+import { ensureContextProxyRunning, litellmEnv, packageRoot, probeContextProxy } from "../plugin/lib/proxy-daemon.mjs";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -47,6 +47,19 @@ test("ensure reports litellm-missing at once when litellm is not on PATH", async
   assert.equal(r.status, "spawn-failed");
   assert.equal(r.reason, "litellm-missing");
   assert.ok(Date.now() - started < 3000);
+});
+
+test("litellmEnv drops client settings that point the proxy at itself", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "sc-env-"));
+  const loop = litellmEnv(home, ROOT, "4101", {
+    PATH: process.env.PATH,
+    ANTHROPIC_BASE_URL: "http://127.0.0.1:4101",
+    ANTHROPIC_CUSTOM_HEADERS: "x-litellm-api-key: Bearer k",
+  });
+  assert.equal("ANTHROPIC_BASE_URL" in loop, false);
+  assert.equal("ANTHROPIC_CUSTOM_HEADERS" in loop, false);
+  const upstream = litellmEnv(home, ROOT, "4101", { PATH: process.env.PATH, ANTHROPIC_BASE_URL: "https://gateway.example" });
+  assert.equal(upstream.ANTHROPIC_BASE_URL, "https://gateway.example");
 });
 
 test("resolveProxyPort reads proxy.env when env unset", () => {

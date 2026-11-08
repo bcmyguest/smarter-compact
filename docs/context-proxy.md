@@ -11,7 +11,7 @@ The cut is sticky for prompt-cache stability. **OpenCode 2** applies the same ru
 
 Code: `proxy/smarter_compact/`, `proxy/smarter_compact_hook.py`, `proxy/config.yaml`. Tests: `python3 -m unittest discover -s proxy/tests`.
 
-You need **LiteLLM 1.109.0rc1** (or newer with PR #41522) on `PATH` as `litellm` for Codex ChatGPT pass-through. `smarter-compact enable` checks `litellm --version` and, when it is missing or older, runs `uv tool install --force 'litellm[proxy]>=1.109.0rc1'`. Without uv it stops before it changes any agent config; run the proxy with `docker compose` from a clone instead (see `compose.yaml`). Session hooks only start the proxy; they never install.
+You need **LiteLLM 1.109.0rc1** (pinned; the first release candidate with PR #41522) on `PATH` as `litellm` for Codex ChatGPT pass-through. `smarter-compact enable` checks `litellm --version` and, when it is missing or another version, runs `uv tool install --force 'litellm[proxy]==1.109.0rc1'`. Without uv it stops before it changes any agent config; run the proxy with `docker compose` from a clone instead (see `compose.yaml`). Session hooks only start the proxy; they never install.
 
 ## Proxy port
 

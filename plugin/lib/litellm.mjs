@@ -4,12 +4,12 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { gte } from "@renovatebot/pep440";
+import { eq } from "@renovatebot/pep440";
 
-// The first LiteLLM release candidate with PR #41522, the ChatGPT/Codex subscription pass-through (/backend-api/codex).
-export const LITELLM_MIN = "1.109.0rc1";
-// A pre-release in the specifier lets uv pick pre-releases for litellm alone.
-export const LITELLM_SPEC = `litellm[proxy]>=${LITELLM_MIN}`;
+// Pinned: the first release candidate with PR #41522, the ChatGPT/Codex subscription pass-through
+// (/backend-api/codex). Later dev builds are untested here; move the pin once a stable release carries #41522.
+export const LITELLM_VERSION = "1.109.0rc1";
+export const LITELLM_SPEC = `litellm[proxy]==${LITELLM_VERSION}`;
 export const UV_INSTALL_URL = "https://docs.astral.sh/uv/getting-started/installation/";
 // litellm imports its whole proxy stack before it prints a version.
 const VERSION_TIMEOUT_MS = 60_000;
@@ -40,14 +40,14 @@ export function litellmVersion(env = process.env) {
 
 function current(version) {
   try {
-    return Boolean(version) && gte(version, LITELLM_MIN);
+    return Boolean(version) && eq(version, LITELLM_VERSION);
   } catch {
     return false;
   }
 }
 
 /**
- * Ensure the `litellm` on PATH is at least LITELLM_MIN; install LITELLM_SPEC with `uv tool install --force` when not.
+ * Ensure the `litellm` on PATH is LITELLM_VERSION; install LITELLM_SPEC with `uv tool install --force` when not.
  * `log` receives one line before the install starts; uv's own output goes to stderr.
  */
 export function ensureLitellm({ env = process.env, log = () => {} } = {}) {
@@ -72,7 +72,7 @@ export function litellmProblem(result, product) {
   const docker = `or run the proxy with docker compose from a clone (docs/context-proxy.md)`;
   switch (result.reason) {
     case "uv-missing":
-      return `litellm >= ${LITELLM_MIN} is not on PATH${result.found ? ` (found ${result.found})` : ""} and uv is missing. Install uv (${UV_INSTALL_URL}) and run ${product} enable again, ${docker}.`;
+      return `litellm ${LITELLM_VERSION} is not on PATH${result.found ? ` (found ${result.found})` : ""} and uv is missing. Install uv (${UV_INSTALL_URL}) and run ${product} enable again, ${docker}.`;
     case "install-failed":
       return `uv tool install ${LITELLM_SPEC} failed (output above). Fix it and run ${product} enable again, ${docker}.`;
     case "shadowed":

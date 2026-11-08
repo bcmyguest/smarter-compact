@@ -14,13 +14,13 @@ import { installCursorPlugin } from "../lib/install-cursor.mjs";
 import { addPluginMarketplace, PLUGIN_AGENTS } from "../lib/plugins-cli.mjs";
 import { runContextCommand } from "../lib/context-config.mjs";
 import { ensureContextProxyRunning, litellmEnv, packageRoot, probeContextProxy } from "../lib/proxy-daemon.mjs";
-import { ensureLitellm, litellmProblem, LITELLM_MIN } from "../lib/litellm.mjs";
+import { ensureLitellm, litellmProblem, LITELLM_VERSION } from "../lib/litellm.mjs";
 import { summarizeEvents } from "../lib/session-db.mjs";
 
 ensureProductEnv();
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const LITELLM_MISSING = `litellm is not on PATH. Run ${PRODUCT} enable, which installs litellm >= ${LITELLM_MIN} with uv`;
+const LITELLM_MISSING = `litellm is not on PATH. Run ${PRODUCT} enable, which installs litellm ${LITELLM_VERSION} with uv`;
 
 function repoRoot() {
   return packageRoot(import.meta.url);
