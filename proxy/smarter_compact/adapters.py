@@ -7,7 +7,13 @@ its inputs: methods that change an item return a shallow copy.
 import json
 import re
 
-from .compress import compress_text, compressed_blob_id, mask_placeholder, masked_input
+from .compress import (
+    DEDUP_PREFIX,
+    compress_text,
+    compressed_blob_id,
+    mask_placeholder,
+    masked_input,
+)
 
 _REMINDER_RE = re.compile(r"<system-reminder>.*?</system-reminder>", re.DOTALL)
 _RESULT_TYPES = ("function_call_output", "custom_tool_call_output", "local_shell_call_output")
@@ -112,6 +118,27 @@ def _compress_content(content, over_tokens, text_type):
             block["cache_control"] = content[-1]["cache_control"]
         return [block], res[1], text
     return None
+
+
+def _full_text(content, text_types):
+    """A tool result's text when it is a string or only text parts; None otherwise (an image or file differs)."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list) and content:
+        return _parts_text(content, text_types)
+    return None
+
+
+def _replaced_content(content, text, text_type):
+    """A tool result's content replaced by text: a string for a string, else one text block that keeps the last
+    block's type and cache_control (as _compress_content does)."""
+    if not isinstance(content, list) or not content:
+        return text
+    last = content[-1] if isinstance(content[-1], dict) else {}
+    block = {"type": last.get("type", text_type), "text": text}
+    if "cache_control" in last:
+        block["cache_control"] = last["cache_control"]
+    return [block]
 
 
 def _without_thinking_blocks(content):
@@ -233,10 +260,31 @@ class AnthropicAdapter:
 
     @staticmethod
     def _masked(block):
-        placeholder = mask_placeholder(_plain_text(block.get("content", ""), ("text",)))
-        if len(_compact_json(block.get("content", ""))) <= len(placeholder):
+        text = _plain_text(block.get("content", ""), ("text",))
+        placeholder = mask_placeholder(text)
+        if len(_compact_json(block.get("content", ""))) <= len(placeholder) or text.startswith(DEDUP_PREFIX):
             return block
         return {**block, "content": placeholder}
+
+    def result_texts(self, item):
+        """{tool_use_id: text} of the message's tool_result blocks whose content is text only (CONTEXT_DEDUP_RESULTS)."""
+        out = {}
+        for b in self._blocks(item) or ():
+            if isinstance(b, dict) and b.get("type") == "tool_result":
+                text = _full_text(b.get("content", ""), ("text",))
+                if text is not None:
+                    out[b.get("tool_use_id")] = text
+        return out
+
+    def replaced_result(self, item, rid, text):
+        """The message with the content of tool_result rid replaced by text (other keys kept)."""
+        content = item.get("content")
+        if not isinstance(content, list):
+            return item
+        out = [{**b, "content": _replaced_content(b.get("content"), text, "text")}
+               if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id") == rid else b
+               for b in content]
+        return item if all(a is b for a, b in zip(out, content)) else {**item, "content": out}
 
     def masked_inputs(self, item, ids, over):
         """The message with each tool_use whose id is in ids carrying masked_input(input, over): the same object when
@@ -429,6 +477,17 @@ class ChatAdapter:
             return None
         return out
 
+    def result_texts(self, item):
+        """{tool_call_id: text} of a tool message whose content is text only (CONTEXT_DEDUP_RESULTS)."""
+        text = _full_text(item.get("content"), ("text",)) if item.get("role") == "tool" else None
+        return {} if text is None else {item.get("tool_call_id"): text}
+
+    def replaced_result(self, item, rid, text):
+        """The tool message rid with its content replaced by text."""
+        if item.get("role") != "tool" or item.get("tool_call_id") != rid:
+            return item
+        return {**item, "content": _replaced_content(item.get("content"), text, "text")}
+
     def masked_inputs(self, item, ids, over):
         """The message with each tool call whose id is in ids carrying masked_input over its JSON arguments: the
         same object when none changes."""
@@ -569,6 +628,17 @@ class ResponsesAdapter:
         if item.get("type") == "reasoning" and _litellm_thinking(item.get("encrypted_content")):
             return None
         return item
+
+    def result_texts(self, item):
+        """{call_id: text} of a tool output item whose output is text only (CONTEXT_DEDUP_RESULTS)."""
+        text = _full_text(item.get("output"), self._TEXT_TYPES) if item.get("type") in _RESULT_TYPES else None
+        return {} if text is None else {item.get("call_id"): text}
+
+    def replaced_result(self, item, rid, text):
+        """The tool output item rid with its output replaced by text."""
+        if item.get("type") not in _RESULT_TYPES or item.get("call_id") != rid:
+            return item
+        return {**item, "output": _replaced_content(item.get("output"), text, "input_text")}
 
     def masked_inputs(self, item, ids, over):
         """The call item, its call_id in ids, with masked_input over its arguments (JSON), input or action: the same

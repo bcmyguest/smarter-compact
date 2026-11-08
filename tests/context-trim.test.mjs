@@ -5,7 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
+  DEDUP_MIN_CHARS,
+  DEDUP_PREFIX,
   INPUT_MASK_PREFIX,
+  REUSE_RULES,
+  dedupPlaceholder,
   MASK_PREFIX,
   blobId,
   inputPlaceholder,
@@ -709,4 +713,111 @@ test("unsigned, OpenAI and Gemini reasoning parts stay where the provider needs 
   assert.equal(view.length, messages.length);
   for (const j of [1, 3, 5]) assert.deepEqual(view[j].content.filter(isReasoning), [kept[(j - 1) / 2]]);
   assert.equal(JSON.stringify(view.slice(-2)), JSON.stringify(messages.slice(-2)));
+}));
+
+// CONTEXT_REUSE_RULES: static don't-repeat-work rules end the standing instruction (Hu et al., arXiv 2609.30725).
+// Same contract as proxy/tests/test_reuse_rules.py.
+const OLD_STANDING = "Context management: to fit your context window, older turns may be removed and replaced by an "
+  + "[smarter-compact: …] pointer. Removed content is saved, not forgotten. Before answering anything that depends "
+  + "on earlier content you cannot see in your context — values, ids, keys, counts, decisions — call "
+  + "smart_compact_search (use `pattern` for exact ids/keys, `context` for neighbouring rows; `line_matches` gives "
+  + "exact counts) or smart_compact_sql for counts and aggregates over the session store; never guess or answer "
+  + "from memory you cannot see. This trim never summarizes removed content — a remembered \"summary of earlier "
+  + "context\" is not its record; cite a search result instead.";
+
+test("reuse rules end the standing instruction; CONTEXT_REUSE_RULES=0 gives the old bytes", () => {
+  assert.equal(trimSettings({}, os.tmpdir()).reuseRules, true);
+  assert.equal(trimSettings({ CONTEXT_REUSE_RULES: "0" }, os.tmpdir()).reuseRules, false);
+  assert.ok(REUSE_RULES.split("\n").length <= 3);
+  for (const name of ["Bash", "Read", "Grep", "Glob", "Edit", "Write", "Task", "mcp__", "Claude"]) assert.ok(!REUSE_RULES.includes(name), name);
+  assert.equal(standingInstruction(undefined, false), OLD_STANDING);
+  assert.equal(standingInstruction(), `${OLD_STANDING}\n${REUSE_RULES}`);
+  const off = [];
+  addStandingInstruction(off, { enabled: true, standingInstruction: true, reuseRules: false });
+  assert.deepEqual(off, [{ type: "text", text: OLD_STANDING }]);
+  const on = [];
+  addStandingInstruction(on, trimSettings({}, os.tmpdir()));
+  assert.deepEqual(on, [{ type: "text", text: `${OLD_STANDING}\n${REUSE_RULES}` }]);
+});
+
+// CONTEXT_DEDUP_RESULTS: same contract as proxy/tests/test_dedup_results.py.
+const DUP = "line of output\n".repeat(40);
+
+function dupTurns(outs) {
+  const messages = [{ role: "user", content: [{ type: "text", text: "the task" }] }];
+  outs.forEach((out, k) => {
+    messages.push({ role: "assistant", content: [{ type: "tool-call", id: `p${k}`, name: "bash", input: { command: "cat log.txt" } }] });
+    messages.push({ role: "tool", content: [{ type: "tool-result", id: `p${k}`, name: "bash", result: { type: "text", value: out } }] });
+  });
+  return messages;
+}
+
+async function dupRun(home, messages, env = {}) {
+  const settings = trimSettings({ CONTEXT_COMPRESS_OVER_TOKENS: "0", CONTEXT_STANDING_INSTRUCTION: "0", CONTEXT_PROGRESS_NOTE: "0",
+    CONTEXT_MASK_OBSERVATIONS: "0", CONTEXT_SCRATCHPAD: "0", CONTEXT_CLEAR_KEEP_RESULTS: "0", CONTEXT_STRIP_OLD_REASONING: "0",
+    CONTEXT_CHARS_PER_TOKEN: "1", SMARTER_COMPACT_STATE_DIR: home, ...env }, home);
+  return trimContext({ sessionID: SID, messages: structuredClone(messages) }, settings);
+}
+
+test("a new result identical to one still shown becomes a pointer; only the newer copy changes", withHome(async (home) => {
+  const pointer = dedupPlaceholder(DUP);
+  assert.ok(pointer.startsWith(DEDUP_PREFIX) && pointer.length < DEDUP_MIN_CHARS);
+  assert.equal(trimSettings({}, os.tmpdir()).dedupResults, true);
+  assert.deepEqual(await dupRun(home, dupTurns([DUP])), dupTurns([DUP]));
+  const messages = dupTurns([DUP, DUP]);
+  const view = await dupRun(home, messages);
+  assert.deepEqual(view.slice(0, 4), messages.slice(0, 4));
+  assert.deepEqual(resultsOf(view), { p0: DUP, p1: pointer });
+  // Every later request renders the same bytes.
+  const later = [...messages, { role: "assistant", content: [{ type: "text", text: "done" }] }, { role: "user", content: [{ type: "text", text: "next" }] }];
+  assert.equal(JSON.stringify((await dupRun(home, later)).slice(0, view.length)), JSON.stringify(view));
+  // The blob round-trips through smart_compact_get and survives the sweep.
+  const opts = { env: { ...process.env, HOME: home, SMARTER_COMPACT_STATE_DIR: home } };
+  assert.deepEqual(sweepOrphanBlobs(path.join(home, "context")), []);
+  const got = await callContextStoreTool("smart_compact_get", { id: blobId(DUP), max_chars: 100_000 }, opts);
+  assert.ok(got.found);
+  assert.equal(got.text, DUP);
+  const state = JSON.parse(fs.readFileSync(path.join(home, "context", "sessions", `${SID}.trim.json`), "utf8"));
+  assert.deepEqual(state.dedup.map((d) => [d.at, d.id, d.src, d.bid]), [[4, "p1", "p0", blobId(DUP)]]);
+}));
+
+test("CONTEXT_DEDUP_RESULTS=0 gives the old bytes, and short or already-sent duplicates stay", withHome(async (home) => {
+  const messages = dupTurns([DUP, DUP]);
+  assert.equal(JSON.stringify(await dupRun(home, messages, { CONTEXT_DEDUP_RESULTS: "0" })), JSON.stringify(messages));
+  await dupRun(home, messages);
+  assert.equal(JSON.stringify(await dupRun(home, messages, { CONTEXT_DEDUP_RESULTS: "0" })), JSON.stringify(messages));
+  const short = "x".repeat(DEDUP_MIN_CHARS - 1);
+  assert.deepEqual(await dupRun(home, dupTurns([short, short])), dupTurns([short, short]));
+  const sent = [...dupTurns([DUP, DUP]), { role: "assistant", content: [{ type: "text", text: "done" }] }];
+  sent[2].content[0].id = sent[1].content[0].id = "q0";
+  sent[4].content[0].id = sent[3].content[0].id = "q1";
+  assert.deepEqual(await dupRun(home, sent), sent);
+}));
+
+test("the pointer stays when the earlier copy is later cleared or dropped", withHome(async (home) => {
+  await dupRun(home, dupTurns([DUP, DUP]));
+  const messages = dupTurns([DUP, DUP, `other ${"y".repeat(300)}`, `more ${"z".repeat(300)}`]);
+  const env = { CONTEXT_CLEAR_KEEP_RESULTS: "1", CONTEXT_TRIM_AT_TOKENS: "1500", CONTEXT_TRIM_TO_TOKENS: "1450" };
+  const cleared = await dupRun(home, messages, env);
+  const results = resultsOf(cleared);
+  assert.ok(results.p0.startsWith(MASK_PREFIX));
+  assert.equal(results.p1, dedupPlaceholder(DUP));
+  assert.equal(JSON.stringify(await dupRun(home, messages, env)), JSON.stringify(cleared));
+  // A trim that drops the earlier copy's turn (a fresh session, so no earlier cut) still renders the same pointer.
+  const other = fs.mkdtempSync(path.join(os.tmpdir(), "sc-dedup-"));
+  let dropped;
+  try {
+    await dupRun(other, dupTurns([DUP, DUP]));
+    dropped = await dupRun(other, messages, { ...env, CONTEXT_TRIM_AT_TOKENS: "1000", CONTEXT_TRIM_TO_TOKENS: "900" });
+  } finally { fs.rmSync(other, { recursive: true, force: true }); }
+  assert.ok(!("p0" in resultsOf(dropped)));
+  assert.equal(resultsOf(dropped).p1, dedupPlaceholder(DUP));
+}));
+
+test("an earlier copy not shown in full gets no pointer", withHome(async (home) => {
+  const messages = dupTurns([DUP, DUP]);
+  const view = await dupRun(home, messages, { CONTEXT_CLEAR_KEEP_RESULTS: "1", CONTEXT_TRIM_AT_TOKENS: "1" });
+  const results = resultsOf(view);
+  assert.ok(!("p0" in results) || results.p0.startsWith(MASK_PREFIX));
+  assert.equal(results.p1, DUP);
 }));

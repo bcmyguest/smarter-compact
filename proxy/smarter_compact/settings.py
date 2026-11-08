@@ -113,6 +113,10 @@ class Settings:
     enabled: bool = True
     # STANDING_INSTRUCTION in every request's system prompt (CONTEXT_STANDING_INSTRUCTION=0 turns it off).
     standing_instruction: bool = True
+    # The standing instruction ends with REUSE_RULES, don't-repeat-work rules (CONTEXT_REUSE_RULES=0 drops them).
+    reuse_rules: bool = True
+    # A new tool result identical to one still shown in full becomes a pointer to it (CONTEXT_DEDUP_RESULTS=0 off).
+    dedup_results: bool = True
     trim_at_tokens: int = DEFAULT_TRIM_AT_TOKENS
     # MODEL_TRIM_AT_TOKENS picks the threshold, trim_at_tokens being the fallback (CONTEXT_TRIM_AT_TOKENS unset).
     trim_at_by_model: bool = False
@@ -187,6 +191,8 @@ class Settings:
         return cls(
             enabled=_flag(env, "CONTEXT_PROXY_ENABLED"),
             standing_instruction=_flag(env, "CONTEXT_STANDING_INSTRUCTION"),
+            reuse_rules=_flag(env, "CONTEXT_REUSE_RULES"),
+            dedup_results=_flag(env, "CONTEXT_DEDUP_RESULTS"),
             trim_at_tokens=_int(env, "CONTEXT_TRIM_AT_TOKENS", DEFAULT_TRIM_AT_TOKENS),
             trim_at_by_model=_int(env, "CONTEXT_TRIM_AT_TOKENS", None) is None,
             trim_to_tokens=_positive_int(env, "CONTEXT_TRIM_TO_TOKENS", DEFAULT_TRIM_TO_TOKENS),

@@ -36,6 +36,24 @@ Clearing keeps every call whole, so a written file, an edit's old and new string
 
 `<id>` is the blob id of the original string, written to `blobs/<id>.txt` before the request leaves. Every other field stays: keys, order, file paths, short arguments, numbers and booleans, so the input is still valid JSON of the same shape. The rule needs no tool list, so it works for every harness: Anthropic `tool_use.input`, OpenAI Chat and Responses function arguments, and the OpenCode 2 / Pi plugin's tool calls. A call counts as cleared when its result sits before the clear bound, even when the result itself is too short to replace (a Write's "File written"). The bound only moves forward, so later requests re-render the same bytes. The clearing estimate counts the shrunk inputs, so clearing alone settles more trims. The TTL sweep keeps these blobs: it keeps the blob id of every string of a stored call's input that a placeholder could name. `0` turns it off and restores the earlier bytes.
 
+## Repeated results (`CONTEXT_DEDUP_RESULTS`)
+
+An agent often reruns a command or re-reads a file and gets the same bytes back. With this setting on (the default), a new tool result is replaced, on the request that first carries it, when all of these hold:
+
+- it comes after the request's last assistant message (the results the model has not seen yet);
+- its text is at least 200 characters (`DEDUP_MIN_CHARS`; the pointer is about 120) and has no image or file part;
+- an earlier result in the same view, the same request's batch included, has byte-identical text and is shown in full: not cleared, masked, evicted or dropped.
+
+It becomes:
+
+```text
+[smarter-compact: output identical to an earlier tool result still shown above; smart_compact_get(id="<id>") returns it]
+```
+
+`<id>` is the [blob id](context-store.md#location) of the text (a compressed result names its compression's blob), written to `blobs/<id>.txt` before the request leaves; the stored row carries it as `blob_id`, so the TTL sweep keeps the blob. Only the newer copy changes, and only before it is ever sent, so no cached prefix moves. The decision goes into the trim state (`dedup`: the item's index and fingerprint, the call id, the earlier call id and the blob id), so every later request renders the same pointer, also after the earlier copy is cleared or its turn is dropped; the pointer then still resolves through `smart_compact_get`. A pointer is never masked, and [eviction](eviction.md) leaves the earlier copy alone. Formats: Anthropic `tool_result` blocks, OpenAI Chat `tool` messages, Responses `function_call_output` items, and the OpenCode 2 / Pi plugin's `tool-result` parts; a list content becomes one text block that keeps the last block's `cache_control`. Each request that adds pointers writes a `dedup` event. `0` turns it off and restores the earlier bytes.
+
+Measured offline on runs `tb21-h55-inputs` (24 trials) and `tb21-h55-rtk` (48 trials), Claude Code with Haiku 5.5: replaying each trial's main transcript through the proxy with the trial's arm settings, on and off, it fired once in 72 trials (one 392-character result in `make-doom-for-mips__Sgo2JKM`, 7,128 characters fewer across that trial's later requests, about 2,900 tokens at 2.5 characters per token). The session databases agree: 1 of 2,322 tool results of at least 200 characters repeats an earlier one byte for byte; 72 repeat at any length, averaging 96 characters, shorter than the pointer. In these runs the saving is negligible.
+
 ## Getting a result back
 
 One call returns a cleared result: `smart_compact_get(id="<id>")` with the id from its placeholder, in 12,000-character pages. Addressable Recall Compaction ([ARC](https://arxiv.org/abs/2607.25066)) motivates this: recalling compacted tool outputs by id beat similarity search on needle-in-a-haystack, 99.40% against 88.12%.

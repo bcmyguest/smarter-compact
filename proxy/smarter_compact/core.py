@@ -21,12 +21,29 @@ from . import sessiondb
 from . import status as status_mod
 from . import ttl as ttl_mod
 from .adapters import AnthropicAdapter, UnsupportedCallType, adapter_for
-from .compress import INPUT_MASK_PREFIX, MASK_PREFIX, blob_id, cleared_inputs, compressed_blob_id, mask_placeholder
+from .compress import (
+    DEDUP_MIN_CHARS,
+    DEDUP_PREFIX,
+    INPUT_MASK_PREFIX,
+    MASK_PREFIX,
+    blob_id,
+    cleared_inputs,
+    compressed_blob_id,
+    dedup_placeholder,
+    mask_placeholder,
+    result_blob_id,
+)
 from .session import resolve_session_id
 from .settings import Settings
 from .store import Store, session_lock
-from .tokens import (DEFAULT_CHARS_PER_TOKEN, estimate_prompt_tokens, fingerprint, record_usage, request_chars,
-                     signed_chars)
+from .tokens import (
+    DEFAULT_CHARS_PER_TOKEN,
+    estimate_prompt_tokens,
+    fingerprint,
+    record_usage,
+    request_chars,
+    signed_chars,
+)
 
 MAX_THREADS = 32
 # Requests awaiting their usage report, by litellm_call_id: (sid, thread root, request chars, usage event fields).
@@ -49,6 +66,18 @@ MIN_TAIL_STEPS = 3
 # text is not constant across a session: it settles (and the cached prefix changes) once, seconds in. Same text
 # as standingInstruction() in plugin/lib/context-trim.mjs.
 STANDING_MARKER = "Context management: to fit your context window"
+# CONTEXT_REUSE_RULES: static don't-repeat-work rules ending the standing instruction, after Hu et al.,
+# arXiv 2609.30725 §4.3 / A.4.2 (DevSkills). Same text as REUSE_RULES in plugin/lib/context-trim.mjs.
+REUSE_RULES = (
+    "Don't repeat work: before reading a file or running a command, check whether its output is already in your "
+    "context and reuse it; re-read only when it may have changed, and say why.\n"
+    "Rerun tests or builds only after the code changed or to get new evidence; save long output to a file and "
+    "filter that instead of rerunning.\n"
+    "Revise an existing script instead of writing a near-copy; when repeated actions bring no new evidence, stop "
+    "and take a different approach."
+)
+# CONTEXT_DEDUP_RESULTS: dedup decisions kept per session (trim state "dedup"), oldest dropped first.
+DEDUP_MAX = 512
 # Any namespace separator, because that is what the harnesses actually use: OpenCode namespaces MCP
 # tools with a dot (`smarter-compact.smart_compact_search`), Claude Code with `mcp__server__tool`, others with
 # an underscore. The character class (not `_`) keeps `xsmart_compact_search` from matching.
@@ -140,7 +169,7 @@ def request_tool_names(data):
     return names
 
 
-def standing_instruction(names=None):
+def standing_instruction(names=None, reuse=True):
     names = names or recall_tool_names([])
     return (
         STANDING_MARKER + ", older turns may be removed and replaced by an "
@@ -151,6 +180,7 @@ def standing_instruction(names=None):
         'from memory you cannot see. This trim never summarizes removed content — a remembered "summary of earlier '
         "context\" is not its record; cite a search result instead."
         + (f" The recall tools are deferred: load them first by calling {names['load']}." if names.get("load") else "")
+        + (f"\n{REUSE_RULES}" if reuse else "")
     )
 
 
@@ -308,11 +338,68 @@ def _nudged(adapter, items, at, text):
     return items if item is None else [*items[:at], item, *items[at + 1:]]
 
 
-def add_standing_instruction(adapter, data):
+def add_standing_instruction(adapter, data, reuse=True):
     """Add the standing instruction, naming the tools this request offers, unless one is already there."""
-    text = standing_instruction(recall_tool_names(request_tool_names(data)))
+    text = standing_instruction(recall_tool_names(request_tool_names(data)), reuse)
     if STANDING_MARKER not in adapter.system_text(data):
         adapter.add_instruction(data, text)
+
+
+def _dedup_found(items, decisions):
+    """{index: [decision]} for each recorded CONTEXT_DEDUP_RESULTS decision whose item is still in items: at its
+    index when the fingerprint matches there, else the last item with that fingerprint."""
+    out, fps, index = {}, {}, None
+    for d in decisions:
+        if not isinstance(d, dict):
+            continue
+        at, fp = d.get("at"), d.get("fp")
+        j = None
+        if isinstance(at, int) and 0 <= at < len(items):
+            if at not in fps:
+                fps[at] = fingerprint(items[at])
+            j = at if fps[at] == fp else None
+        if j is None:
+            if index is None:
+                index = {fingerprint(x): i for i, x in enumerate(items)}
+            j = index.get(fp)
+        if j is not None:
+            out.setdefault(j, []).append(d)
+    return out
+
+
+def _deduped(adapter, items, found):
+    """items with each found decision's result shown as its dedup_placeholder; items itself when none changes."""
+    out = None
+    for j, decisions in found.items():
+        x = items[j]
+        for d in decisions:
+            text = adapter.result_texts(x).get(d.get("id"))
+            if text is not None and result_blob_id(text) == d.get("bid"):
+                x = adapter.replaced_result(x, d["id"], dedup_placeholder(text))
+        if x is not items[j]:
+            out = out or list(items)
+            out[j] = x
+    return items if out is None else out
+
+
+def _dedup_new(adapter, items, shown, found):
+    """[(decision, text)] for each new tool result (after the last assistant item) of at least DEDUP_MIN_CHARS that
+    is byte-identical to an earlier result the view (shown) carries in full; the newer copy alone is replaced."""
+    last = max((j for j, x in enumerate(items) if adapter.is_assistant(x)), default=None)
+    if last is None:
+        return []
+    seen, new = {}, []
+    for j in sorted(shown):
+        decided = {d.get("id") for d in found.get(j, ())}
+        whole = adapter.result_texts(items[j]) if j > last else {}
+        for rid, text in adapter.result_texts(shown[j]).items():
+            if j > last and rid not in decided and text in seen and len(text) >= DEDUP_MIN_CHARS \
+                    and whole.get(rid) == text and not text.startswith((DEDUP_PREFIX, MASK_PREFIX)):
+                new.append(({"at": j, "fp": fingerprint(items[j]), "id": rid, "src": seen[text],
+                             "bid": result_blob_id(text)}, text))
+            else:
+                seen.setdefault(text, rid)
+    return new
 
 
 def first_user_index(adapter, items):
@@ -843,7 +930,7 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
     roots = [x for x in items if not adapter.is_pinned(x)]
     if not roots:
         if settings.standing_instruction:
-            add_standing_instruction(adapter, data)
+            add_standing_instruction(adapter, data, settings.reuse_rules)
         return data
     root = fingerprint(roots[0])
     first = first_user_index(adapter, items)
@@ -858,6 +945,11 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
         state = store.load_trim(sid)
         threads = state["threads"]
         thread = threads.get(root)
+        # CONTEXT_DEDUP_RESULTS: recorded pointers render on every request; fingerprints stay on the original items.
+        dedup = state.get("dedup") if settings.dedup_results and hasattr(adapter, "result_texts") else None
+        dedup = dedup if isinstance(dedup, list) else []
+        found = _dedup_found(items, dedup) if dedup else {}
+        base = _deduped(adapter, items, found)
         cut, gap, strip, note, clear = None, None, None, None, None
         evicting = settings.eviction and hasattr(adapter, "masked_results") and hasattr(adapter, "tool_calls")
         nudge_at = None
@@ -887,6 +979,9 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
         mode = region_mode(settings)
         evict, evicted, eviction = (_eviction(adapter, items, threads.get(root), settings, first) if evicting
                                     else (None, set(), None))
+        if evict and found:
+            # A result a pointer names stays shown: evicting it would leave neither copy in view.
+            evict = evict - {d.get("src") for ds in found.values() for d in ds}
         if eviction:
             entry = threads.setdefault(root, {"format": adapter.name, "updated": _utc_now()})
             entry.update(eviction)
@@ -894,7 +989,7 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                 threads.pop(next(iter(threads)))
             store.save_trim(sid, state)
         # The items as sent: the recorded nudge stays on its item, byte-identical, until the next trim.
-        sent = _nudged(adapter, items, nudge_at, threads.get(root, {}).get("nudge"))
+        sent = _nudged(adapter, base, nudge_at, threads.get(root, {}).get("nudge"))
         inputs = settings.clear_inputs_over_chars
         old = settings.strip_old_reasoning
         view = render(adapter, sent, cut, note, first, gap, strip, mode, shown, clear, evict, inputs, old)
@@ -923,7 +1018,7 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                 strip_top(adapter, items, old))
             if (new_clear is not None or strips) and first is not None:
                 # Clearing (and stripping) first: the current cut, or the first user turn (dropping nothing).
-                sizes = _trim_sizes(adapter, items, anchor, mode, new_clear, first, inputs, old)
+                sizes = _trim_sizes(adapter, base, anchor, mode, new_clear, first, inputs, old)
                 chars = base_chars + sum(sizes[j] for j in kept_indices(adapter, items, anchor, anchor_gap, first))
                 if estimate_prompt_tokens(chars, state.get("usage"), root, ratio) < target:
                     new_cut, new_gap = anchor, anchor_gap
@@ -932,7 +1027,7 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                 if new_cut is None:
                     new_cut = cut if cut is not None else last_turn_index(adapter, items)
                 if new_cut is not None:
-                    sizes = _trim_sizes(adapter, items, new_cut, mode, new_clear, first, inputs, old)
+                    sizes = _trim_sizes(adapter, base, new_cut, mode, new_clear, first, inputs, old)
 
                     def fits(g):
                         chars = base_chars + sum(sizes[j] for j in kept_indices(adapter, items, new_cut, g, first))
@@ -948,13 +1043,13 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
             if new_cut is not None and not moved:
                 # A newer clear bound alone moves the trim when it masks a result the current bound left whole.
                 kept = kept_indices(adapter, items, new_cut, new_gap, first)
-                moved = _clears_more(adapter, items, kept, clear, new_clear, first, inputs)
+                moved = _clears_more(adapter, base, kept, clear, new_clear, first, inputs)
                 if not moved and old:
                     # So does a strip bound that takes reasoning off a message the current view still sends.
                     moved = _strips_more(adapter, items, kept, cut, strip, new_strip)
             if moved:
                 new_shown = {}
-                bare = render(adapter, items, new_cut, "", first, new_gap, new_strip, mode, new_shown, new_clear,
+                bare = render(adapter, base, new_cut, "", first, new_gap, new_strip, mode, new_shown, new_clear,
                               evict, inputs, old)
                 if not force and settings.trim_min_gain_tokens > 0:
                     # A cut freeing fewer estimated tokens (pointer note not counted) waits for a bigger one.
@@ -965,7 +1060,7 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                 dropped = len(items) - len(new_shown)
                 names = recall_tool_names(request_tool_names(data))
                 masked = (mode == "mask" or new_clear is not None) and any(
-                    x is not items[j] and (MASK_PREFIX in str(x.get("content")) or INPUT_MASK_PREFIX in str(x))
+                    x is not base[j] and (MASK_PREFIX in str(x.get("content")) or INPUT_MASK_PREFIX in str(x))
                     for j, x in new_shown.items())
                 if old and not dropped and not masked:
                     # Stripping earlier reasoning alone drops and masks nothing.
@@ -1000,14 +1095,14 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                 if force:
                     store.clear_force(sid)
                 shown = {}
-                view = render(adapter, items, new_cut, note, first, new_gap, strip, mode, shown, new_clear, evict,
+                view = render(adapter, base, new_cut, note, first, new_gap, strip, mode, shown, new_clear, evict,
                               inputs, old)
                 cut, gap, clear = new_cut, new_gap, new_clear
                 after = estimate_prompt_tokens(base_chars + _size(old, view), state.get("usage"), root, ratio)
                 trim = {"tokens_before": tokens, "tokens_after": after, "dropped": dropped}
                 if settings.scratchpad:
                     trim["scratchpad_chars"] = min(len(pad), SCRATCHPAD_MAX_CHARS)
-                sent = items
+                sent = base
             elif thread and cut is None and root not in threads:
                 store.save_trim(sid, state)
         elif thread and cut is None and root not in threads:
@@ -1018,16 +1113,28 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
         if settings.scratchpad and not evicting and not trim and not (threads.get(root) or {}).get("nudge_fp") \
                 and tokens >= trim_at * settings.scratchpad_nudge_at and scratchpad_available(pad_names, data):
             text = scratchpad_nudge(sid, pad_names)
-            if _nudged(adapter, items, len(items) - 1, text) is not items:
+            if _nudged(adapter, base, len(items) - 1, text) is not base:
                 # Recorded on the newest item, so every later request re-renders it unchanged.
                 entry = threads.setdefault(root, {"format": adapter.name, "updated": _utc_now()})
                 entry.update(nudge=text, nudge_at=len(items) - 1, nudge_fp=fingerprint(items[-1]))
                 while len(threads) > MAX_THREADS:
                     threads.pop(next(iter(threads)))
                 store.save_trim(sid, state)
-                sent, shown = _nudged(adapter, items, len(items) - 1, text), {}
+                sent, shown = _nudged(adapter, base, len(items) - 1, text), {}
                 view = render(adapter, sent, cut, note, first, gap, strip, mode, shown, clear, evict, inputs, old)
                 nudge = {"tokens_before": tokens}
+        new = _dedup_new(adapter, items, shown, found) if settings.dedup_results and hasattr(adapter, "result_texts") \
+            else []
+        if new:
+            # Recorded before the request leaves, so every later request renders the same pointer.
+            for d, text in new:
+                if compressed_blob_id(text) is None:
+                    store.write_blob(d["bid"], text)
+            state["dedup"] = (dedup + [d for d, _ in new])[-DEDUP_MAX:]
+            store.save_trim(sid, state)
+            sent, shown = _deduped(adapter, sent, _dedup_found(items, [d for d, _ in new])), {}
+            view = render(adapter, sent, cut, note, first, gap, strip, mode, shown, clear, evict, inputs, old)
+            _record_event(store, sid, "dedup", dropped=len(new))
         _write_masked_blobs(store, adapter, sent, shown)
         _store_messages(store, sid, adapter, original, sent, cut, shown, settings)
         if trim:
@@ -1047,7 +1154,7 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
         add_server_clear(data, settings)
     if settings.standing_instruction:
         # After trimming, so the cut, the token estimate and the session id never see it.
-        add_standing_instruction(adapter, data)
+        add_standing_instruction(adapter, data, settings.reuse_rules)
     return data
 
 

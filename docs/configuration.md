@@ -41,6 +41,8 @@ OpenCode plugin options override the environment ([which reach what](#opencode-p
 | `CONTEXT_EVICTION_BATCH` | `3` | proxy | Assistant steps per eviction batch; must be > 0 |
 | `CONTEXT_EVICTION_KEEP` | `12` | proxy | Later tool results an unreferenced result needs before eviction takes it; must be > 0 |
 | `CONTEXT_STANDING_INSTRUCTION` | `1` | proxy, OpenCode 2 | `0` omits the system note telling the agent to search before guessing |
+| `CONTEXT_REUSE_RULES` | `1` | proxy, OpenCode 2 | The standing instruction ends with three static don't-repeat-work rules (reuse context, rerun tests only after a change, revise scripts) after [Hu et al., arXiv 2609.30725 §4.3](https://arxiv.org/html/2609.30725v1); `0` restores the earlier bytes ([text](context-store.md#proxy-inserted-text)) |
+| `CONTEXT_DEDUP_RESULTS` | `1` | proxy, OpenCode 2 | A new tool result of at least 200 characters identical to an earlier result still shown in full becomes a pointer naming its blob; only the newer copy changes; `0` restores the earlier bytes ([clearing](clearing.md#repeated-results-context_dedup_results)) |
 
 ## Server-side tool-result clearing
 

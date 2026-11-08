@@ -13,6 +13,10 @@ MARKER_PREFIX = "[smarter-compact: tool result compressed,"
 _ID_RE = re.compile(r'smart_compact_get\(id="([0-9a-f]{16})"\)')
 # Start of every cleared or masked result's placeholder; detection matches on it (no quote: JSON keeps it as is).
 MASK_PREFIX = "[smarter-compact: tool output cleared to save context;"
+# Start of a repeated tool result's pointer (CONTEXT_DEDUP_RESULTS); never masked, so its bytes never change.
+DEDUP_PREFIX = "[smarter-compact: output identical to an earlier tool result still shown above;"
+# Only a result at least this long becomes a dedup pointer (the pointer is about 120 characters).
+DEDUP_MIN_CHARS = 200
 # Start of every cleared tool-input string's placeholder (CONTEXT_CLEAR_INPUTS_OVER_CHARS); never re-masked.
 INPUT_MASK_PREFIX = "[smarter-compact: tool input cleared to save context;"
 # Characters of an input placeholder besides its count digits: prefix, " ", " chars; ", the get call, "]".
@@ -44,6 +48,11 @@ def result_blob_id(text):
 def mask_placeholder(text):
     """A cleared result's text, naming its blob (ARC-style id recall); a function of text, so cache-stable."""
     return f'{MASK_PREFIX} smart_compact_get(id="{result_blob_id(text)}") returns it]'
+
+
+def dedup_placeholder(text):
+    """A repeated result's text, naming the blob of its full text; a function of text, so cache-stable."""
+    return f'{DEDUP_PREFIX} smart_compact_get(id="{result_blob_id(text)}") returns it]'
 
 
 def input_placeholder(text):

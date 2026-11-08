@@ -71,6 +71,16 @@ const markerAt = (text) => (text.startsWith(MARKER_PREFIX) ? MARKER_PREFIX
  * cached prefix never changes. Same text as STANDING_INSTRUCTION in proxy/smarter_compact/core.py.
  */
 export const STANDING_MARKER = "Context management: to fit your context window";
+/**
+ * CONTEXT_REUSE_RULES: static don't-repeat-work rules ending the standing instruction, after Hu et al.,
+ * arXiv 2609.30725 §4.3 / A.4.2 (DevSkills). Same text as REUSE_RULES in proxy/smarter_compact/core.py.
+ */
+export const REUSE_RULES = "Don't repeat work: before reading a file or running a command, check whether its output is already in your "
+  + "context and reuse it; re-read only when it may have changed, and say why.\n"
+  + "Rerun tests or builds only after the code changed or to get new evidence; save long output to a file and "
+  + "filter that instead of rerunning.\n"
+  + "Revise an existing script instead of writing a near-copy; when repeated actions bring no new evidence, stop "
+  + "and take a different approach.";
 // Same as TOOL_SEARCH / CLAUDE_CODE_PREFIX in proxy/smarter_compact/core.py.
 const TOOL_SEARCH = "ToolSearch";
 const CLAUDE_CODE_PREFIX = "mcp__smarter-compact__";
@@ -140,7 +150,7 @@ function availability(names) {
   return `The tools ${names.search} and ${names.sql} are available to you in this request. `;
 }
 
-export function standingInstruction(names = recallToolNames([])) {
+export function standingInstruction(names = recallToolNames([]), reuse = true) {
   return STANDING_MARKER + ", older turns may be removed and replaced by an "
   + "[smarter-compact: …] pointer. Removed content is saved, not forgotten. Before answering anything that depends on "
   + "earlier content you cannot see in your context — values, ids, keys, counts, decisions — call "
@@ -148,7 +158,8 @@ export function standingInstruction(names = recallToolNames([])) {
   + `exact counts) or ${names.sql} for counts and aggregates over the session store; never guess or answer `
   + "from memory you cannot see. This trim never summarizes removed content — a remembered \"summary of earlier "
   + "context\" is not its record; cite a search result instead."
-  + (names.load ? ` The recall tools are deferred: load them first by calling ${names.load}.` : "");
+  + (names.load ? ` The recall tools are deferred: load them first by calling ${names.load}.` : "")
+  + (reuse ? `\n${REUSE_RULES}` : "");
 }
 export const STANDING_INSTRUCTION = standingInstruction();
 const HEAD_LINES = 40;
@@ -205,6 +216,10 @@ export function trimSettings(env = process.env, home = env.HOME) {
   return {
     enabled: flag("CONTEXT_PROXY_ENABLED"),
     standingInstruction: flag("CONTEXT_STANDING_INSTRUCTION"),
+    // The standing instruction ends with REUSE_RULES (CONTEXT_REUSE_RULES=0 drops them).
+    reuseRules: flag("CONTEXT_REUSE_RULES"),
+    // A new tool result identical to one still shown in full becomes a pointer to it (CONTEXT_DEDUP_RESULTS=0 off).
+    dedupResults: flag("CONTEXT_DEDUP_RESULTS"),
     trimAtTokens: int("CONTEXT_TRIM_AT_TOKENS", DEFAULT_TRIM_AT_TOKENS),
     trimAtByModel: int("CONTEXT_TRIM_AT_TOKENS", null) === null,
     trimDefault: overrides.default ?? DEFAULT_TRIM_AT_TOKENS,
@@ -730,7 +745,7 @@ function maskResults(message, ids) {
     if (p?.type !== "tool-result" || (ids && !ids.has(p.id))) return;
     const text = resultText(p.result);
     const placeholder = maskPlaceholder(text);
-    if (cpLen(text) <= cpLen(placeholder)) return;
+    if (cpLen(text) <= cpLen(placeholder) || text.startsWith(DEDUP_PREFIX)) return;
     next ??= [...content];
     next[i] = { ...p, result: { type: p.result?.type === "error" ? "error" : "text", value: placeholder } };
   });
@@ -923,7 +938,7 @@ export function addStandingInstruction(system, settings, names) {
   // requests of one session can legitimately differ.
   const injected = (part) => String((typeof part === "string" ? part : part?.text) || "");
   if (system.some((part) => injected(part).includes(STANDING_MARKER))) return false;
-  system.push({ type: "text", text: standingInstruction(names) });
+  system.push({ type: "text", text: standingInstruction(names, settings.reuseRules !== false) });
   return true;
 }
 
@@ -933,6 +948,99 @@ export const MASK_PREFIX = "[smarter-compact: tool output cleared to save contex
 /** A cleared result's text, naming its blob; a function of text, so cache-stable. Same as compress.mask_placeholder. */
 export function maskPlaceholder(text) {
   return `${MASK_PREFIX} smart_compact_get(id="${compressedBlobId(text) || blobId(text)}") returns it]`;
+}
+
+/** Start of a repeated tool result's pointer (CONTEXT_DEDUP_RESULTS); never masked. Same as compress.DEDUP_PREFIX. */
+export const DEDUP_PREFIX = "[smarter-compact: output identical to an earlier tool result still shown above;";
+/** Only a result at least this long becomes a dedup pointer. Same as compress.DEDUP_MIN_CHARS. */
+export const DEDUP_MIN_CHARS = 200;
+/** Dedup decisions kept per session (trim state "dedup"), oldest dropped first. Same as core.DEDUP_MAX. */
+const DEDUP_MAX = 512;
+
+/** A repeated result's text, naming the blob of its full text; a function of text, so cache-stable. compress.dedup_placeholder. */
+export function dedupPlaceholder(text) {
+  return `${DEDUP_PREFIX} smart_compact_get(id="${compressedBlobId(text) || blobId(text)}") returns it]`;
+}
+
+/** Map of id to text for the message's tool-result parts that are text only (an image or file differs). */
+function resultTexts(message) {
+  const out = new Map();
+  for (const p of parts(message)) {
+    if (p?.type !== "tool-result") continue;
+    if (p.result?.type === "content" && !(Array.isArray(p.result.value) && p.result.value.every((item) => item?.type === "text"))) continue;
+    out.set(p.id, resultText(p.result));
+  }
+  return out;
+}
+
+/** The message with tool-result id's result replaced by text; itself when it has none. */
+function replacedResult(message, id, text) {
+  const content = parts(message);
+  const at = content.findIndex((p) => p?.type === "tool-result" && p.id === id);
+  if (at < 0) return message;
+  const next = [...content];
+  next[at] = { ...content[at], result: { type: content[at].result?.type === "error" ? "error" : "text", value: text } };
+  return { ...message, content: next };
+}
+
+/** Map of index to decisions for each recorded dedup decision whose item is still in items: at its index, else the last with its fingerprint. Proxy _dedup_found. */
+function dedupFound(items, decisions) {
+  const out = new Map();
+  const fps = new Map();
+  let index = null;
+  for (const d of decisions) {
+    if (!isObject(d)) continue;
+    let j = null;
+    if (Number.isInteger(d.at) && d.at >= 0 && d.at < items.length) {
+      if (!fps.has(d.at)) fps.set(d.at, fingerprint(items[d.at]));
+      if (fps.get(d.at) === d.fp) j = d.at;
+    }
+    if (j === null) {
+      if (index === null) {
+        index = new Map();
+        items.forEach((x, i) => index.set(fingerprint(x), i));
+      }
+      j = index.get(d.fp) ?? null;
+    }
+    if (j !== null) out.set(j, [...(out.get(j) ?? []), d]);
+  }
+  return out;
+}
+
+/** items with each found decision's result shown as its dedupPlaceholder; items itself when none changes. Proxy _deduped. */
+function deduped(items, found) {
+  let out = null;
+  for (const [j, decisions] of found) {
+    let x = items[j];
+    for (const d of decisions) {
+      const text = resultTexts(x).get(d.id);
+      if (text !== undefined && (compressedBlobId(text) || blobId(text)) === d.bid) x = replacedResult(x, d.id, dedupPlaceholder(text));
+    }
+    if (x !== items[j]) {
+      out ??= [...items];
+      out[j] = x;
+    }
+  }
+  return out ?? items;
+}
+
+/** [decision, text] pairs for each new tool result (after the last assistant message) of at least DEDUP_MIN_CHARS identical to an earlier one the view (shown) carries in full. Proxy _dedup_new. */
+function dedupNew(items, shown, found) {
+  const last = items.findLastIndex((x) => x?.role === "assistant");
+  if (last < 0) return [];
+  const seen = new Map();
+  const out = [];
+  for (const j of [...shown.keys()].sort((a, b) => a - b)) {
+    const decided = new Set((found.get(j) ?? []).map((d) => d.id));
+    const whole = j > last ? resultTexts(items[j]) : new Map();
+    for (const [id, text] of resultTexts(shown.get(j))) {
+      if (j > last && !decided.has(id) && seen.has(text) && cpLen(text) >= DEDUP_MIN_CHARS && whole.get(id) === text
+          && !text.startsWith(DEDUP_PREFIX) && !text.startsWith(MASK_PREFIX)) {
+        out.push([{ at: j, fp: fingerprint(items[j]), id, src: seen.get(text), bid: compressedBlobId(text) || blobId(text) }, text]);
+      } else if (!seen.has(text)) seen.set(text, id);
+    }
+  }
+  return out;
 }
 
 /** Start of every cleared tool-input string's placeholder; never re-masked. Same as compress.INPUT_MASK_PREFIX. */
@@ -1377,6 +1485,10 @@ async function trimSession(request, settings, deps, { original, sid, store, item
     const state = store.loadTrim(sid);
     const { threads } = state;
     const thread = threads.get(root);
+    // CONTEXT_DEDUP_RESULTS: recorded pointers render on every request; fingerprints stay on the original items.
+    const dedup = settings.dedupResults !== false && Array.isArray(state.dedup) ? state.dedup : [];
+    const found = dedup.length ? dedupFound(items, dedup) : new Map();
+    const base = deduped(items, found);
     let cut = null;
     let gap = null;
     let strip = null;
@@ -1398,7 +1510,7 @@ async function trimSession(request, settings, deps, { original, sid, store, item
     let shown = new Map();
     const mode = regionMode(settings);
     // The items as sent: the recorded nudge stays on its item, byte-identical, until the next trim.
-    let sent = nudged(items, nudgeAt, threads.has(root) ? thread.nudge : null);
+    let sent = nudged(base, nudgeAt, threads.has(root) ? thread.nudge : null);
     const inputs = settings.clearInputsOverChars ?? 0;
     const old = Boolean(settings.stripOldReasoning);
     let rendered = render(sent, cut, note, first, gap, decorate, strip, clear, mode, shown, inputs, old);
@@ -1425,13 +1537,13 @@ async function trimSession(request, settings, deps, { original, sid, store, item
         && stripsMore(items, keptIndices(items, anchor, anchorGap, first), cut, strip, stripTop(items, old));
       if ((nextClearAt !== null || strips) && first !== null) {
         // Clearing (and stripping) first: the current cut, or the first user turn (dropping nothing).
-        if (under(trimSizes(items, anchor, mode, nextClearAt, first, inputs, old), anchor, anchorGap)) [next, nextGap] = [anchor, anchorGap];
+        if (under(trimSizes(base, anchor, mode, nextClearAt, first, inputs, old), anchor, anchorGap)) [next, nextGap] = [anchor, anchorGap];
       }
       if (next === null) {
         next = chooseCut(items, cut === null ? -1 : cut, first);
         if (next === null) next = cut !== null ? cut : lastTurnIndex(items);
         if (next !== null) {
-          const sizes = trimSizes(items, next, mode, nextClearAt, first, inputs, old);
+          const sizes = trimSizes(base, next, mode, nextClearAt, first, inputs, old);
           const after = next === cut && gap !== null ? gap : next + 1;
           nextGap = chooseGap(items, next, after, first, (g) => under(sizes, next, g));
           if (nextGap === null && next === cut) nextGap = gap;
@@ -1443,13 +1555,13 @@ async function trimSession(request, settings, deps, { original, sid, store, item
       if (next !== null && !moved) {
         // A newer clear bound alone moves the trim when it masks a result the current bound left whole.
         const kept = keptIndices(items, next, nextGap, first);
-        moved = clearsMore(items, kept, clear, nextClearAt, first, inputs);
+        moved = clearsMore(base, kept, clear, nextClearAt, first, inputs);
         // So does a strip bound that takes reasoning off a message the current view still sends.
         if (!moved && old) moved = stripsMore(items, kept, cut, strip, nextStrip);
       }
       const nextShown = new Map();
       if (moved) {
-        const bare = render(items, next, "", first, nextGap, decorate, nextStrip, nextClearAt, mode, nextShown, inputs, old);
+        const bare = render(base, next, "", first, nextGap, decorate, nextStrip, nextClearAt, mode, nextShown, inputs, old);
         if (!force && settings.trimMinGainTokens > 0) {
           // A cut freeing fewer estimated tokens (pointer note not counted) waits for a bigger one.
           moved = tokens - estimatePromptTokens(baseChars + sizeChars(old, bare), state.usage, root, ratio) >= settings.trimMinGainTokens;
@@ -1459,7 +1571,7 @@ async function trimSession(request, settings, deps, { original, sid, store, item
         const ts = utcNow(deps.now?.());
         // The pointer counts every message absent from the view: dropped, or emptied by the strip.
         dropped = items.length - nextShown.size;
-        const masked = (mode === "mask" || nextClearAt !== null) && [...nextShown].some(([j, x]) => x !== items[j]
+        const masked = (mode === "mask" || nextClearAt !== null) && [...nextShown].some(([j, x]) => x !== base[j]
           && [MASK_PREFIX, INPUT_MASK_PREFIX].some((prefix) => JSON.stringify(x.content ?? null).includes(prefix)));
         if (old && !dropped && !masked) {
           // Stripping earlier reasoning alone drops and masks nothing.
@@ -1485,14 +1597,14 @@ async function trimSession(request, settings, deps, { original, sid, store, item
         store.saveTrim(sid, state);
         if (force) store.clearForce(sid);
         shown = new Map();
-        rendered = render(items, next, note, first, nextGap, decorate, strip, nextClearAt, mode, shown, inputs, old);
+        rendered = render(base, next, note, first, nextGap, decorate, strip, nextClearAt, mode, shown, inputs, old);
         cut = next;
         gap = nextGap;
         clear = nextClearAt;
         const after = estimatePromptTokens(baseChars + sizeChars(old, rendered), state.usage, root, ratio);
         trim = { tokens_before: tokens, tokens_after: after, dropped };
         if (settings.scratchpad) trim.scratchpad_chars = Math.min(pad.length, SCRATCHPAD_MAX_CHARS);
-        sent = items;
+        sent = base;
       } else if (thread && cut === null && !threads.has(root)) store.saveTrim(sid, state);
     } else if (thread && cut === null && !threads.has(root)) store.saveTrim(sid, state);
     let nudge = null;
@@ -1500,24 +1612,35 @@ async function trimSession(request, settings, deps, { original, sid, store, item
         && scratchpadAvailable(toolNames, original)) {
       const text = scratchpadNudge(sid, toolNames);
       const last = items.length - 1;
-      if (nudged(items, last, text) !== items) {
+      if (nudged(base, last, text) !== base) {
         // Recorded on the newest item, so every later request re-renders it unchanged.
         const entry = threads.get(root) ?? { format: FORMAT, updated: utcNow(deps.now?.()) };
         Object.assign(entry, { nudge: text, nudge_at: last, nudge_fp: fingerprint(items[last]) });
         threads.set(root, entry);
         while (threads.size > MAX_THREADS) threads.delete(threads.keys().next().value);
         store.saveTrim(sid, state);
-        sent = nudged(items, last, text);
+        sent = nudged(base, last, text);
         shown = new Map();
         rendered = render(sent, cut, note, first, gap, decorate, strip, clear, mode, shown, inputs, old);
         nudge = { tokens_before: tokens };
       }
     }
     const ts = utcNow(deps.now?.());
+    const fresh = settings.dedupResults !== false ? dedupNew(items, shown, found) : [];
+    if (fresh.length) {
+      // Recorded before the request leaves, so every later request renders the same pointer.
+      for (const [d, text] of fresh) if (!compressedBlobId(text)) store.writeBlob(d.bid, text);
+      state.dedup = [...dedup, ...fresh.map(([d]) => d)].slice(-DEDUP_MAX);
+      store.saveTrim(sid, state);
+      sent = deduped(sent, dedupFound(items, fresh.map(([d]) => d)));
+      shown = new Map();
+      rendered = render(sent, cut, note, first, gap, decorate, strip, clear, mode, shown, inputs, old);
+    }
     writeMaskedBlobs(store, sent, shown);
     storeMessages(store, sid, settings, original, sent, cut, shown, ts, deps);
     if (trim) recordEvent(store, sid, "trim", trim, ts);
     if (nudge) recordEvent(store, sid, "nudge", nudge, ts);
+    if (fresh.length) recordEvent(store, sid, "dedup", { dropped: fresh.length }, ts);
     trimmed = trim ? TRIM_NEW : cut !== null ? TRIM_KEPT : TRIM_NONE;
     return rendered;
   });
