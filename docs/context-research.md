@@ -452,6 +452,30 @@ At 29 of the trials the scratchpad's cost difference was −13% (p = 0.22). Earl
 
 **Decision.** Not integrated. On these tasks huge tool results are rare and mostly logs; rtk, which filters output where the command runs, gave the measured cost cut. Installing headroom-ai upgrades litellm, which broke a running proxy until the bench pinned litellm's version.
 
+## What fills the context, and what a trim can free (2026-11-08)
+
+Runs `tb21-h55-idevict`, `lhtb-h55-3arm` and `tb21-h55-clearfit`, Claude Code with Haiku 5.5 through the proxy, trim at 95,000, target 40,000, `CONTEXT_CLEAR_KEEP_RESULTS=10`, masking off, rtk hook on.
+
+**Per-result ID placeholders and eviction, TB 2.1** (8 tasks × 3):
+
+| Arm | Passed | Part | Cost per trial |
+| --- | --- | --- | --- |
+| Scratchpad + rtk + ID placeholders (`148e163`) | 14/24 | 0.86 | $0.095 |
+| Scratchpad + rtk, old placeholder (`tb21-h55-rtk`) | 18/24 | 0.88 | $0.077 |
+| [Eviction](eviction.md) + rtk | 13/24 | 0.81 | $0.211 |
+
+Part is the share of verifier tests passed (CTRF). Eviction cost 63% more than the scratchpad arm (p < 0.001) with no pass gain. Only 1 of the 24 placeholder-arm trials ever showed an ID placeholder: clearing alone was accepted only under the 40,000 target, which it never reached, so trims dropped whole turns instead.
+
+**Long-Horizon-Terminal-Bench 2.0** (`silrlab/long-horizon-terminal-bench-2.0`, dense rewards; `rush-hour-campaign` and `snake-obstacle-campaign` fail Harbor's install and are left out): mean reward 0.24 native at $0.096, 0.23 scratchpad + rtk at $0.056, 0.22 eviction + rtk at $0.166. No trial of any arm scored full marks.
+
+**Recall is not the bottleneck.** About 800 placeholders were shown; `smart_compact_get` was called 0 times in the scratchpad arms and 7 times under eviction. An exact command run again after its output left the context happened 0–0.04 times per trial, against 0.5–0.9 in-context repeats; file-level re-reads after a loss were 0.4–0.75 per trial, under 1,000 tokens. A review of about 35 failed TB 2.1 trials found none caused by lost context: about 16 were verifier infrastructure (uv and Python downloads from GitHub returning 504, OAuth expiry, a docker crash), about 13 task-intrinsic (native fails `make-mips-interpreter` with the same two tests), about 5 timeouts during steady progress (62 of 63 tests passing; 1,439,955 of 1,440,000 pixels matched). The bench now mounts a pinned uv and Python for verifiers ([termbench README](../bench/termbench/README.md#harbor-runs-verifiers-without-a-github-download)).
+
+**Partial credit over every TB 2.1 run.** Task-balanced part on graded trials, against native (0.89, $0.198 per trial, 41 graded): scratchpad + clearing at the 40,000 target 0.88 ($0.093), masking 0.86 ($0.082), scratchpad + rtk + ID placeholders 0.85 ($0.095), clear 10 + rtk 0.84 ($0.105), scratchpad + rtk 0.82 ($0.073), eviction + rtk 0.79 ($0.211), trim only 0.78 ($0.074). No difference from native is significant (within-task permutation, p ≥ 0.14).
+
+**Clear fit (`7e07e77`, removed).** Accepting clearing alone under 0.63 × the threshold (59,850 tokens) instead of the target: an offline replay settled 6 of 21 trims by clearing alone, against 0. In `tb21-h55-clearfit` (19 of 24 trials) it scored part 0.84 at $0.077 against 0.82 at $0.073 for the old arm on the same tasks, and no real trim was settled by clearing alone. It was dropped.
+
+**What fills the prompt.** Right after a clearing-only trim in the replay, about 40% of the prompt was tool-call inputs (Write contents, Edit strings, Bash heredocs), 27% system prompt and tools, 25% tool results; clearing touches only results. In the live sessions the largest part is reasoning: each assistant message carries a redacted thinking block whose signature totalled 177–287k characters per session, against 18–87k of tool inputs and 6–135k of tool results (adaptive-rejection-sampler, regex-chess, make-mips-interpreter, make-doom-for-mips). The proxy strips reasoning only before the latest assistant run, and a Claude Code task is one run after a single prompt, so it strips none; trims went from 99,228 to 99,015 estimated tokens after dropping 6 messages. Lessons kept: large tool-call inputs get a placeholder like results do (`CONTEXT_CLEAR_INPUTS_OVER_CHARS`, `eaa4c67`), and reasoning on older assistant messages is the next target, for every provider format, without dropping any message.
+
 ## Limitations
 
 - The primary run E uses Haiku 5.5 and two or three seeds per cell. Sonnet has two paired seeds on one task. Earlier run B baselines have one or two seeds per cell.
