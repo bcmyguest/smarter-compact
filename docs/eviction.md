@@ -11,8 +11,10 @@ A segment is one tool call and its result. At each batch boundary, the request w
 | Rule | Evicts a result when |
 | --- | --- |
 | Superseded file | A later call wrote the same file (`Edit`, `Write`, `MultiEdit`, `NotebookEdit`, OpenCode's `edit` / `write`), or read at least as much of it: the whole file (`Read` without `offset` / `limit`, or a plain `cat <path>` in Bash), or the same range |
-| Superseded command | The same Bash command, whitespace-normalized, ran again later |
+| Superseded command | The same read-only Bash command, whitespace-normalized, ran again later (see below) |
 | Unreferenced and old | `CONTEXT_EVICTION_KEEP` or more tool results came after it, and none of its new distinctive tokens appears in later assistant text or tool input. Its distinctive tokens are the paths, identifiers of 6+ characters and numbers of 4+ digits in its text that appear nowhere earlier in the request |
+
+A command is read-only when it is one of `cat`, `head`, `tail`, `less`, `more`, `wc`, `ls`, `find` (without `-exec`, `-execdir`, `-ok`, `-okdir`, `-delete`, `-fprint*`, `-fls`), `tree`, `stat`, `file`, `grep`, `egrep`, `fgrep`, `rg`, `ag`, `pwd`, `which`, bare `env`, `git status` / `diff` / `log` / `show` (without `--output`), `git branch` with listing options only, or `sed -n '<address>p'` without `-i` / `--in-place`, or a chain of these joined by `|`, `&&`, `||` or `;`. A command containing `>`, `<`, `&` (other than `&&`), a subshell, `$(…)` or backticks is not read-only, nor is `tee`, `cd` or any other program. A stateful command such as `make` or `mario step RIGHT_RUN --frames 20` changes state on each run, so its results neither supersede nor are superseded (`evict.read_only`).
 
 Never evicted: results of the newest batch (the last `CONTEXT_EVICTION_BATCH` assistant steps), the first user turn, and results no longer than their placeholder.
 
@@ -45,6 +47,6 @@ The rules and K were chosen on stored Terminal-Bench 2.1 Claude Code trajectorie
 | File + command + unreferenced | 20 | 14.4% | 1,405 | 0.0% | 2.6% |
 | Clearing, newest 10 kept, at every request | – | 71.8% | 3,176 | 0.2% | 23.1% |
 
-The unreferenced rule carries the saving; the superseded rules add little in these short sessions but cost nothing. The settled-failure rule evicted one result and none the others miss (a later success of the same command or file is already a supersession), so it is left out. K = 12 keeps 71% of K = 6's saving at 0.6 of its reference regret. Clearing at every request would remove 3.3 times as much, at 5.6 times the reference regret; clearing fires only at the trim threshold, so its row is a ceiling.
+The replay predates the read-only restriction, so its superseded-command rows also count stateful commands. The unreferenced rule carries the saving; the superseded rules add little in these short sessions but cost nothing. The settled-failure rule evicted one result and none the others miss (a later success of the same command or file is already a supersession), so it is left out. K = 12 keeps 71% of K = 6's saving at 0.6 of its reference regret. Clearing at every request would remove 3.3 times as much, at 5.6 times the reference regret; clearing fires only at the trim threshold, so its row is a ceiling.
 
 Driving the same trajectories through the proxy request by request (12 trials, 200 requests) changed an earlier message in 20 requests, all at batch boundaries.

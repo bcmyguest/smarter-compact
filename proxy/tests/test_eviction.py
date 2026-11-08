@@ -76,7 +76,7 @@ class EvictionTests(Base):
         self.assertEqual(cat_paths("cat /app/c.py | head"), [])
 
     def test_superseded_command_goes(self):
-        steps = [bash("make test", "FAILED 3"), *distinct(3), bash("make  test", "passed"), *distinct(1, 3)]
+        steps = [bash("git status", "FAILED 3"), *distinct(3), bash("git  status", "passed"), *distinct(1, 3)]
         self.assertEqual(self.evicted(self.send(steps, eviction_keep=100)), [0])
 
     def test_unreferenced_old_result_goes_and_a_referenced_one_stays(self):
@@ -88,12 +88,12 @@ class EvictionTests(Base):
         self.assertEqual(self.evicted(self.send(steps, "other", eviction_keep=20)), [])
 
     def test_nothing_in_the_newest_batch_goes(self):
-        steps = [*distinct(3), bash("make", "one"), bash("make", "two"), bash("make", "three")]
+        steps = [*distinct(3), bash("git status", "one"), bash("git status", "two"), bash("git status", "three")]
         self.assertEqual(self.evicted(self.send(steps, eviction_keep=1)), [0, 1, 2])
         self.assertEqual(self.evicted(self.send(steps, "other", eviction_batch=4, eviction_keep=1)), [0, 1])
 
     def test_the_set_is_fixed_between_boundaries_and_only_grows(self):
-        steps = [bash("make", "first"), *distinct(3), bash("make", "second")]
+        steps = [bash("git status", "first"), *distinct(3), bash("git status", "second")]
         # Five steps: batch 1 was computed at three, when step 0 was not yet superseded.
         self.assertEqual(self.evicted(self.send(steps[:3], eviction_keep=100)), [])
         mid = self.send(steps, eviction_keep=100)
@@ -113,7 +113,8 @@ class EvictionTests(Base):
         self.assertNotIn(0, self.evicted(self.send(steps, "other", eviction_keep=2)))
 
     def test_evicted_ids_round_trip_to_blobs_and_rows_leave_context(self):
-        steps = [bash("make", "the full make output 0123"), *distinct(3), bash("make", "again"), *distinct(1, 3)]
+        steps = [bash("git status", "the full make output 0123"), *distinct(3), bash("git status", "again"),
+                 *distinct(1, 3)]
         out = self.send(steps, eviction_keep=100)
         placeholder = out["messages"][2]["content"][0]["content"]
         original = f"the full make output 0123\n{FILLER}"
@@ -124,7 +125,7 @@ class EvictionTests(Base):
         self.assertEqual([r["in_context"] for r in row], [0])
 
     def test_one_event_per_batch_that_evicts(self):
-        steps = [bash("make", "first"), *distinct(3), bash("make", "second"), *distinct(1, 3)]
+        steps = [bash("git status", "first"), *distinct(3), bash("git status", "second"), *distinct(1, 3)]
         self.send(steps, eviction_keep=100)
         self.send([*steps, *distinct(1, 9)], eviction_keep=100)
         events = self.events("evict")
@@ -140,7 +141,7 @@ class EvictionTests(Base):
         self.assertNotEqual(json.dumps(trimmed["messages"]), json.dumps(conv(steps)))
 
     def test_flag_off_is_byte_identical(self):
-        steps = [bash("make", "first"), *distinct(3), bash("make", "second"), *distinct(4, 3)]
+        steps = [bash("git status", "first"), *distinct(3), bash("git status", "second"), *distinct(4, 3)]
         out = self.send(steps, eviction=False)
         self.assertEqual(json.dumps(out["messages"]), json.dumps(conv(steps)))
         state = json.loads((self.ctx / "sessions" / f"{SID}.trim.json").read_text()) \

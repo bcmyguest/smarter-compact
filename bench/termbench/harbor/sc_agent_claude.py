@@ -35,6 +35,8 @@ from pathlib import Path
 from harbor.agents.installed.claude_code import ClaudeCode
 from harbor.agents.installed.node_install import nvm_node_install_snippet
 
+import lhtb_continue
+
 REPO = "/opt/smarter-compact"
 STATE_DIR = "/logs/agent/smarter-compact"
 # SC_TRIM_AT on the harbor host sets the default cut; a job agent's env CONTEXT_TRIM_AT_TOKENS overrides it.
@@ -111,7 +113,12 @@ class ScClaudeBase(ClaudeCode):
     have to be sitting in that exact directory before the agent runs -- an env override will not
     win. This is only needed for the **subscription** credential path; with a real
     `ANTHROPIC_API_KEY` this is a no-op (nothing is mounted, so it silently skips).
+
+    Every arm also honours a task's `[agent] continue_until_timeout` the way LHTB's harness does (lhtb_continue.py).
     """
+
+    # Opts this agent's trials into lhtb_continue's loop on tasks that set continue_until_timeout.
+    SC_CONTINUE_UNTIL_TIMEOUT = True
 
     def __init__(self, *args, extra_env=None, **kwargs):
         # The subscription login fetches the account's claude.ai connectors: hundreds of KB of deferred tools per request.
@@ -129,6 +136,9 @@ class ScClaudeBase(ClaudeCode):
                 f"chmod 600 {dest}/.credentials.json; fi; true"
             ),
         )
+
+
+lhtb_continue.install()
 
 
 class ScClaudeBaseline(ScClaudeBase):

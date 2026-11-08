@@ -21,6 +21,19 @@ _NUM_RE = re.compile(r"(?<![\d.])\d{4,}(?![\d.])")
 # A Bash command that only prints files whole: `cat <path>...` with no pipe, redirect, chain or substitution.
 _SHELL_META = set("|;&><`$")
 RULE_FILE, RULE_COMMAND, RULE_UNREFERENCED = "file", "command", "unreferenced"
+# Commands whose output a later identical run supersedes: they read state and change none.
+READ_ONLY_COMMANDS = frozenset(("cat", "head", "tail", "less", "more", "wc", "ls", "find", "tree", "stat", "file",
+                                "grep", "egrep", "fgrep", "rg", "ag", "pwd", "which"))
+READ_ONLY_GIT = frozenset(("status", "diff", "log", "show", "branch"))
+# `git branch` options that only list; any other option or a name creates, renames or deletes a branch.
+GIT_BRANCH_LIST = frozenset(("-a", "-r", "-v", "-vv", "--all", "--remotes", "--verbose", "--list", "--show-current"))
+# find actions that run commands, delete or write files.
+FIND_ACTIONS = frozenset(("-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"))
+# Separators between simple commands; each side must be read-only on its own.
+_CHAIN = frozenset(("|", "&&", "||", ";"))
+_PUNCT = set("|&;()<>")
+# A `sed -n` script that only prints: optional line or /regex/ addresses, then `p`.
+_SED_PRINT_RE = re.compile(r"^(?:(?:\d+|\$|/[^/]*/)(?:,(?:\d+|\$|/[^/]*/))?)?p$")
 
 
 def distinctive_tokens(text):
@@ -40,6 +53,70 @@ def cat_paths(command):
     return [w for w in words[1:] if not w.startswith("-")]
 
 
+def _short_flag(arg, letter):
+    return arg.startswith("-") and not arg.startswith("--") and letter in arg[1:]
+
+
+def _sed_read_only(args):
+    """`sed -n '<addr>p' <file>...` without an in-place flag."""
+    if any(a.startswith("--in-place") or _short_flag(a, "i") for a in args):
+        return False
+    if not any(a in ("--quiet", "--silent") or _short_flag(a, "n") for a in args):
+        return False
+    scripts = [a for a in args if not a.startswith("-")]
+    return bool(scripts) and _SED_PRINT_RE.match(scripts[0]) is not None
+
+
+def _git_read_only(args):
+    while args and args[0].startswith("-"):
+        args = args[2:] if args[0] in ("-C", "-c") else args[1:]
+    if not args or args[0] not in READ_ONLY_GIT or any(a.startswith("--output") for a in args):
+        return False
+    return args[0] != "branch" or all(a in GIT_BRANCH_LIST for a in args[1:])
+
+
+def _simple_read_only(words):
+    """True when one simple command (no separators) only reads."""
+    name, args = words[0], words[1:]
+    match name:
+        case "sed":
+            return _sed_read_only(args)
+        case "git":
+            return _git_read_only(args)
+        case "env":
+            return not args
+        case "find":
+            return not any(a in FIND_ACTIONS for a in args)
+    return name in READ_ONLY_COMMANDS
+
+
+def read_only(command):
+    """True when a shell command only reads: allowlisted commands joined by |, &&, || or ;, with no redirection,
+    background job, subshell, substitution or in-place edit. Unknown commands are not read-only."""
+    if "$(" in command or "`" in command or ">" in command:
+        return False
+    try:
+        lex = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        tokens = list(lex)
+    except ValueError:
+        return False
+    simple, words = [], []
+    for token in tokens:
+        if token in _CHAIN:
+            if not words:
+                return False
+            simple.append(words)
+            words = []
+        elif set(token) <= _PUNCT:
+            return False
+        else:
+            words.append(token)
+    if words:
+        simple.append(words)
+    return bool(simple) and all(_simple_read_only(w) for w in simple)
+
+
 def step_count(adapter, items):
     """Assistant steps in items: the unit a batch counts."""
     return sum(1 for x in items if adapter.is_assistant(x))
@@ -57,7 +134,9 @@ def _segment(call_id, step, name, args):
             if tool in READ_TOOLS:
                 seg["read"] = (args.get("offset"), args.get("limit"))
     elif tool in SHELL_TOOLS and isinstance(args.get("command"), str):
-        seg["command"] = " ".join(args["command"].split())
+        # Only a read-only command supersedes or is superseded: a stateful one (`make`, `mario step`) changes state.
+        if read_only(args["command"]):
+            seg["command"] = " ".join(args["command"].split())
         paths = cat_paths(args["command"])
         if paths:
             seg["files"], seg["read"] = tuple(paths), (None, None)
@@ -104,7 +183,7 @@ def evictable(adapter, items, batch, keep, first=None):
     turn never are. One pass from the newest result back, so a long session costs linear time.
 
     file: a later call wrote the same file, or read at least as much of it (the whole file, or the same range).
-    command: the same shell command ran again later. unreferenced: `keep` or more tool results came after it, and
+    command: the same read-only shell command (`read_only`) ran again later. unreferenced: `keep` or more tool results came after it, and
     none of its new distinctive tokens appear in any later assistant text or tool input."""
     segs, refs = segments(adapter, items)
     last_ref = {}
