@@ -1,6 +1,6 @@
 {
   "name": "smarter-compact",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "description": "Context management (smart compaction): keep long sessions under a token limit without an LLM summary. Trimmed turns stay in a local SQLite store; search with smart_compact_search, smart_compact_sql, and smart_compact_get.",
   "author": { "name": "B Guest" },
   "repository": "https://github.com/bcmyguest/smarter-compact",
