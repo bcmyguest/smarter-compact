@@ -6,8 +6,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { gte } from "@renovatebot/pep440";
 
-// The first LiteLLM with PR #41522, the ChatGPT/Codex subscription pass-through (/backend-api/codex).
-export const LITELLM_MIN = "1.109.0.dev1";
+// The first LiteLLM release candidate with PR #41522, the ChatGPT/Codex subscription pass-through (/backend-api/codex).
+export const LITELLM_MIN = "1.109.0rc1";
 // A pre-release in the specifier lets uv pick pre-releases for litellm alone.
 export const LITELLM_SPEC = `litellm[proxy]>=${LITELLM_MIN}`;
 export const UV_INSTALL_URL = "https://docs.astral.sh/uv/getting-started/installation/";

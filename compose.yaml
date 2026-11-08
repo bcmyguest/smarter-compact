@@ -8,12 +8,12 @@
 #   docker compose logs -f context-proxy
 #   docker compose down
 #
-# Why the dev image: v1.109.0-dev.1 is the only LiteLLM release with PR #41522, the ChatGPT/Codex subscription
+# Why a pre-release image: v1.109.0-rc.1 is the first release candidate with PR #41522, the ChatGPT/Codex subscription
 # pass-through (/backend-api/codex/{endpoint}) that routes Codex here. Move to the first stable release that
 # contains #41522 when one exists.
 services:
   context-proxy:
-    image: ghcr.io/berriai/litellm:v1.109.0-dev.1
+    image: ghcr.io/berriai/litellm:v1.109.0-rc.1
     container_name: smarter-compact-context-proxy
     restart: unless-stopped
     command: ["--config", "/app/proxy/config.yaml", "--port", "4000"]
