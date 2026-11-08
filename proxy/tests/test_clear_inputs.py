@@ -22,8 +22,13 @@ from smarter_compact.settings import DEFAULT_CLEAR_INPUTS_OVER_CHARS  # noqa: E4
 
 BAR = 2000
 _ID_RE = re.compile(r'smart_compact_get\(id="([0-9a-f]{16})"\)')
-# Far below what clearing alone leaves, so only clear_fit can accept it.
-LOW_TARGET = 1000
+# Clearing results and inputs alone lands under this fraction of the request, clearing results alone does not.
+SETTLE = 0.5
+
+
+def settle(msgs):
+    """A target clearing alone reaches only with input clearing on."""
+    return int(SETTLE * full_tokens(msgs))
 
 
 def body(k, n=6000):
@@ -134,7 +139,7 @@ class ClearInputsTests(Base):
 
     def test_cleared_with_its_result_only(self):
         msgs = write_turns()
-        view = self.send(msgs, trim_at_tokens=full_tokens(msgs), clear_fit=0.5, trim_to_tokens=LOW_TARGET)
+        view = self.send(msgs, trim_at_tokens=full_tokens(msgs), trim_to_tokens=settle(msgs))
         self.assertEqual([m["role"] for m in view], [m["role"] for m in msgs])
         got, orig = inputs_in(view), inputs_in(msgs)
         # The 2 newest results (w4, wL) stay with their inputs; every older call's long strings are placeholders.
@@ -147,15 +152,15 @@ class ClearInputsTests(Base):
             self.assertEqual((a["file_path"], a["mode"], a["dry"]), (b["file_path"], 420, False))
         self.assertEqual(self.trims(), [(0,)])
 
-    def test_clear_fit_settles_where_inputs_dominate(self):
+    def test_clearing_inputs_settles_where_inputs_dominate(self):
         msgs = write_turns()
         full = full_tokens(msgs)
-        on = self.send(msgs, trim_at_tokens=full, clear_fit=0.5, trim_to_tokens=LOW_TARGET)
+        on = self.send(msgs, trim_at_tokens=full, trim_to_tokens=settle(msgs))
         self.assertEqual(len(on), len(msgs))
-        self.assertLess(full_tokens(on), 0.5 * full)
+        self.assertLess(full_tokens(on), SETTLE * full)
         self.assertNotIn("earlier messages are NOT", json.dumps(on))
         # Off, clearing results alone frees almost nothing, so the trim drops turns.
-        off = self.send(msgs, "sid-off", trim_at_tokens=full, clear_fit=0.5, trim_to_tokens=LOW_TARGET,
+        off = self.send(msgs, "sid-off", trim_at_tokens=full, trim_to_tokens=settle(msgs),
                         clear_inputs_over_chars=0)
         self.assertLess(len(off), len(msgs))
         self.assertIn("earlier messages are NOT", json.dumps(off))
@@ -163,7 +168,7 @@ class ClearInputsTests(Base):
     def test_byte_identical_across_requests(self):
         msgs = write_turns()
         full = full_tokens(msgs)
-        prev, more = self.send(msgs, trim_at_tokens=full, clear_fit=0.5, trim_to_tokens=LOW_TARGET), msgs
+        prev, more = self.send(msgs, trim_at_tokens=full, trim_to_tokens=settle(msgs)), msgs
         for k in range(2):
             more = later_step(more, k)
             view = self.send(more, trim_at_tokens=10 ** 9)
@@ -174,7 +179,7 @@ class ClearInputsTests(Base):
 
     def test_blob_written_and_kept_by_the_sweep(self):
         msgs = write_turns()
-        view = self.send(msgs, trim_at_tokens=full_tokens(msgs), clear_fit=0.5, trim_to_tokens=LOW_TARGET)
+        view = self.send(msgs, trim_at_tokens=full_tokens(msgs), trim_to_tokens=settle(msgs))
         texts = [s for k in range(4) for s in (body(k), "n" * 3000)]
         placeholders = [s for v in inputs_in(view).values() for s in strings(v) if s.startswith(INPUT_MASK_PREFIX)]
         self.assertEqual(len(placeholders), 8)
@@ -188,7 +193,7 @@ class ClearInputsTests(Base):
 
     def test_off_gives_the_old_bytes(self):
         msgs = write_turns()
-        kw = dict(trim_at_tokens=full_tokens(msgs), clear_fit=0.5, trim_to_tokens=LOW_TARGET)
+        kw = dict(trim_at_tokens=full_tokens(msgs), trim_to_tokens=settle(msgs))
         off = self.send(msgs, "sid-a", clear_inputs_over_chars=0, **kw)
         huge = self.send(msgs, "sid-b", clear_inputs_over_chars=10 ** 9, **kw)
         self.assertNotIn(INPUT_MASK_PREFIX, json.dumps(off))

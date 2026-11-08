@@ -48,6 +48,18 @@ def request_chars(*values):
     return sum(_chars(v) for v in values)
 
 
+def signed_chars(value):
+    """Characters of the encrypted thinking payloads request_chars leaves out (UNBILLED_KEYS)."""
+    if isinstance(value, dict):
+        kind = value.get("type")
+        skip = UNBILLED_KEYS.get(kind) if isinstance(kind, str) else None
+        own = len(str(value[skip])) if skip in value else 0
+        return own + sum(signed_chars(v) for k, v in value.items() if k != skip)
+    if isinstance(value, (list, tuple)):
+        return sum(signed_chars(v) for v in value)
+    return 0
+
+
 def _sample(value):
     """(chars, tokens) of a stored usage sample, or None when it is missing or malformed."""
     if not isinstance(value, dict):

@@ -18,9 +18,6 @@ MODEL_TRIM_AT_TOKENS = (("haiku", 95000),)
 DEFAULT_TRIM_TO_TOKENS = 66000
 MODEL_TRIM_TO_TOKENS = (("haiku", 50000),)
 DEFAULT_SCRATCHPAD_NUDGE_AT = 0.75
-# Clearing alone settles a trim under this fraction of trim_at, leaving headroom so the next steps do not re-trigger
-# a trim (one cache break each); picked by the offline replay in docs/clearing.md.
-DEFAULT_CLEAR_FIT = 0.63
 # A cleared tool call's input strings over this many characters become placeholders (docs/clearing.md).
 DEFAULT_CLEAR_INPUTS_OVER_CHARS = 2000
 DEFAULT_COMPRESS_OVER_TOKENS = 4000
@@ -130,12 +127,11 @@ class Settings:
     # Each trim first masks every tool_result but the newest N, keeping turns and calls; turns drop only when that
     # is not enough. 0 is off (CONTEXT_CLEAR_KEEP_RESULTS, default 10).
     clear_keep_results: int = 10
-    # Clearing alone is accepted under max(target, clear_fit x trim_at); 0 < x < 1, lower leaves more headroom before
-    # the next trim (CONTEXT_CLEAR_FIT).
-    clear_fit: float = DEFAULT_CLEAR_FIT
     # Wherever a tool result is cleared or masked, each string of its call's input over N characters becomes a
     # placeholder naming its blob; 0 is off (CONTEXT_CLEAR_INPUTS_OVER_CHARS).
     clear_inputs_over_chars: int = DEFAULT_CLEAR_INPUTS_OVER_CHARS
+    # Strip signed reasoning before the latest assistant message, never emptying one, and charge signatures (CONTEXT_STRIP_OLD_REASONING).
+    strip_old_reasoning: bool = True
     # A trim that would free fewer estimated tokens than this is skipped; 0 is off (CONTEXT_TRIM_MIN_GAIN_TOKENS).
     trim_min_gain_tokens: int = 0
     # Anthropic requests to Claude gain a clear_tool_uses_20250919 context edit (CONTEXT_SERVER_CLEAR=1 turns it on).
@@ -198,9 +194,9 @@ class Settings:
             strip_prose=_flag(env, "CONTEXT_STRIP_PROSE", "0"),
             mask_observations=_flag(env, "CONTEXT_MASK_OBSERVATIONS", "1"),
             clear_keep_results=max(_int(env, "CONTEXT_CLEAR_KEEP_RESULTS", 10), 0),
-            clear_fit=_fraction(env, "CONTEXT_CLEAR_FIT", DEFAULT_CLEAR_FIT),
             clear_inputs_over_chars=max(_int(env, "CONTEXT_CLEAR_INPUTS_OVER_CHARS",
                                              DEFAULT_CLEAR_INPUTS_OVER_CHARS), 0),
+            strip_old_reasoning=_flag(env, "CONTEXT_STRIP_OLD_REASONING", "1"),
             trim_min_gain_tokens=_int(env, "CONTEXT_TRIM_MIN_GAIN_TOKENS", 0),
             server_clear=_flag(env, "CONTEXT_SERVER_CLEAR", "0"),
             server_clear_trigger_tokens=_positive_int(env, "CONTEXT_SERVER_CLEAR_TRIGGER_TOKENS",

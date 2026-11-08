@@ -65,7 +65,7 @@ Live check, 2026-11-05: Claude Code 2.1.318 `claude -p` on `claude-haiku-5-5` th
 
 The trim uses a **calibrated estimate** from provider usage:
 
-1. Pre-call hook counts request characters and keys them by `litellm_call_id`. Tools with `defer_loading: true` are left out: they cost no prompt tokens until loaded, and Claude Code sends hundreds of KB of them. The encrypted payloads of thinking blocks (`thinking.signature`, `redacted_thinking.data`) are left out: they often run past 100k characters and bill as little or no prompt text. The thinking text itself counts.
+1. Pre-call hook counts request characters and keys them by `litellm_call_id`. Tools with `defer_loading: true` are left out: they cost no prompt tokens until loaded, and Claude Code sends hundreds of KB of them. The encrypted payloads of thinking blocks (`thinking.signature`, `redacted_thinking.data`) count at face value with `CONTEXT_STRIP_OLD_REASONING` on (the default): on Haiku 5.5 a thinking block kept in a tool loop bills one token per 3.1 to 3.3 signature characters ([measured](context-store.md#signed-reasoning)), close to text. With it `0` they are left out, as before. The thinking text itself counts.
 2. Success hook records `{chars, tokens}` per conversation thread in `.trim.json`.
 3. The next request in the thread extrapolates with the observed chars/token ratio (bounded 1–8).
 

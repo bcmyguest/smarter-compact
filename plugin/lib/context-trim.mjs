@@ -164,8 +164,6 @@ export const TRIM_KEPT = 1;
 export const TRIM_NEW = 2;
 // The nudge fires once the prompt passes this fraction of the trim threshold; same as proxy settings.py.
 export const DEFAULT_SCRATCHPAD_NUDGE_AT = 0.75;
-// Clearing alone settles a trim under this fraction of the threshold, leaving headroom before the next; same as proxy.
-export const DEFAULT_CLEAR_FIT = 0.63;
 // A cleared tool call's input strings over this many characters become placeholders; same as proxy settings.py.
 export const DEFAULT_CLEAR_INPUTS_OVER_CHARS = 2000;
 /** Part types whose payload is binary; each is charged a flat 6400 characters (about 1600 tokens). */
@@ -225,10 +223,10 @@ export function trimSettings(env = process.env, home = env.HOME) {
     scratchpadNudgeAt: fraction("CONTEXT_SCRATCHPAD_NUDGE_AT", DEFAULT_SCRATCHPAD_NUDGE_AT),
     // Each trim first clears every tool result but the newest N, keeping all turns and calls; 0 is off.
     clearKeepResults: Math.max(int("CONTEXT_CLEAR_KEEP_RESULTS", 10), 0),
-    // Clearing alone is accepted under max(target, clearFit x trimAt); 0 < x < 1, lower leaves more headroom (CONTEXT_CLEAR_FIT).
-    clearFit: fraction("CONTEXT_CLEAR_FIT", DEFAULT_CLEAR_FIT),
     // Wherever a tool result is cleared or masked, its call's input strings over N chars become placeholders; 0 is off.
     clearInputsOverChars: Math.max(int("CONTEXT_CLEAR_INPUTS_OVER_CHARS", DEFAULT_CLEAR_INPUTS_OVER_CHARS), 0),
+    // Strip signed reasoning before the latest assistant message, never emptying one, and charge signatures (CONTEXT_STRIP_OLD_REASONING).
+    stripOldReasoning: flag("CONTEXT_STRIP_OLD_REASONING"),
     compressOverTokens: int("CONTEXT_COMPRESS_OVER_TOKENS", DEFAULT_COMPRESS_OVER_TOKENS),
     charsPerToken: positive("CONTEXT_CHARS_PER_TOKEN", DEFAULT_CHARS_PER_TOKEN),
     contextDir: contextRoot(home, env),
@@ -278,6 +276,21 @@ function chars(value) {
 /** Characters in the values, as the trim measures a request (proxy request_chars). */
 export function requestChars(...values) {
   return values.reduce((sum, v) => sum + chars(v), 0);
+}
+
+/** Characters of the signed reasoning payloads requestChars leaves out (proxy signed_chars). */
+export function signedChars(value) {
+  if (Array.isArray(value)) return value.reduce((sum, v) => sum + signedChars(v), 0);
+  if (!isObject(value)) return 0;
+  if (!isSignedReasoning(value)) return Object.values(value).reduce((sum, v) => sum + signedChars(v), 0);
+  const metas = Object.values(isObject(value.providerMetadata) ? value.providerMetadata : {}).filter(isObject);
+  const payload = (v) => (typeof v === "string" ? cpLen(v) : 0);
+  return payload(value.encrypted) + metas.reduce((sum, m) => sum + payload(m.signature) + payload(m.redactedData), 0);
+}
+
+/** requestChars, plus signed reasoning payloads with `old` (CONTEXT_STRIP_OLD_REASONING); proxy _size. */
+export function sizeChars(old, ...values) {
+  return requestChars(...values) + (old ? values.reduce((sum, v) => sum + signedChars(v), 0) : 0);
 }
 
 const isObject = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -658,7 +671,8 @@ export function chooseGap(items, cut, after, first, fits) {
 
 /**
  * The kept messages (keptIndices) in order, the cut turn carrying the note, with signed reasoning stripped from
- * kept assistant messages before `strip` (default: the latest assistant run; see withoutReasoning). `decorate(message)`
+ * kept assistant messages before `strip` (default and cap: stripTop, with `old` the latest assistant message, else the
+ * latest assistant run; see withoutReasoning and bareOf). `decorate(message)`
  * adds per-message parts at render time only; trimming, fingerprints and log rows always see the undecorated messages.
  * `mode` (regionMode) also strips the proseIds tool pairs (true; adjacent stripped messages of one role merge) or
  * masks their results ("mask"); every tool result before `clear` is masked too (cleared). Wherever a result is
@@ -666,14 +680,14 @@ export function chooseGap(items, cut, after, first, fits) {
  * gets each index that reaches the view mapped to its sent form (no note, undecorated, unmerged). Proxy render.
  */
 export function render(items, cut, note, first = null, gap = null, decorate = (m) => m, strip = null, clear = null,
-  mode = false, shown = null, inputs = 0) {
+  mode = false, shown = null, inputs = 0, old = false) {
   if (cut === null) {
     if (shown) items.forEach((x, j) => shown.set(j, x));
     return items.map(decorate);
   }
   const keep = keptIndices(items, cut, gap, first);
-  const run = latestRunStart(items);
-  const bound = strip === null ? run : Math.min(strip, run);
+  const top = stripTop(items, old);
+  const bound = strip === null ? top : Math.min(strip, top);
   const ids = mode ? proseIds(items, keep, bound, cut, mode) : new Set();
   const calls = inputs > 0 ? clearedCalls(items, clear, first) : new Set();
   const out = [];
@@ -683,7 +697,7 @@ export function render(items, cut, note, first = null, gap = null, decorate = (m
     let x = items[j];
     let region = false;
     if (j !== cut && j < bound) {
-      x = withoutReasoning(x);
+      x = bareOf(x, old);
       if (x === null) continue;
       if (ids.size && !isPinned(x) && mode === "mask") x = maskInputs(maskResults(x, ids), ids, inputs);
       else if (ids.size && !isPinned(x)) {
@@ -827,6 +841,23 @@ export function latestRunStart(items) {
   if (last < 0) return items.length;
   while (last > 0 && items[last - 1]?.role === "assistant") last--;
   return last;
+}
+
+/** Index of the latest assistant message; items.length if none (proxy latest_message_start). */
+export function latestMessageStart(items) {
+  for (let j = items.length - 1; j >= 0; j--) if (items[j]?.role === "assistant") return j;
+  return items.length;
+}
+
+/** Where a trim's reasoning strip ends: the latest assistant message with `old`, else the latest run; proxy strip_top. */
+export function stripTop(items, old) {
+  return old ? latestMessageStart(items) : latestRunStart(items);
+}
+
+/** x without its signed reasoning; null when nothing is left, except with `old` it comes back whole; proxy _bare. */
+export function bareOf(x, old) {
+  const bare = withoutReasoning(x);
+  return bare === null && old ? x : bare;
 }
 
 /**
@@ -1056,28 +1087,52 @@ function proseIds(items, keep, bound, cut, mode) {
   return new Set(region.flatMap((j) => [...resultIds(items[j])]).filter((id) => calls.has(id)));
 }
 
-/** Shrink sizes (requestChars per message) to what prose stripping (or masking) leaves before the latest run. */
-function proseSizes(items, cut, sizes, mode, inputs = 0) {
+/** Shrink sizes (requestChars per message; sizeChars with `old`) to what prose stripping (or masking) leaves before stripTop. */
+function proseSizes(items, cut, sizes, mode, inputs = 0, old = false) {
   const keep = new Set(items.keys());
-  const bound = latestRunStart(items);
+  const bound = stripTop(items, old);
   const ids = proseIds(items, keep, bound, cut, mode);
   if (!ids.size) return;
   for (const j of proseRegion(items, keep, bound, cut, mode)) {
     const x = mode === "mask" ? maskInputs(maskResults(items[j], ids), ids, inputs) : withoutToolCalls(items[j], ids);
-    sizes[j] = x === null ? 0 : requestChars(x);
+    sizes[j] = x === null ? 0 : sizeChars(old, x);
   }
 }
 
-/** requestChars per message after prose stripping or masking (mode) and clearing before `clear`, inputs over `inputs` chars included. Proxy _trim_sizes. */
-function trimSizes(items, cut, mode, clear, first, inputs = 0) {
-  const sizes = items.map((x) => requestChars(x));
-  if (mode) proseSizes(items, cut, sizes, mode, inputs);
+/**
+ * requestChars per message after prose stripping or masking (mode) and clearing before `clear`, inputs over `inputs`
+ * chars included; with `old` sizes carry signed payloads (sizeChars) less the reasoning stripped before stripTop. Proxy _trim_sizes.
+ */
+function trimSizes(items, cut, mode, clear, first, inputs = 0, old = false) {
+  const sizes = items.map((x) => sizeChars(old, x));
+  if (mode) proseSizes(items, cut, sizes, mode, inputs, old);
   const calls = inputs > 0 ? clearedCalls(items, clear, first) : null;
   for (let j = 0; j < (clear ?? 0); j++) {
     const x = cleared(items[j], j, clear, first, inputs, calls);
-    if (x !== items[j]) sizes[j] = Math.min(sizes[j], requestChars(x));
+    if (x !== items[j]) sizes[j] = Math.min(sizes[j], sizeChars(old, x));
+  }
+  if (old) {
+    const top = stripTop(items, old);
+    for (let j = 0; j < top; j++) {
+      if (j === cut || items[j]?.role !== "assistant") continue;
+      const bare = bareOf(items[j], old);
+      sizes[j] = Math.max(0, sizes[j] - sizeChars(old, items[j]) + (bare === null ? 0 : sizeChars(old, bare)));
+    }
   }
   return sizes;
+}
+
+/** Whether newStrip takes reasoning off a kept assistant message the current view (cut, strip) still sends; proxy _strips_more. */
+function stripsMore(items, keep, cut, strip, newStrip) {
+  const lo = cut !== null && strip !== null ? strip : 0;
+  return [...keep].some((j) => j >= lo && j < newStrip && j !== cut && items[j]?.role === "assistant"
+    && bareOf(items[j], true) !== items[j]);
+}
+
+/** The note of a trim that only stripped earlier reasoning: no message is gone; proxy reasoning_text. */
+export function reasoningText(sid) {
+  return `[smarter-compact: session ${sid}] Your thinking from earlier steps was removed to fit your context `
+    + "window; every message, tool call and tool result is still here.]";
 }
 
 /** "exit N" from the result text, else failed/ok by its error type; "no result" when none was sent. */
@@ -1345,36 +1400,38 @@ async function trimSession(request, settings, deps, { original, sid, store, item
     // The items as sent: the recorded nudge stays on its item, byte-identical, until the next trim.
     let sent = nudged(items, nudgeAt, threads.has(root) ? thread.nudge : null);
     const inputs = settings.clearInputsOverChars ?? 0;
-    let rendered = render(sent, cut, note, first, gap, decorate, strip, clear, mode, shown, inputs);
+    const old = Boolean(settings.stripOldReasoning);
+    let rendered = render(sent, cut, note, first, gap, decorate, strip, clear, mode, shown, inputs, old);
     const force = store.forceRequested(sid);
     const ratio = settings.charsPerToken > 0 ? settings.charsPerToken : DEFAULT_CHARS_PER_TOKEN;
     const toolNames = recallToolNames(request.tools);
     const baseChars = requestChars(request.system, request.tools);
-    const tokens = estimatePromptTokens(baseChars + requestChars(rendered), state.usage, root, ratio);
+    const tokens = estimatePromptTokens(baseChars + sizeChars(old, rendered), state.usage, root, ratio);
     const trimAt = trimAtFor(settings, request.model);
     if (force || tokens >= trimAt) {
       const nextClearAt = nextClear(items, settings.clearKeepResults, clear);
       // A target at or above the threshold could not land a trim under it, so the threshold caps it.
       const target = Math.min(trimToFor(settings, request.model), trimAt);
-      const under = (sizes, c, g, bound = target) => {
+      const under = (sizes, c, g) => {
         let chars = baseChars;
         for (const j of keptIndices(items, c, g, first)) chars += sizes[j];
-        return estimatePromptTokens(chars, state.usage, root, ratio) < bound;
+        return estimatePromptTokens(chars, state.usage, root, ratio) < target;
       };
-      // Accepted under clearFit x trimAt, not just target; the headroom below trimAt defers the next trim.
-      const clearBound = Math.max(target, (settings.clearFit ?? DEFAULT_CLEAR_FIT) * trimAt);
       let next = null;
       let nextGap = null;
-      if (nextClearAt !== null && first !== null) {
-        // Clearing first: the current cut, or the first user turn (dropping nothing), with the newer bound.
-        const [anchor, anchorGap] = cut !== null ? [cut, gap] : [first, null];
-        if (under(trimSizes(items, anchor, mode, nextClearAt, first, inputs), anchor, anchorGap, clearBound)) [next, nextGap] = [anchor, anchorGap];
+      const [anchor, anchorGap] = cut !== null ? [cut, gap] : [first, null];
+      // With `old`, stripping earlier reasoning settles a trim like clearing; a forced trim still drops turns.
+      const strips = old && !force && first !== null
+        && stripsMore(items, keptIndices(items, anchor, anchorGap, first), cut, strip, stripTop(items, old));
+      if ((nextClearAt !== null || strips) && first !== null) {
+        // Clearing (and stripping) first: the current cut, or the first user turn (dropping nothing).
+        if (under(trimSizes(items, anchor, mode, nextClearAt, first, inputs, old), anchor, anchorGap)) [next, nextGap] = [anchor, anchorGap];
       }
       if (next === null) {
         next = chooseCut(items, cut === null ? -1 : cut, first);
         if (next === null) next = cut !== null ? cut : lastTurnIndex(items);
         if (next !== null) {
-          const sizes = trimSizes(items, next, mode, nextClearAt, first, inputs);
+          const sizes = trimSizes(items, next, mode, nextClearAt, first, inputs, old);
           const after = next === cut && gap !== null ? gap : next + 1;
           nextGap = chooseGap(items, next, after, first, (g) => under(sizes, next, g));
           if (nextGap === null && next === cut) nextGap = gap;
@@ -1382,14 +1439,20 @@ async function trimSession(request, settings, deps, { original, sid, store, item
       }
       let dropped = next !== null ? droppable(items, next, nextGap, first).length : 0;
       let moved = dropped > 0 && (next !== cut || nextGap !== gap);
-      // A newer clear bound alone moves the trim when it masks a result the current bound left whole.
-      if (next !== null && !moved) moved = clearsMore(items, keptIndices(items, next, nextGap, first), clear, nextClearAt, first, inputs);
+      const nextStrip = stripTop(items, old);
+      if (next !== null && !moved) {
+        // A newer clear bound alone moves the trim when it masks a result the current bound left whole.
+        const kept = keptIndices(items, next, nextGap, first);
+        moved = clearsMore(items, kept, clear, nextClearAt, first, inputs);
+        // So does a strip bound that takes reasoning off a message the current view still sends.
+        if (!moved && old) moved = stripsMore(items, kept, cut, strip, nextStrip);
+      }
       const nextShown = new Map();
       if (moved) {
-        const bare = render(items, next, "", first, nextGap, decorate, latestRunStart(items), nextClearAt, mode, nextShown, inputs);
+        const bare = render(items, next, "", first, nextGap, decorate, nextStrip, nextClearAt, mode, nextShown, inputs, old);
         if (!force && settings.trimMinGainTokens > 0) {
           // A cut freeing fewer estimated tokens (pointer note not counted) waits for a bigger one.
-          moved = tokens - estimatePromptTokens(baseChars + requestChars(bare), state.usage, root, ratio) >= settings.trimMinGainTokens;
+          moved = tokens - estimatePromptTokens(baseChars + sizeChars(old, bare), state.usage, root, ratio) >= settings.trimMinGainTokens;
         }
       }
       if (moved) {
@@ -1398,7 +1461,10 @@ async function trimSession(request, settings, deps, { original, sid, store, item
         dropped = items.length - nextShown.size;
         const masked = (mode === "mask" || nextClearAt !== null) && [...nextShown].some(([j, x]) => x !== items[j]
           && [MASK_PREFIX, INPUT_MASK_PREFIX].some((prefix) => JSON.stringify(x.content ?? null).includes(prefix)));
-        if (dropped || !masked) {
+        if (old && !dropped && !masked) {
+          // Stripping earlier reasoning alone drops and masks nothing.
+          note = reasoningText(sid);
+        } else if (dropped || !masked) {
           note = pointerText(sid, dropped, toolNames);
           if (settings.progressNote) note = withProgress(items, next, nextGap, first, settings, note);
           if (masked) note = `${note}\n${maskText(sid, toolNames)}`;
@@ -1411,7 +1477,7 @@ async function trimSession(request, settings, deps, { original, sid, store, item
         threads.delete(root);
         const entry = { cut: next, cut_fp: fingerprint(items[next]), note, format: FORMAT, updated: ts };
         if (nextGap !== null) Object.assign(entry, { gap: nextGap, gap_fp: fingerprint(items[nextGap]) });
-        strip = latestRunStart(items);
+        strip = nextStrip;
         if (strip < items.length) Object.assign(entry, { strip, strip_fp: fingerprint(items[strip]) });
         if (nextClearAt !== null) Object.assign(entry, { clear: nextClearAt, clear_fp: fingerprint(items[nextClearAt]) });
         threads.set(root, entry);
@@ -1419,11 +1485,11 @@ async function trimSession(request, settings, deps, { original, sid, store, item
         store.saveTrim(sid, state);
         if (force) store.clearForce(sid);
         shown = new Map();
-        rendered = render(items, next, note, first, nextGap, decorate, strip, nextClearAt, mode, shown, inputs);
+        rendered = render(items, next, note, first, nextGap, decorate, strip, nextClearAt, mode, shown, inputs, old);
         cut = next;
         gap = nextGap;
         clear = nextClearAt;
-        const after = estimatePromptTokens(baseChars + requestChars(rendered), state.usage, root, ratio);
+        const after = estimatePromptTokens(baseChars + sizeChars(old, rendered), state.usage, root, ratio);
         trim = { tokens_before: tokens, tokens_after: after, dropped };
         if (settings.scratchpad) trim.scratchpad_chars = Math.min(pad.length, SCRATCHPAD_MAX_CHARS);
         sent = items;
@@ -1443,7 +1509,7 @@ async function trimSession(request, settings, deps, { original, sid, store, item
         store.saveTrim(sid, state);
         sent = nudged(items, last, text);
         shown = new Map();
-        rendered = render(sent, cut, note, first, gap, decorate, strip, clear, mode, shown, inputs);
+        rendered = render(sent, cut, note, first, gap, decorate, strip, clear, mode, shown, inputs, old);
         nudge = { tokens_before: tokens };
       }
     }
@@ -1456,7 +1522,7 @@ async function trimSession(request, settings, deps, { original, sid, store, item
     return rendered;
   });
   // Measured like the estimate, so a later recordPromptUsage compares like with like.
-  deps.measured?.({ root, chars: requestChars(request.system, request.tools, view), model: modelName(request.model), trimmed });
+  deps.measured?.({ root, chars: requestChars(request.system, request.tools) + sizeChars(Boolean(settings.stripOldReasoning), view), model: modelName(request.model), trimmed });
   return view.length === original.length && view.every((m, i) => m === original[i]) ? original : view;
 }
 

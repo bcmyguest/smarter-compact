@@ -19,7 +19,7 @@ from smarter_compact import Settings, process_request  # noqa: E402
 from smarter_compact.adapters import _litellm_thinking  # noqa: E402
 from smarter_compact.compress import blob_id, compress_text  # noqa: E402
 from smarter_compact.core import (  # noqa: E402
-    STANDING_INSTRUCTION, pointer_text, recall_tool_names, request_tool_names,
+    STANDING_INSTRUCTION, pointer_text, reasoning_text, recall_tool_names, request_tool_names,
 )
 
 SID = "sess-1"
@@ -176,10 +176,14 @@ class AnthropicTrimTests(Base):
         self.assertEqual(json.dumps(out["messages"][3:]), json.dumps(strip_thinking(msgs)[5:]))
         self.assert_no_stale_thinking(out["messages"], msgs)
 
-    def test_single_turn_tool_loop_not_trimmed(self):
+    def test_single_turn_tool_loop_drops_nothing(self):
+        # CONTEXT_STRIP_OLD_REASONING: the trim only strips older thinking; every message stays.
         msgs = anth_history(1)
         out = self.run_req(anth_request(copy.deepcopy(msgs)), trim_at_tokens=1)
-        self.assertEqual(out["messages"], msgs)
+        note = {"type": "text", "text": reasoning_text(SID)}
+        self.assertEqual(out["messages"][0]["content"], [note, *msgs[0]["content"]])
+        self.assertEqual(out["messages"][1:], strip_thinking(msgs)[1:])
+        self.assertEqual(self.log_rows(), [])
 
     def test_log_rows_shape_and_seq(self):
         self.run_req(anth_request(anth_history(3)), trim_at_tokens=1)
@@ -541,7 +545,9 @@ class FirstUserPinTests(Base):
         msgs += [{"role": "assistant", "content": [{"type": "tool_use", "id": "tuY", "name": "Read", "input": {}}]},
                  {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "tuY", "content": "y"}]}]
         out = self.run_req(anth_request(copy.deepcopy(msgs)), trim_at_tokens=1)["messages"]
-        self.assertEqual(out, msgs)
+        # Only older thinking goes (CONTEXT_STRIP_OLD_REASONING); the first user turn and every message stay.
+        self.assertEqual(out[0]["content"], [{"type": "text", "text": reasoning_text(SID)}, *msgs[0]["content"]])
+        self.assertEqual(out[1:], strip_thinking(msgs)[1:])
         self.assertEqual(self.log_rows(), [])
 
     def test_anthropic_cut_still_never_splits_pairs(self):
@@ -689,7 +695,10 @@ class InTurnGapTests(Base):
     def test_fewer_than_four_exchanges_means_no_gap(self):
         msgs = [{"role": "user", "content": "task"}] + anth_loop(3)
         out = self.run_req(anth_request(copy.deepcopy(msgs)), trim_at_tokens=1)["messages"]
-        self.assertEqual(out, msgs)
+        # No gap: only older thinking goes (CONTEXT_STRIP_OLD_REASONING), every exchange stays.
+        note = {"type": "text", "text": reasoning_text(SID)}
+        self.assertEqual(out[0]["content"], [note, {"type": "text", "text": "task"}])
+        self.assertEqual(out[1:], strip_thinking(msgs)[1:])
         self.assertEqual(self.log_rows(), [])
 
     def test_parallel_calls_stay_with_their_results(self):
@@ -764,7 +773,7 @@ class ThinkingStripTests(Base):
         two = self.run_req(anth_request(copy.deepcopy(msgs + step(1) + step(2))))["messages"]
         self.assertEqual(json.dumps(two[:len(one)]), json.dumps(one))
 
-    def test_message_left_empty_is_dropped_and_pairs_stay(self):
+    def test_message_with_only_reasoning_is_kept_and_pairs_stay(self):
         msgs = [{"role": "user", "content": "task"},
                 {"role": "assistant", "content": [{"type": "thinking", "thinking": "a", "signature": "S0"},
                                                   {"type": "tool_use", "id": "t0", "name": "Bash", "input": {}}]},
@@ -777,11 +786,15 @@ class ThinkingStripTests(Base):
                 {"role": "assistant", "content": [{"type": "thinking", "thinking": "c", "signature": "S2"},
                                                   {"type": "text", "text": "done"}]}]
         out = self.run_req(anth_request(copy.deepcopy(msgs)), trim_at_tokens=1)["messages"]
-        # The reply before the cut held only redacted thinking, so it goes; the user turns around it stay.
+        # The reply before the cut held only redacted thinking, so it stays whole; the user turns around it stay.
         self.assertEqual(out[0], msgs[0])
-        self.assertEqual(out[1]["content"][1:], [{"type": "text", "text": "now this"}])
-        self.assertEqual(out[2:], [{"role": "assistant", "content": [msgs[5]["content"][1]]}, msgs[6], msgs[7]])
-        self.assert_no_stale_thinking(out, msgs)
+        self.assertEqual(out[1], msgs[3])
+        self.assertEqual(out[2]["content"][1:], [{"type": "text", "text": "now this"}])
+        self.assertEqual(out[3:], [{"role": "assistant", "content": [msgs[5]["content"][1]]}, msgs[6], msgs[7]])
+        # No other stale thinking: only the reasoning-only reply and the latest message carry any.
+        self.assertEqual([j for j, m in enumerate(out) if m["role"] == "assistant" and isinstance(m["content"], list)
+                          and {b.get("type") for b in m["content"]} & set(THINKING_TYPES)], [1, len(out) - 1])
+        self.assertEqual(json.dumps(out[-1]), json.dumps(msgs[-1]))
 
     def test_chat_thinking_blocks_stripped_with_their_text_copy(self):
         msgs = [{"role": "system", "content": "SYS"}, {"role": "user", "content": "task"}]

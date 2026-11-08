@@ -196,6 +196,10 @@ class AnthropicAdapter:
     def is_assistant(self, item):
         return item.get("role") == "assistant"
 
+    def is_reasoning(self, item):
+        """Whether the item is reasoning alone, not a message (Responses reasoning items)."""
+        return False
+
     def without_reasoning(self, item):
         """The assistant message without thinking blocks: the same object when it has none, None when nothing
         else is left (the API merges the neighbours of a dropped message, and no tool_use goes with it)."""
@@ -406,6 +410,10 @@ class ChatAdapter:
     def is_assistant(self, item):
         return item.get("role") == "assistant"
 
+    def is_reasoning(self, item):
+        """Whether the item is reasoning alone, not a message (Responses reasoning items)."""
+        return False
+
     def without_reasoning(self, item):
         """The assistant message without LiteLLM's signed thinking: the `thinking_blocks` field and thinking
         parts of list content. With `thinking_blocks`, `reasoning_content` is LiteLLM's text copy of the same
@@ -550,6 +558,10 @@ class ResponsesAdapter:
     def is_assistant(self, item):
         """An item the model produced: reasoning, a tool call or an assistant message."""
         return item.get("type") == "reasoning" or item.get("type") in _CALL_TYPES or self.is_reply(item)
+
+    def is_reasoning(self, item):
+        """Whether the item is reasoning alone, not a message: dropping it drops no message."""
+        return item.get("type") == "reasoning"
 
     def without_reasoning(self, item):
         """None for a reasoning item that carries LiteLLM-encoded Anthropic thinking (signed against the prefix);

@@ -13,8 +13,10 @@ import {
   maskPlaceholder,
   addStandingInstruction,
   pointerText,
+  reasoningText,
   recallToolNames,
   requestChars,
+  signedChars,
   standingInstruction,
   trimContext,
   trimSettings,
@@ -313,83 +315,6 @@ test("the cleared prefix is byte-identical on the next request", withHome(async 
   assert.equal(resultsOf(second).sM, `later${HUGE}`);
 }));
 
-// CONTEXT_CLEAR_FIT: same contract as proxy/tests/test_clear_fit.py.
-const LOW_TARGET = 1000;
-
-async function clearFitRun(home, messages, trimAt, fit, trimTo = LOW_TARGET) {
-  const settings = trimSettings({ CONTEXT_TRIM_AT_TOKENS: String(trimAt), CONTEXT_CLEAR_KEEP_RESULTS: "2",
-    CONTEXT_CLEAR_FIT: String(fit), CONTEXT_TRIM_TO_TOKENS: String(trimTo), CONTEXT_CHARS_PER_TOKEN: "1",
-    CONTEXT_COMPRESS_OVER_TOKENS: "0", CONTEXT_STANDING_INSTRUCTION: "0", CONTEXT_PROGRESS_NOTE: "0",
-    CONTEXT_MASK_OBSERVATIONS: "0", CONTEXT_SCRATCHPAD: "0", SMARTER_COMPACT_STATE_DIR: home }, home);
-  return trimContext({ sessionID: SID, messages: structuredClone(messages) }, settings);
-}
-
-const laterStep = (messages, k, value) => [...messages,
-  { role: "assistant", content: [{ type: "tool-call", id: `n${k}`, name: "bash", input: { command: `echo ${k}` } }] },
-  { role: "tool", content: [{ type: "tool-result", id: `n${k}`, name: "bash", result: { type: "text", value } }] }];
-
-test("CONTEXT_CLEAR_FIT defaults to 0.63 and parses like the proxy", () => {
-  assert.equal(trimSettings({}, os.tmpdir()).clearFit, 0.63);
-  assert.equal(trimSettings({ CONTEXT_CLEAR_FIT: "0.5" }, os.tmpdir()).clearFit, 0.5);
-  for (const bad of ["0", "1", "1.5", "-0.2", "x"]) assert.equal(trimSettings({ CONTEXT_CLEAR_FIT: bad }, os.tmpdir()).clearFit, 0.63, bad);
-});
-
-test("clearing alone is accepted under clearFit x trimAt, above the target", withHome(async (home) => {
-  const messages = clearTurns(HUGE);
-  const full = requestChars(messages);
-  const view = await clearFitRun(home, messages, full, 0.5);
-  assert.ok(requestChars(view) > LOW_TARGET && requestChars(view) < 0.5 * full);
-  assert.deepEqual(view.map((m) => m.role), messages.map((m) => m.role));
-  assert.ok(resultsOf(view).s0.startsWith(MASK_PREFIX));
-  assert.ok(!JSON.stringify(view).includes("earlier messages are NOT"));
-}));
-
-test("clearing above clearFit x trimAt falls back to dropping turns", withHome(async (home) => {
-  const messages = clearTurns(HUGE);
-  const full = requestChars(messages);
-  const accepted = await clearFitRun(home, messages, full, 0.5);
-  assert.ok(requestChars(accepted) > 0.1 * full + 2000);
-  const other = fs.mkdtempSync(path.join(os.tmpdir(), "sc-clear-"));
-  try {
-    const view = await clearFitRun(other, messages, full, 0.1);
-    assert.ok(view.length < messages.length);
-    assert.ok(JSON.stringify(view).includes("earlier messages are NOT"));
-  } finally { fs.rmSync(other, { recursive: true, force: true }); }
-}));
-
-test("clearFit at or below target/trimAt is the old rule", async () => {
-  const messages = clearTurns(HUGE);
-  const full = requestChars(messages);
-  const views = [];
-  for (const [fit, trimTo] of [[1e-6, LOW_TARGET], [LOW_TARGET / full, LOW_TARGET], [1e-6, Math.floor(0.5 * full)]]) {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "sc-clear-"));
-    try { views.push(await clearFitRun(home, messages, full, fit, trimTo)); } finally { fs.rmSync(home, { recursive: true, force: true }); }
-  }
-  assert.ok(JSON.stringify(views[0]).includes("earlier messages are NOT"));
-  assert.equal(JSON.stringify(views[0]), JSON.stringify(views[1]));
-  // A target above what clearing alone leaves still accepts it, whatever clearFit.
-  assert.equal(views[2].length, messages.length);
-  assert.ok(resultsOf(views[2]).s0.startsWith(MASK_PREFIX));
-});
-
-test("the headroom re-renders byte-identical until the next trim", withHome(async (home) => {
-  const messages = clearTurns(HUGE);
-  const full = requestChars(messages);
-  let prev = await clearFitRun(home, messages, full, 0.5);
-  let more = messages;
-  for (let k = 0; k < 3; k++) {
-    more = laterStep(more, k, `step ${k} ${"y".repeat(2000)}`);
-    assert.ok(requestChars(more) > full);
-    const view = await clearFitRun(home, more, full, 0.5);
-    assert.equal(JSON.stringify(view.slice(0, prev.length)), JSON.stringify(prev));
-    assert.equal(resultsOf(view)[`n${k}`], `step ${k} ${"y".repeat(2000)}`);
-    prev = view;
-  }
-  more = laterStep(more, 9, `big${HUGE.repeat(5)}`);
-  const view = await clearFitRun(home, more, full, 0.5);
-  assert.notEqual(JSON.stringify(view.slice(0, prev.length)), JSON.stringify(prev));
-}));
-
 // Prose strip, observation masking and progress note: same contract as proxy/tests/test_trim_experiments.py.
 // Step k of the in-flight turn: [tool name, input, result text, is error].
 const STEPS = [
@@ -586,9 +511,12 @@ const inputsOf = (view) => Object.fromEntries(view.flatMap((m) => parts(m).filte
 const stringsOf = (v) => (typeof v === "string" ? [v] : Array.isArray(v) ? v.flatMap(stringsOf)
   : v && typeof v === "object" ? Object.values(v).flatMap(stringsOf) : []);
 
+// Clearing results and inputs alone lands under this fraction of the request, clearing results alone does not.
+const SETTLE = 0.5;
+
 async function inputsRun(home, messages, env = {}, sid = SID) {
   const settings = trimSettings({ CONTEXT_TRIM_AT_TOKENS: String(requestChars(messages)), CONTEXT_CLEAR_KEEP_RESULTS: "2",
-    CONTEXT_CLEAR_FIT: "0.5", CONTEXT_TRIM_TO_TOKENS: String(LOW_TARGET), CONTEXT_CHARS_PER_TOKEN: "1",
+    CONTEXT_TRIM_TO_TOKENS: String(Math.floor(SETTLE * requestChars(messages))), CONTEXT_CHARS_PER_TOKEN: "1",
     CONTEXT_COMPRESS_OVER_TOKENS: "0", CONTEXT_STANDING_INSTRUCTION: "0", CONTEXT_PROGRESS_NOTE: "0",
     CONTEXT_MASK_OBSERVATIONS: "0", CONTEXT_SCRATCHPAD: "0", SMARTER_COMPACT_STATE_DIR: home, ...env }, home);
   return trimContext({ sessionID: sid, messages: structuredClone(messages) }, settings);
@@ -695,4 +623,90 @@ test("CONTEXT_CLEAR_INPUTS_OVER_CHARS=0 gives the old bytes", async () => {
 test("masked observations clear their calls' inputs too", withHome(async (home) => {
   const view = await expRun(home, writeTurns(), { ...MASK, CONTEXT_CLEAR_KEEP_RESULTS: "0" });
   assert.ok(Object.values(inputsOf(view)).some((v) => JSON.stringify(v).includes(INPUT_MASK_PREFIX)));
+}));
+
+// CONTEXT_STRIP_OLD_REASONING: same contract as proxy/tests/test_strip_reasoning.py.
+const SIG = 4000;
+const sigPart = (k, n = SIG) => ({ type: "reasoning", text: "", providerMetadata: { anthropic: { signature: String(k).repeat(n) } } });
+const reasonStep = (k) => [
+  { role: "assistant", content: [sigPart(k), { type: "text", text: `step ${k}` }, { type: "tool-call", id: `t${k}`, name: "bash", input: { command: `echo ${k}` } }] },
+  { role: "tool", content: [{ type: "tool-result", id: `t${k}`, name: "bash", result: { type: "text", value: `out ${k}` } }] }];
+const reasonLoop = (steps) => [textMsg("user", "the task"), ...Array.from({ length: steps }, (_, k) => reasonStep(k)).flat()];
+const fullChars = (messages) => requestChars(messages) + signedChars(messages);
+const isReasoning = (p) => p.type === "reasoning";
+
+async function reasonRun(home, messages, trimAt, env = {}, sid = SID) {
+  const settings = trimSettings({ CONTEXT_TRIM_AT_TOKENS: String(trimAt), CONTEXT_TRIM_TO_TOKENS: String(Math.ceil(0.5 * trimAt)),
+    CONTEXT_CLEAR_KEEP_RESULTS: "0", CONTEXT_CHARS_PER_TOKEN: "1", CONTEXT_COMPRESS_OVER_TOKENS: "0",
+    CONTEXT_STANDING_INSTRUCTION: "0", CONTEXT_PROGRESS_NOTE: "0", CONTEXT_MASK_OBSERVATIONS: "0", CONTEXT_SCRATCHPAD: "0",
+    SMARTER_COMPACT_STATE_DIR: home, ...env }, home);
+  return trimContext({ sessionID: sid, messages: structuredClone(messages) }, settings);
+}
+
+test("CONTEXT_STRIP_OLD_REASONING defaults on and parses like the proxy", () => {
+  assert.equal(trimSettings({}, os.tmpdir()).stripOldReasoning, true);
+  assert.equal(trimSettings({ CONTEXT_STRIP_OLD_REASONING: "0" }, os.tmpdir()).stripOldReasoning, false);
+});
+
+test("signedChars counts the signed payloads requestChars leaves out", () => {
+  assert.equal(signedChars([sigPart(1, 10), { type: "reasoning", text: "", providerMetadata: { anthropic: { redactedData: "d".repeat(7) } } }]), 17);
+  assert.equal(signedChars({ type: "reasoning", text: "plain" }), 0);
+});
+
+test("a single-turn loop strips reasoning from all but the latest message, dropping none", withHome(async (home) => {
+  const messages = reasonLoop(5);
+  const view = await reasonRun(home, messages, fullChars(messages) - 1);
+  assert.deepEqual(view.map((m) => m.role), messages.map((m) => m.role));
+  assert.ok(view[0].content[0].text.startsWith(reasoningText(SID)));
+  assert.deepEqual(view[0].content.slice(1), messages[0].content);
+  for (let j = 1; j < 9; j += 2) {
+    assert.deepEqual(view[j].content, messages[j].content.filter((p) => !isReasoning(p)));
+    assert.deepEqual(view[j + 1], messages[j + 1]);
+  }
+  assert.equal(JSON.stringify(view.slice(9)), JSON.stringify(messages.slice(9)));
+}));
+
+test("a message holding only reasoning keeps it", withHome(async (home) => {
+  const messages = reasonLoop(2);
+  messages.splice(3, 0, { role: "assistant", content: [sigPart("R", 100)] }, textMsg("user", "go on"));
+  messages.push(...reasonStep(9));
+  const view = await reasonRun(home, messages, fullChars(messages) - 1);
+  assert.equal(view.length, messages.length);
+  assert.deepEqual(view[3], messages[3]);
+  assert.ok(!view[1].content.some(isReasoning));
+  assert.equal(JSON.stringify(view.slice(-2)), JSON.stringify(messages.slice(-2)));
+}));
+
+test("the stripped view re-renders byte-identical and later reasoning stays", withHome(async (home) => {
+  const messages = reasonLoop(5);
+  const first = await reasonRun(home, messages, fullChars(messages) - 1);
+  const more = [...messages, ...reasonStep(5), ...reasonStep(6)];
+  const later = await reasonRun(home, more, 10 * fullChars(more));
+  assert.equal(JSON.stringify(later.slice(0, first.length)), JSON.stringify(first));
+  assert.equal(JSON.stringify(later.slice(first.length)), JSON.stringify(more.slice(first.length)));
+}));
+
+test("off keeps the old rule: signatures uncharged, a message left empty dropped", withHome(async (home) => {
+  const messages = reasonLoop(5);
+  const at = requestChars(messages) + Math.floor(signedChars(messages) / 2);
+  assert.equal(JSON.stringify(await reasonRun(home, messages, at, { CONTEXT_STRIP_OLD_REASONING: "0" })), JSON.stringify(messages));
+  assert.notEqual(JSON.stringify(await reasonRun(home, messages, at, {}, "sid-on")), JSON.stringify(messages));
+  const empty = [textMsg("user", "task"), ...reasonStep(0), { role: "assistant", content: [sigPart("R", 2)] },
+    textMsg("user", "now this"), ...reasonStep(1), ...reasonStep(2)];
+  const off = await reasonRun(home, empty, 1, { CONTEXT_STRIP_OLD_REASONING: "0" }, "sid-off");
+  assert.ok(!off.some((m) => JSON.stringify(m) === JSON.stringify(empty[3])));
+  const on = await reasonRun(home, empty, 1, {}, "sid-on2");
+  assert.ok(on.some((m) => JSON.stringify(m) === JSON.stringify(empty[3])));
+}));
+
+test("unsigned, OpenAI and Gemini reasoning parts stay where the provider needs them", withHome(async (home) => {
+  const kept = [{ type: "reasoning", text: "deepseek thought" },
+    { type: "reasoning", text: "o", providerMetadata: { openai: { reasoningEncryptedContent: "gAAAA" } } },
+    { type: "reasoning", text: "g", providerMetadata: { google: { thoughtSignature: "TS" } } }];
+  const messages = reasonLoop(4);
+  for (const j of [1, 3, 5]) messages[j].content.unshift(kept[(j - 1) / 2]);
+  const view = await reasonRun(home, messages, fullChars(messages) - 1);
+  assert.equal(view.length, messages.length);
+  for (const j of [1, 3, 5]) assert.deepEqual(view[j].content.filter(isReasoning), [kept[(j - 1) / 2]]);
+  assert.equal(JSON.stringify(view.slice(-2)), JSON.stringify(messages.slice(-2)));
 }));
