@@ -174,6 +174,9 @@ def totals(rows):
         t["trimmed_tasks"] += r["trims"] > 0
         t["econn_trials"] += r["econn"] > 0
         t["offered"] += r["offered"]
+        if r["reward"] is not None:
+            t["rew_sum"] += r["reward"]
+            t["rew_n"] += 1
         if r["partial"]:
             t["part_sum"] += r["partial"][0] / r["partial"][1]
             t["part_n"] += 1
@@ -187,14 +190,16 @@ def has_scratchpad(rows):
 
 def print_totals(title, rows, arms=None, pad=False):
     print(f"\n{title}")
-    print(f"{'arm':11} {'pass/n':>7} {'part':>5} {'input':>11} {'output':>9} {'cost':>8} {'trims':>6} {'trimmed':>8} "
+    # mean: reward averaged over scored trials (partial credit on dense-reward suites such as LHTB).
+    print(f"{'arm':11} {'pass/n':>7} {'mean':>5} {'part':>5} {'input':>11} {'output':>9} {'cost':>8} {'trims':>6} {'trimmed':>8} "
           f"{'recall':>7} {'rec_err':>8} {'restarts':>9} {'econn':>6} {'compacts':>9} {'tools':>6}"
           + (f" {'nudges':>6} {'padcall':>7} {'padded':>6}" if pad else ""))
     t = totals(rows)
     for arm in arms or arms_in(rows):
         a = t[arm]
         part = f"{a['part_sum'] / a['part_n']:.2f}" if a["part_n"] else "-"
-        print(f"{arm:11} {a['pass']:>3}/{a['n']:<3} {part:>5} {a['in']:>11,} {a['out']:>9,} {a['cost']:>8.3f} {a['trims']:>6} "
+        mean = f"{a['rew_sum'] / a['rew_n']:.2f}" if a["rew_n"] else "-"
+        print(f"{arm:11} {a['pass']:>3}/{a['n']:<3} {mean:>5} {part:>5} {a['in']:>11,} {a['out']:>9,} {a['cost']:>8.3f} {a['trims']:>6} "
               f"{a['trimmed_tasks']:>8} {a['recall']:>7} {a['recall_err']:>8} {a['restarts']:>9} {a['econn_trials']:>6} "
               f"{a['compacts']:>9} {a['offered']:>6}"
               + (f" {a['nudges']:>6} {a['pad_calls']:>7} {a['padded']:>6}" if pad else ""))

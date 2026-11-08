@@ -16,6 +16,7 @@ from collections import OrderedDict
 from pathlib import Path
 
 from . import embed as embed_mod
+from . import evict as evict_mod
 from . import sessiondb
 from . import status as status_mod
 from . import ttl as ttl_mod
@@ -79,6 +80,8 @@ _BUILD_RE = re.compile(
     r"|javac|gcc|g\+\+|clang|rustc|dotnet (?:build|test)|rspec|rake|python[0-9.]* -m (?:pytest|unittest|build))"
     r"(?=\s|$|;)")
 _EXIT_RE = re.compile(r"\bexit(?:ed with)?(?: code| status)?:? (-?\d+)", re.IGNORECASE)
+# A thread entry's CONTEXT_EVICTION state: the sticky id set, its batch number, and the item it was computed on.
+EVICT_KEYS = ("evict", "evict_batch", "evict_at", "evict_fp")
 
 
 def recall_tool_names(tools):
@@ -381,20 +384,22 @@ def choose_gap(adapter, items, cut, after, first, fits):
     return best
 
 
-def render(adapter, items, cut, note, first=None, gap=None, strip=None, prose=False, shown=None, clear=None):
+def render(adapter, items, cut, note, first=None, gap=None, strip=None, prose=False, shown=None, clear=None,
+           evict=None):
     """The kept items (kept_indices) in order, the cut turn carrying the note, with signed reasoning stripped from
     kept assistant items before `strip` (default: the latest assistant run; see strip_reasoning), and with prose
     their tool call/result pairs too (prose_ids), or with prose == "mask" those results masked instead; every tool
-    result before `clear` is masked too (CONTEXT_CLEAR_KEEP_RESULTS). shown, when given, gets the strip_reasoning
-    index map."""
+    result before `clear` is masked too (CONTEXT_CLEAR_KEEP_RESULTS), and every result whose call id is in `evict`
+    (CONTEXT_EVICTION). shown, when given, gets the strip_reasoning index map."""
     if cut is None:
+        view = [_evicted(adapter, x, j, evict, first) for j, x in enumerate(items)] if evict else items
         if shown is not None:
-            shown.update(enumerate(items))
-        return items
+            shown.update(enumerate(view))
+        return view
     keep = kept_indices(adapter, items, cut, gap, first)
     run = latest_run_start(adapter, items)
     return strip_reasoning(adapter, items, keep, run if strip is None else min(strip, run), cut, note, prose, shown,
-                           clear, first)
+                           clear, first, evict)
 
 
 def latest_run_start(adapter, items):
@@ -407,7 +412,8 @@ def latest_run_start(adapter, items):
     return last
 
 
-def strip_reasoning(adapter, items, keep, bound, cut, note, prose=False, shown=None, clear=None, first=None):
+def strip_reasoning(adapter, items, keep, bound, cut, note, prose=False, shown=None, clear=None, first=None,
+                    evict=None):
     """The kept items, the cut turn carrying the note, with signed reasoning removed from assistant items before
     `bound`.
 
@@ -421,7 +427,8 @@ def strip_reasoning(adapter, items, keep, bound, cut, note, prose=False, shown=N
     prose == "mask", each prose_ids tool_use stays and its tool_result content becomes its mask_placeholder.
 
     Every tool_result of a kept item before `clear` (the first user turn and pinned items aside) also becomes
-    its mask_placeholder; its tool_use and the item's other blocks stay (_cleared).
+    its mask_placeholder; its tool_use and the item's other blocks stay (_cleared). So does every result whose call
+    id is in evict (_evicted).
 
     shown, when given, maps the index of every item that reaches the view to its stripped form (no note, unmerged).
     """
@@ -444,7 +451,7 @@ def strip_reasoning(adapter, items, keep, bound, cut, note, prose=False, shown=N
                 if x is None:
                     continue
                 region = True
-        x = _cleared(adapter, x, j, clear, first)
+        x = _evicted(adapter, _cleared(adapter, x, j, clear, first), j, evict, first)
         if shown is not None:
             shown[j] = x
         if j == cut:
@@ -462,6 +469,37 @@ def _cleared(adapter, x, j, clear, first):
     if clear is None or j >= clear or j == first or adapter.is_pinned(x):
         return x
     return adapter.masked_results(x, adapter.result_ids(x))
+
+
+def _evicted(adapter, x, j, evict, first):
+    """x with each tool result whose call id is in evict masked (CONTEXT_EVICTION); x itself when none is."""
+    if not evict or j == first or adapter.is_pinned(x):
+        return x
+    ids = adapter.result_ids(x) & evict
+    return adapter.masked_results(x, ids) if ids else x
+
+
+def _eviction(adapter, items, thread, settings, first):
+    """(evicted call ids, ids new this request, thread state update or None) under CONTEXT_EVICTION.
+
+    The set is the thread's stored one while the item it was computed on (evict_at / evict_fp) is still there; it
+    grows only when the request opens a new batch of eviction_batch assistant steps, so requests within a batch
+    render the same bytes. A history that lost that item starts over."""
+    stored = thread or {}
+    located = bool(stored.get("evict_fp")) and _locate(items, stored.get("evict_at"), stored["evict_fp"]) is not None
+    ids = set(stored.get("evict") or ()) if located else set()
+    last = stored.get("evict_batch") if located else None
+    batch = evict_mod.step_count(adapter, items) // settings.eviction_batch
+    if batch == 0 or (last is not None and batch <= last):
+        return ids, set(), None
+    grown = ids | set(evict_mod.evictable(adapter, items, settings.eviction_batch, settings.eviction_keep, first))
+    return grown, grown - ids, {"evict": sorted(grown), "evict_batch": batch, "evict_at": len(items) - 1,
+                                "evict_fp": fingerprint(items[-1])}
+
+
+def _evict_state(thread):
+    """The thread entry's CONTEXT_EVICTION keys."""
+    return {k: v for k, v in (thread or {}).items() if k in EVICT_KEYS}
 
 
 def _clears_more(adapter, items, keep, old, new, first):
@@ -737,15 +775,19 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
         threads = state["threads"]
         thread = threads.get(root)
         cut, gap, strip, note, clear = None, None, None, None, None
+        evicting = settings.eviction and hasattr(adapter, "masked_results") and hasattr(adapter, "tool_calls")
         nudge_at = None
         if thread and thread.get("nudge_fp"):
             nudge_at = _locate(items, thread.get("nudge_at"), thread["nudge_fp"])
-        # A thread holding only a scratchpad nudge has no cut to locate.
-        if thread and (thread.get("cut_fp") or "nudge_fp" not in thread):
+        # A thread holding only a scratchpad nudge or eviction state has no cut to locate.
+        if thread and (thread.get("cut_fp") or not ({"nudge_fp", "evict_fp"} & thread.keys())):
             cut_fp = thread.get("cut_fp")
             cut = _locate_cut(adapter, items, thread)
             if cut is None:
                 threads.pop(root, None)
+                if evicting and _evict_state(thread):
+                    threads[root] = {"format": adapter.name, "updated": _utc_now(), **_evict_state(thread)}
+                    store.save_trim(sid, state)
             else:
                 if thread.get("cut_fp") != cut_fp:
                     store.save_trim(sid, state)
@@ -759,15 +801,30 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                     clear = _locate(items, thread.get("clear"), thread["clear_fp"])
         shown = {}
         mode = region_mode(settings)
+        evict, evicted, eviction = (_eviction(adapter, items, threads.get(root), settings, first) if evicting
+                                    else (None, set(), None))
+        if eviction:
+            entry = threads.setdefault(root, {"format": adapter.name, "updated": _utc_now()})
+            entry.update(eviction)
+            while len(threads) > MAX_THREADS:
+                threads.pop(next(iter(threads)))
+            store.save_trim(sid, state)
         # The items as sent: the recorded nudge stays on its item, byte-identical, until the next trim.
-        sent = _nudged(adapter, items, nudge_at, thread.get("nudge") if root in threads else None)
-        view = render(adapter, sent, cut, note, first, gap, strip, mode, shown, clear)
+        sent = _nudged(adapter, items, nudge_at, threads.get(root, {}).get("nudge"))
+        view = render(adapter, sent, cut, note, first, gap, strip, mode, shown, clear, evict)
         force = store.force_requested(sid)
         ratio = settings.chars_per_token if settings.chars_per_token > 0 else DEFAULT_CHARS_PER_TOKEN
         base_chars = request_chars(*context)
         tokens = estimate_prompt_tokens(base_chars + request_chars(view), state.get("usage"), root, ratio)
+        evict_event = None
+        if evicted:
+            before = render(adapter, sent, cut, note, first, gap, strip, mode, None, clear, evict - evicted)
+            evict_event = {"tokens_before": estimate_prompt_tokens(base_chars + request_chars(before),
+                                                                   state.get("usage"), root, ratio),
+                           "tokens_after": tokens, "dropped": len(evicted)}
         trim_at = settings.trim_at_for(request["model"])
-        if force or tokens >= trim_at:
+        # Eviction replaces the threshold trim; a forced trim (/compact) still runs.
+        if force or (not evicting and tokens >= trim_at):
             new_clear = _next_clear(adapter, items, settings.clear_keep_results, clear)
             # A target at or above the threshold could not land a trim under it, so the threshold caps it.
             target = min(settings.trim_to_for(request["model"]), trim_at)
@@ -802,7 +859,8 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                                      new_clear, first)
             if moved:
                 new_strip, new_shown = latest_run_start(adapter, items), {}
-                bare = render(adapter, items, new_cut, "", first, new_gap, new_strip, mode, new_shown, new_clear)
+                bare = render(adapter, items, new_cut, "", first, new_gap, new_strip, mode, new_shown, new_clear,
+                              evict)
                 if not force and settings.trim_min_gain_tokens > 0:
                     # A cut freeing fewer estimated tokens (pointer note not counted) waits for a bigger one.
                     freed = tokens - estimate_prompt_tokens(base_chars + request_chars(bare), state.get("usage"), root, ratio)
@@ -825,9 +883,9 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                 pad = store.read_scratchpad(sid) if settings.scratchpad else ""
                 if pad:
                     note = f"{scratchpad_block(pad)}\n{note}"  # first, ahead of the recall instructions
-                threads.pop(root, None)
+                carried = _evict_state(threads.pop(root, None))
                 threads[root] = {"cut": new_cut, "cut_fp": fingerprint(items[new_cut]), "note": note,
-                                 "format": adapter.name, "updated": _utc_now()}
+                                 "format": adapter.name, "updated": _utc_now(), **carried}
                 if 0 < new_cut == len(items) - 1:  # cut on the last message: how a side request trims
                     threads[root]["prev_fp"] = fingerprint(items[new_cut - 1])
                 if new_gap is not None:
@@ -843,7 +901,7 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                 if force:
                     store.clear_force(sid)
                 shown = {}
-                view = render(adapter, items, new_cut, note, first, new_gap, strip, mode, shown, new_clear)
+                view = render(adapter, items, new_cut, note, first, new_gap, strip, mode, shown, new_clear, evict)
                 cut, gap, clear = new_cut, new_gap, new_clear
                 after = estimate_prompt_tokens(base_chars + request_chars(view), state.get("usage"), root, ratio)
                 trim = {"tokens_before": tokens, "tokens_after": after, "dropped": dropped}
@@ -856,7 +914,8 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
             store.save_trim(sid, state)
         nudge = None
         pad_names = recall_tool_names(request_tool_names(data)) if settings.scratchpad else None
-        if settings.scratchpad and not trim and not (threads.get(root) or {}).get("nudge_fp") \
+        # No nudge while evicting: its text announces a trim that eviction never makes.
+        if settings.scratchpad and not evicting and not trim and not (threads.get(root) or {}).get("nudge_fp") \
                 and tokens >= trim_at * settings.scratchpad_nudge_at and scratchpad_available(pad_names, data):
             text = scratchpad_nudge(sid, pad_names)
             if _nudged(adapter, items, len(items) - 1, text) is not items:
@@ -867,7 +926,7 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                     threads.pop(next(iter(threads)))
                 store.save_trim(sid, state)
                 sent, shown = _nudged(adapter, items, len(items) - 1, text), {}
-                view = render(adapter, sent, cut, note, first, gap, strip, mode, shown, clear)
+                view = render(adapter, sent, cut, note, first, gap, strip, mode, shown, clear, evict)
                 nudge = {"tokens_before": tokens}
         _write_masked_blobs(store, adapter, sent, shown)
         _store_messages(store, sid, adapter, original, sent, cut, shown, settings)
@@ -875,6 +934,8 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
             _record_event(store, sid, "trim", **trim)
         if nudge:
             _record_event(store, sid, "nudge", **nudge)
+        if evict_event:
+            _record_event(store, sid, "evict", **evict_event)
     request["trimmed"] = TRIM_NEW if trim else TRIM_KEPT if cut is not None else TRIM_NONE
 
     # Measured like the estimate, before the standing instruction, so calibration compares like with like.

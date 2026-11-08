@@ -26,6 +26,7 @@ Each request goes through four steps ([context proxy](context-proxy.md) has impl
 | Store | Every request | Each message goes into `sessions/<sid>.db` once, keyed by a chained fingerprint, with an `in_context` flag ([context store](context-store.md#session-database)) |
 | Trim | The request reaches `trim_at_tokens`, or the user typed `/smarter-compact:compact` | Turns before the last real user turn, and the oldest tool exchanges of a long in-flight turn, leave the context and their rows get `in_context = 0`; a pointer naming `smart_compact_search` / `smart_compact_sql` replaces them. System prompt, tools, the first user turn, the reply before the last user turn, that turn and at least its last 3 tool exchanges stay verbatim, except that signed thinking leaves every kept assistant message but the latest ([why](context-store.md#trim)) |
 | [Tool-result clearing and masking](clearing.md) (on by default) | Part of each trim | Every tool result but the 10 newest, and the results in the kept turns before the latest run, become a short placeholder; the calls stay, and each result stays in the store |
+| [Lifecycle eviction](eviction.md) (off by default; `CONTEXT_EVICTION=1`, proxy) | Every 3 assistant steps, instead of the trim | Old tool results the rules mark unneeded (a file read or written again later, a command re-run, a result nothing later refers to) become the same placeholder; the threshold trim does not run, the agent's own compaction stays the overflow guard |
 | [Scratchpad](scratchpad.md) (on by default; `CONTEXT_SCRATCHPAD=0` turns it off) | The prompt passes `CONTEXT_SCRATCHPAD_NUDGE_AT` of the threshold, then the next trim | One nudge, appended to the newest user or tool message, asks the agent to create the pad once (goal, status, decisions, facts, next step) with `smart_compact_scratchpad` and to update it only on a big change; every trim note opens with the current pad (≤2,500 chars) in a `<compact-scratchpad>` block labelled possibly stale, and snapshots it |
 | Standing instruction | Every request | A constant system-prompt note tells the agent to call `smart_compact_search` before answering from content it cannot see |
 
@@ -78,6 +79,7 @@ Every setting, its default and the component that reads it: [configuration refer
 ## More
 
 - [Tool-result clearing and masking](clearing.md) — what a trim replaces instead of deleting turns
+- [Lifecycle eviction](eviction.md) — rule-based eviction every batch, instead of the threshold trim
 - [Scratchpad](scratchpad.md) — the agent's notes, shown in every trim note
 - [Context proxy](context-proxy.md) — LiteLLM rewrite pipeline
 - [Context store](context-store.md) — schema, trim rules, search tools

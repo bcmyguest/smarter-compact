@@ -35,6 +35,9 @@ OpenCode plugin options override the environment ([which reach what](#opencode-p
 | `CONTEXT_SCRATCHPAD_NUDGE_AT` | `0.75` | proxy, OpenCode 2 | The nudge fires once the prompt passes this fraction of the trim threshold; `0 < x < 1`, else the default |
 | `CONTEXT_CHARS_PER_TOKEN` | `2.5` | proxy, OpenCode 2 | Token estimate ratio until the session reports usage ([token estimate](context-proxy.md#token-estimate)); must be > 0 |
 | `CONTEXT_COMPRESS_OVER_TOKENS` | `4000` | proxy, OpenCode 2 | Tool results above this become a header plus `smart_compact_get(id=...)`; `0` off |
+| `CONTEXT_EVICTION` | `0` | proxy | `1` replaces the threshold trim with [lifecycle eviction](eviction.md): every batch of assistant steps, rule-picked old tool results become their placeholder; Anthropic route only |
+| `CONTEXT_EVICTION_BATCH` | `3` | proxy | Assistant steps per eviction batch; must be > 0 |
+| `CONTEXT_EVICTION_KEEP` | `12` | proxy | Later tool results an unreferenced result needs before eviction takes it; must be > 0 |
 | `CONTEXT_STANDING_INSTRUCTION` | `1` | proxy, OpenCode 2 | `0` omits the system note telling the agent to search before guessing |
 
 ## Server-side tool-result clearing

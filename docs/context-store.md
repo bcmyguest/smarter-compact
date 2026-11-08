@@ -139,17 +139,17 @@ Rows that a later request no longer carries (a rewritten history) keep their las
 
 ### Events
 
-The writer appends one `events` row per trim, per scratchpad nudge and per fail-open it can attribute to the session, and one `usage` row per model call whose request it handled. `smarter-compact context status` and the `context_status` MCP tool summarize them across sessions; `smart_compact_sql` reads one session's rows. `smarter-compact context stats` adds MCP tool counts from the append-only `tool-calls.jsonl` next to `sessions/` (one JSON line per `smart_compact_search` / `smart_compact_sql` / `smart_compact_get` call) plus message and blob inventory for those sessions.
+The writer appends one `events` row per trim, per scratchpad nudge, per eviction batch that evicts something and per fail-open it can attribute to the session, and one `usage` row per model call whose request it handled. `smarter-compact context status` and the `context_status` MCP tool summarize them across sessions; `smart_compact_sql` reads one session's rows. `smarter-compact context stats` adds MCP tool counts from the append-only `tool-calls.jsonl` next to `sessions/` (one JSON line per `smart_compact_search` / `smart_compact_sql` / `smart_compact_get` call) plus message and blob inventory for those sessions.
 
 | Column | Values |
 | --- | --- |
 | `at` | ISO 8601 UTC without fractions |
-| `kind` | `trim` (a new cut, including a `/smarter-compact` one) · `nudge` (the scratchpad nudge was added; `tokens_before` set) · `fail_open` (the rewrite raised; the request went upstream unmodified) · `usage` (a model call finished) |
+| `kind` | `trim` (a new cut, including a `/smarter-compact` one) · `nudge` (the scratchpad nudge was added; `tokens_before` set) · `evict` ([lifecycle eviction](eviction.md) evicted more results at a batch boundary) · `fail_open` (the rewrite raised; the request went upstream unmodified) · `usage` (a model call finished) |
 | `version` | The writer: `proxy:<12 hex>`, the first 12 hex of SHA-256 over `proxy/smarter_compact/*.py` (each file's name, NUL, bytes, NUL, sorted by name; `core.code_hash`, `proxyCodeVersion`), or `opencode:<package version>` for the OpenCode 2 plugin. Status compares the newest `proxy:` value with the checkout's hash to spot a proxy running old code |
 | `location`, `error` | Fail-open only: `<file>:<line>` (JS adds `:<column>`) and the exception type. Never message content |
-| `tokens_before`, `tokens_after` | Trim only: the writer's calibrated estimate ([token estimate](context-proxy.md#token-estimate)) of the request before and after the cut, not provider-billed counts. `tokens_after` still counts the thinking blocks the cut voids and drops, so status measures the saving as `tokens_before` minus the billed prompt of the next usage row with `trimmed` = 2 |
+| `tokens_before`, `tokens_after` | Evict: the estimate with the batch's new evictions left whole and applied. Trim: the writer's calibrated estimate ([token estimate](context-proxy.md#token-estimate)) of the request before and after the cut, not provider-billed counts. `tokens_after` still counts the thinking blocks the cut voids and drops, so status measures the saving as `tokens_before` minus the billed prompt of the next usage row with `trimmed` = 2 |
 | `scratchpad_chars` | Trim only, scratchpad on: characters of pad the note carried (`0` none); `NULL` with the flag off |
-| `dropped` | Trim only: messages absent from the trimmed view (the pointer's `<n>`) |
+| `dropped` | Trim: messages absent from the trimmed view (the pointer's `<n>`). Evict: tool results the batch newly evicted |
 | `model` | Usage only: the request's model (proxy: the `model` string sent to LiteLLM; OpenCode: `<providerID>/<modelID>`) |
 | `thread_root` | Usage only: fingerprint of the request's first row, as in `messages.thread` |
 | `trimmed` | Usage only: `0` the request went up whole, `1` it carried an earlier cut, `2` it made a new cut (the request a `trim` row describes) |

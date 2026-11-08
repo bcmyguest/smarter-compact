@@ -31,6 +31,10 @@ DEFAULT_EMBEDDING_MAX_CHARS = 4000
 DEFAULT_SERVER_CLEAR_TRIGGER_TOKENS = 100000
 DEFAULT_SERVER_CLEAR_KEEP_TOOL_USES = 3
 DEFAULT_SERVER_CLEAR_AT_LEAST_TOKENS = 5000
+# Lifecycle eviction (CONTEXT_EVICTION=1, docs/eviction.md): assistant steps per batch, and tool results after an
+# unreferenced one before it may go (K, picked by the offline replay).
+DEFAULT_EVICTION_BATCH = 3
+DEFAULT_EVICTION_KEEP = 12
 
 
 def _int(env, name, default):
@@ -129,6 +133,11 @@ class Settings:
     server_clear_keep_tool_uses: int = DEFAULT_SERVER_CLEAR_KEEP_TOOL_USES
     # The edit applies only when it frees at least this many input tokens, so a cache break pays off; 0 omits it.
     server_clear_at_least_tokens: int = DEFAULT_SERVER_CLEAR_AT_LEAST_TOKENS
+    # Lifecycle eviction replaces the threshold trim: every eviction_batch assistant steps, rule-picked old tool
+    # results become their mask placeholder (CONTEXT_EVICTION=1; CONTEXT_EVICTION_BATCH, CONTEXT_EVICTION_KEEP).
+    eviction: bool = False
+    eviction_batch: int = DEFAULT_EVICTION_BATCH
+    eviction_keep: int = DEFAULT_EVICTION_KEEP
     # Each new trim appends a mechanical progress note (edited files, build/test runs) (CONTEXT_PROGRESS_NOTE=0 turns it off).
     progress_note: bool = True
     # Agent scratchpad: one nudge near the threshold, the pad in every trim note (CONTEXT_SCRATCHPAD, default on).
@@ -186,6 +195,9 @@ class Settings:
                                                  DEFAULT_SERVER_CLEAR_KEEP_TOOL_USES), 0),
             server_clear_at_least_tokens=max(_int(env, "CONTEXT_SERVER_CLEAR_AT_LEAST_TOKENS",
                                                   DEFAULT_SERVER_CLEAR_AT_LEAST_TOKENS), 0),
+            eviction=_flag(env, "CONTEXT_EVICTION", "0"),
+            eviction_batch=_positive_int(env, "CONTEXT_EVICTION_BATCH", DEFAULT_EVICTION_BATCH),
+            eviction_keep=_positive_int(env, "CONTEXT_EVICTION_KEEP", DEFAULT_EVICTION_KEEP),
             progress_note=_flag(env, "CONTEXT_PROGRESS_NOTE"),
             scratchpad=_flag(env, "CONTEXT_SCRATCHPAD"),
             scratchpad_nudge_at=_fraction(env, "CONTEXT_SCRATCHPAD_NUDGE_AT", DEFAULT_SCRATCHPAD_NUDGE_AT),

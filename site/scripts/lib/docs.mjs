@@ -48,6 +48,13 @@ export const PAGES = [
     description: 'How a trim replaces old tool outputs with a placeholder instead of deleting turns.',
   },
   {
+    slug: 'eviction',
+    source: 'docs/eviction.md',
+    group: 'Guides',
+    title: 'Lifecycle eviction',
+    description: 'Rule-based eviction of tool results the agent no longer needs, every few steps (CONTEXT_EVICTION).',
+  },
+  {
     slug: 'scratchpad',
     source: 'docs/scratchpad.md',
     group: 'Guides',

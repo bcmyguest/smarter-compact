@@ -45,7 +45,7 @@ ARM_ENV_KEYS = ("CONTEXT_TRIM_AT_TOKENS", "CONTEXT_TRIM_TO_TOKENS", "CONTEXT_STR
                 "CONTEXT_MASK_OBSERVATIONS", "CONTEXT_STANDING_INSTRUCTION", "CONTEXT_POINTER_TOOLS",
                 "CONTEXT_SERVER_CLEAR", "CONTEXT_SERVER_CLEAR_TRIGGER_TOKENS", "CONTEXT_SERVER_CLEAR_KEEP_TOOL_USES",
                 "CONTEXT_SERVER_CLEAR_AT_LEAST_TOKENS", "CONTEXT_CLEAR_KEEP_RESULTS", "CONTEXT_SCRATCHPAD",
-                "CONTEXT_SCRATCHPAD_NUDGE_AT")
+                "CONTEXT_SCRATCHPAD_NUDGE_AT", "CONTEXT_EVICTION", "CONTEXT_EVICTION_BATCH", "CONTEXT_EVICTION_KEEP")
 # A trim threshold no Terminal-Bench session reaches: the proxy runs, our trim never fires.
 TRIM_OFF = "10000000"
 # Job-level bind mount of the host ~/.claude/.credentials.json (read-only in practice; the
@@ -185,16 +185,16 @@ class ScClaudeSmarterCompact(ScClaudeBase):
                 'ls -la /root/.local/bin /home/*/.local/bin /usr/local/bin 2>/dev/null | head -30; exit 1; }; '
                 'export PATH="$found:$HOME/.local/bin:$PATH"; echo "claude at: $found"; claude --version; '
                 # The trim proxy *is* litellm (plugin/scripts/smarter-compact.mjs spawns `litellm
-                # --config proxy/config.yaml`), so the arm needs it importable and on PATH.
-                "command -v litellm >/dev/null 2>&1 || python3 -m pip install --quiet 'litellm[proxy]' "
-                ">>/logs/agent/sc-install.log 2>&1 || python3 -m pip install --quiet --user "
-                "--break-system-packages 'litellm[proxy]' >>/logs/agent/sc-install.log 2>&1; "
-                # Some task images ship python3 without pip; uv brings its own Python.
-                "command -v litellm >/dev/null 2>&1 || { curl -LsSf https://astral.sh/uv/install.sh "
-                "| sh && \"$HOME/.local/bin/uv\" tool install --quiet 'litellm[proxy]'; } "
+                # --config proxy/config.yaml`); `enable` refuses any version but LITELLM_VERSION, so install that one
+                # with uv (which brings its own Python when the image has no pip).
+                f"lv=$(grep -o 'LITELLM_VERSION = \"[^\"]*\"' {REPO}/plugin/lib/litellm.mjs | cut -d'\"' -f2); "
+                '[ -n "$lv" ] || { echo "FATAL: no LITELLM_VERSION in the mounted repo"; exit 1; }; '
+                '{ [ -x "$HOME/.local/bin/uv" ] || curl -LsSf https://astral.sh/uv/install.sh | sh; } '
                 ">>/logs/agent/sc-install.log 2>&1; "
-                'command -v litellm >/dev/null 2>&1 || { echo "FATAL: litellm not on PATH after install"; '
-                "tail -20 /logs/agent/sc-install.log; exit 1; }; "
+                '"$HOME/.local/bin/uv" tool install --quiet --force "litellm[proxy]==$lv" >>/logs/agent/sc-install.log 2>&1; '
+                '[ "$(litellm --version 2>/dev/null | grep -o "[0-9][0-9a-z.]*" | head -1)" = "$lv" ] || '
+                '{ echo "FATAL: litellm $lv not on PATH after install"; tail -20 /logs/agent/sc-install.log; exit 1; }; '
+                'echo "litellm=$lv"; '
                 + _NODE_RESOLVE +
                 # Keep the proxy's log with the trial; it otherwise dies with the container.
                 "mkdir -p ~/.config/smarter-compact && ln -sf /logs/agent/proxy.log "
@@ -335,3 +335,10 @@ class ScClaudeClearRtk(RtkHook, ScClaudeClear):
 
 class ScClaudeScratchpadClearRtk(RtkHook, ScClaudeScratchpadClear):
     """ScratchpadClear plus the rtk Bash hook."""
+
+
+class ScClaudeEvictRtk(RtkHook, ScClaudeScratchpadClear):
+    """ScratchpadClearRtk with lifecycle eviction (CONTEXT_EVICTION) replacing the threshold trim (docs/eviction.md)."""
+
+    REQUIRES_PROXY_SETTINGS = (*ScClaudeScratchpadClear.REQUIRES_PROXY_SETTINGS, "CONTEXT_EVICTION")
+    FORCED_ENV = {**ScClaudeScratchpadClear.FORCED_ENV, "CONTEXT_EVICTION": "1"}
