@@ -834,7 +834,9 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                 anchor, anchor_gap = (cut, gap) if cut is not None else (first, None)
                 sizes = _trim_sizes(adapter, items, anchor, mode, new_clear, first)
                 chars = base_chars + sum(sizes[j] for j in kept_indices(adapter, items, anchor, anchor_gap, first))
-                if estimate_prompt_tokens(chars, state.get("usage"), root, ratio) < target:
+                # Accepted under clear_fit x trim_at, not just target; the headroom below trim_at defers the next trim.
+                if estimate_prompt_tokens(chars, state.get("usage"), root, ratio) < max(target,
+                                                                                         settings.clear_fit * trim_at):
                     new_cut, new_gap = anchor, anchor_gap
             if new_cut is None:
                 new_cut = choose_cut(adapter, items, -1 if cut is None else cut, first)

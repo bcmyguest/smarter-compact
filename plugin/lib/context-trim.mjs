@@ -164,6 +164,8 @@ export const TRIM_KEPT = 1;
 export const TRIM_NEW = 2;
 // The nudge fires once the prompt passes this fraction of the trim threshold; same as proxy settings.py.
 export const DEFAULT_SCRATCHPAD_NUDGE_AT = 0.75;
+// Clearing alone settles a trim under this fraction of the threshold, leaving headroom before the next; same as proxy.
+export const DEFAULT_CLEAR_FIT = 0.63;
 /** Part types whose payload is binary; each is charged a flat 6400 characters (about 1600 tokens). */
 const BINARY_BLOCK_TYPES = new Set(["image", "document", "input_image", "input_file", "image_url", "file", "media"]);
 const BINARY_BLOCK_CHARS = 6400;
@@ -221,6 +223,8 @@ export function trimSettings(env = process.env, home = env.HOME) {
     scratchpadNudgeAt: fraction("CONTEXT_SCRATCHPAD_NUDGE_AT", DEFAULT_SCRATCHPAD_NUDGE_AT),
     // Each trim first clears every tool result but the newest N, keeping all turns and calls; 0 is off.
     clearKeepResults: Math.max(int("CONTEXT_CLEAR_KEEP_RESULTS", 10), 0),
+    // Clearing alone is accepted under max(target, clearFit x trimAt); 0 < x < 1, lower leaves more headroom (CONTEXT_CLEAR_FIT).
+    clearFit: fraction("CONTEXT_CLEAR_FIT", DEFAULT_CLEAR_FIT),
     compressOverTokens: int("CONTEXT_COMPRESS_OVER_TOKENS", DEFAULT_COMPRESS_OVER_TOKENS),
     charsPerToken: positive("CONTEXT_CHARS_PER_TOKEN", DEFAULT_CHARS_PER_TOKEN),
     contextDir: contextRoot(home, env),
@@ -1262,17 +1266,19 @@ async function trimSession(request, settings, deps, { original, sid, store, item
       const nextClearAt = nextClear(items, settings.clearKeepResults, clear);
       // A target at or above the threshold could not land a trim under it, so the threshold caps it.
       const target = Math.min(trimToFor(settings, request.model), trimAt);
-      const under = (sizes, c, g) => {
+      const under = (sizes, c, g, bound = target) => {
         let chars = baseChars;
         for (const j of keptIndices(items, c, g, first)) chars += sizes[j];
-        return estimatePromptTokens(chars, state.usage, root, ratio) < target;
+        return estimatePromptTokens(chars, state.usage, root, ratio) < bound;
       };
+      // Accepted under clearFit x trimAt, not just target; the headroom below trimAt defers the next trim.
+      const clearBound = Math.max(target, (settings.clearFit ?? DEFAULT_CLEAR_FIT) * trimAt);
       let next = null;
       let nextGap = null;
       if (nextClearAt !== null && first !== null) {
         // Clearing first: the current cut, or the first user turn (dropping nothing), with the newer bound.
         const [anchor, anchorGap] = cut !== null ? [cut, gap] : [first, null];
-        if (under(trimSizes(items, anchor, mode, nextClearAt, first), anchor, anchorGap)) [next, nextGap] = [anchor, anchorGap];
+        if (under(trimSizes(items, anchor, mode, nextClearAt, first), anchor, anchorGap, clearBound)) [next, nextGap] = [anchor, anchorGap];
       }
       if (next === null) {
         next = chooseCut(items, cut === null ? -1 : cut, first);
