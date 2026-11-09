@@ -11,7 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { rotateLog } from "./log-rotate.mjs";
 
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 /** Version 1, executed in order on an empty database. Same strings as SCHEMA in sessiondb.py. */
 export const SCHEMA = [
   "CREATE TABLE messages (seq INTEGER PRIMARY KEY, fingerprint TEXT NOT NULL UNIQUE, thread TEXT NOT NULL, "
@@ -46,10 +46,13 @@ export const MIGRATIONS = [
   [4, ["ALTER TABLE events ADD COLUMN applied_edits TEXT"]],
   // Trims: the characters of agent scratchpad the note carried (CONTEXT_SCRATCHPAD); NULL with it off.
   [5, ["ALTER TABLE events ADD COLUMN scratchpad_chars INTEGER"]],
+  // Usage: Anthropic's cache writes by lifetime (usage.cache_creation ephemeral_1h / ephemeral_5m input tokens).
+  [6, ["ALTER TABLE events ADD COLUMN cache_creation_1h_tokens INTEGER",
+    "ALTER TABLE events ADD COLUMN cache_creation_5m_tokens INTEGER"]],
 ];
 export const EVENT_COLUMNS = ["at", "kind", "version", "location", "error", "tokens_before", "tokens_after", "dropped", "model",
   "thread_root", "trimmed", "input_tokens", "cache_read_tokens", "cache_creation_tokens", "output_tokens", "breakpoints",
-  "breakpoint_at", "applied_edits", "scratchpad_chars"];
+  "breakpoint_at", "applied_edits", "scratchpad_chars", "cache_creation_1h_tokens", "cache_creation_5m_tokens"];
 export const DB_SUFFIX = ".db";
 export const BUSY_TIMEOUT_MS = 1000;
 export const DEFAULT_TTL_DAYS = 30;

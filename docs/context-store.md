@@ -109,9 +109,9 @@ A trim keeps the pinned first turn's and the reply's rows `in_context = 1`. `in_
 
 `sessions/<sid>.db` is a SQLite database, one per session, in WAL mode. The proxy (Python `sqlite3`, `proxy/smarter_compact/sessiondb.py`) and the OpenCode 2 plugin (`node:sqlite`, `cli/coding-agent/session-db.mjs`) write it; the MCP tools open it read-only. The file is created mode 600; SQLite gives `-wal` and `-shm` the same mode.
 
-### Schema (`PRAGMA user_version = 5`)
+### Schema (`PRAGMA user_version = 6`)
 
-A writer that finds `user_version = 0` creates these objects in one `BEGIN IMMEDIATE` transaction, in this order and with these exact statements (both writers share the strings, `SCHEMA` then `MIGRATIONS`; the parity test compares `sqlite_master`), then sets `user_version = 5`. A writer that finds an older version runs only the statements after it (version 2 creates the `events` table, version 3 adds its usage columns, version 4 `applied_edits`, version 5 `scratchpad_chars`) in the same kind of transaction; rows already stored are untouched, and older events get `NULL` in the new columns. A writer that finds a newer version leaves the file alone and logs `UnsupportedSchema`; a reader skips it. Readers (`smart_compact_*`, `context_status`) accept versions 1 to 5; a version 1 file has no `events` table, a version 2 file has no usage columns, a version 3 file has no `applied_edits`, a version 4 file has no `scratchpad_chars`. A schema change appends to `MIGRATIONS`, bumps `user_version` and changes this section first.
+A writer that finds `user_version = 0` creates these objects in one `BEGIN IMMEDIATE` transaction, in this order and with these exact statements (both writers share the strings, `SCHEMA` then `MIGRATIONS`; the parity test compares `sqlite_master`), then sets `user_version = 6`. A writer that finds an older version runs only the statements after it (version 2 creates the `events` table, version 3 adds its usage columns, version 4 `applied_edits`, version 5 `scratchpad_chars`, version 6 `cache_creation_1h_tokens` and `cache_creation_5m_tokens`) in the same kind of transaction; rows already stored are untouched, and older events get `NULL` in the new columns. A writer that finds a newer version leaves the file alone and logs `UnsupportedSchema`; a reader skips it. Readers (`smart_compact_*`, `context_status`) accept versions 1 to 6; a version 1 file has no `events` table, a version 2 file has no usage columns, a version 3 file has no `applied_edits`, a version 4 file has no `scratchpad_chars`, a version 5 file has no cache-write split. A schema change appends to `MIGRATIONS`, bumps `user_version` and changes this section first.
 
 ```sql
 CREATE TABLE messages (seq INTEGER PRIMARY KEY, fingerprint TEXT NOT NULL UNIQUE, thread TEXT NOT NULL,
@@ -139,6 +139,9 @@ ALTER TABLE events ADD COLUMN model TEXT;              -- then, in order: thread
 ALTER TABLE events ADD COLUMN applied_edits TEXT;
 -- version 5
 ALTER TABLE events ADD COLUMN scratchpad_chars INTEGER;
+-- version 6
+ALTER TABLE events ADD COLUMN cache_creation_1h_tokens INTEGER;
+ALTER TABLE events ADD COLUMN cache_creation_5m_tokens INTEGER;
 ```
 
 | Column | Values |
@@ -179,7 +182,8 @@ The writer appends one `events` row per trim, per scratchpad nudge, per eviction
 | `at` | ISO 8601 UTC without fractions |
 | `kind` | `trim` (a new cut, including a `/smarter-compact` one) · `nudge` (the scratchpad nudge was added; `tokens_before` set) · `evict` ([lifecycle eviction](eviction.md) evicted more results at a batch boundary) · `dedup` (new tool results became [repeated-result pointers](clearing.md#repeated-results-context_dedup_results); `dropped` = how many) · `reuse` ([ledger](clearing.md#ledger-context_ledger) reuse pointers were added; `dropped` = how many) · `log_reduce` ([test/build logs](clearing.md#test-and-build-logs-context_log_reduce_over_chars) were reduced; `dropped` = how many) · `strip_batch` (a [batched reasoning strip](#batched-reasoning-strip-context_strip_reasoning_every) moved its bound; `tokens_before`, `tokens_after`) · `fail_open` (the rewrite raised; the request went upstream unmodified) · `usage` (a model call finished) |
 | `version` | The writer: `proxy:<12 hex>`, the first 12 hex of SHA-256 over `proxy/smarter_compact/*.py` (each file's name, NUL, bytes, NUL, sorted by name; `core.code_hash`, `proxyCodeVersion`), or `opencode:<package version>` for the OpenCode 2 plugin. Status compares the newest `proxy:` value with the checkout's hash to spot a proxy running old code |
-| `location`, `error` | Fail-open only: `<file>:<line>` (JS adds `:<column>`) and the exception type. Never message content |
+| `location`, `error` | Fail-open only: `<file>:<line>` (JS adds `:<column>`) and the exception type. Never message content. A trim below the threshold after an idle gap ([cold-cache trim](context-proxy.md#prompt-cache-timing)) has `location` `cold` |
+| `cache_creation_1h_tokens`, `cache_creation_5m_tokens` | Usage, proxy only: Anthropic's `usage.cache_creation.ephemeral_1h_input_tokens` / `ephemeral_5m_input_tokens`; `NULL` when not reported |
 | `tokens_before`, `tokens_after` | Evict: the estimate with the batch's new evictions left whole and applied. Trim: the writer's calibrated estimate ([token estimate](context-proxy.md#token-estimate)) of the request before and after the cut, not provider-billed counts. `tokens_after` still counts the thinking blocks the cut voids and drops, so status measures the saving as `tokens_before` minus the billed prompt of the next usage row with `trimmed` = 2 |
 | `scratchpad_chars` | Trim only, scratchpad on: characters of pad the note carried (`0` none); `NULL` with the flag off |
 | `dropped` | Trim: messages absent from the trimmed view (the pointer's `<n>`). Evict: tool results the batch newly evicted |

@@ -40,6 +40,10 @@ DEFAULT_EVICTION_KEEP = 12
 # Batched reasoning strip (CONTEXT_STRIP_REASONING_EVERY, off by default): the least reasoning, in estimated tokens,
 # a move of its bound must strip, so each cache rewrite pays off.
 DEFAULT_STRIP_REASONING_MIN_TOKENS = 8000
+# Cold-cache trim (CONTEXT_COLD_TRIM, off by default): the cache lifetime assumed when the request names none
+# (OpenAI in_memory retention lasts up to one hour), and the least a cold trim must free.
+DEFAULT_COLD_TRIM_SECONDS = 3600
+DEFAULT_COLD_TRIM_MIN_GAIN_TOKENS = 5000
 
 
 def _int(env, name, default):
@@ -152,6 +156,15 @@ class Settings:
     strip_old_reasoning: bool = True
     # A trim that would free fewer estimated tokens than this is skipped; 0 is off (CONTEXT_TRIM_MIN_GAIN_TOKENS).
     trim_min_gain_tokens: int = 0
+    # After an idle gap longer than the prompt cache lives, trim to the target below the threshold (CONTEXT_COLD_TRIM=1);
+    # the lifetime comes from the request's cache_control, else cold_trim_seconds (CONTEXT_COLD_TRIM_SECONDS).
+    cold_trim: bool = False
+    cold_trim_seconds: int = DEFAULT_COLD_TRIM_SECONDS
+    # A cold trim that would free fewer estimated tokens than this is skipped (CONTEXT_COLD_TRIM_MIN_GAIN_TOKENS).
+    cold_trim_min_gain_tokens: int = DEFAULT_COLD_TRIM_MIN_GAIN_TOKENS
+    # Anthropic route: message cache_control ttl "1h" becomes "5m" while tools/system keep "1h", until the thread's Nth
+    # idle gap over 5 minutes; 0 is off (CONTEXT_CACHE_TTL_SPLIT).
+    cache_ttl_split: int = 0
     # Anthropic requests to Claude gain a clear_tool_uses_20250919 context edit (CONTEXT_SERVER_CLEAR=1 turns it on).
     server_clear: bool = False
     server_clear_trigger_tokens: int = DEFAULT_SERVER_CLEAR_TRIGGER_TOKENS
@@ -224,6 +237,11 @@ class Settings:
                                              DEFAULT_CLEAR_INPUTS_OVER_CHARS), 0),
             strip_old_reasoning=_flag(env, "CONTEXT_STRIP_OLD_REASONING", "1"),
             trim_min_gain_tokens=_int(env, "CONTEXT_TRIM_MIN_GAIN_TOKENS", 0),
+            cold_trim=_flag(env, "CONTEXT_COLD_TRIM", "0"),
+            cold_trim_seconds=_positive_int(env, "CONTEXT_COLD_TRIM_SECONDS", DEFAULT_COLD_TRIM_SECONDS),
+            cold_trim_min_gain_tokens=max(_int(env, "CONTEXT_COLD_TRIM_MIN_GAIN_TOKENS",
+                                               DEFAULT_COLD_TRIM_MIN_GAIN_TOKENS), 0),
+            cache_ttl_split=max(_int(env, "CONTEXT_CACHE_TTL_SPLIT", 0), 0),
             server_clear=_flag(env, "CONTEXT_SERVER_CLEAR", "0"),
             server_clear_trigger_tokens=_positive_int(env, "CONTEXT_SERVER_CLEAR_TRIGGER_TOKENS",
                                                       DEFAULT_SERVER_CLEAR_TRIGGER_TOKENS),

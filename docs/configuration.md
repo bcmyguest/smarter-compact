@@ -48,6 +48,10 @@ OpenCode plugin options override the environment ([which reach what](#opencode-p
 | `CONTEXT_STRIP_REASONING_MIN_TOKENS` | `8000` | proxy, OpenCode 2 | Estimated tokens a batched reasoning strip must free, else it waits for the next batch; `0` moves at every batch with reasoning to strip |
 | `CONTEXT_LOG_REDUCE_OVER_CHARS` | `0` | proxy, OpenCode 2 | `N` > 0: a new tool result over N characters that looks like test or build output keeps its failure-pattern lines with context and its last 40 lines, naming the full text's blob, before head/tail compression; `0` off ([clearing](clearing.md#test-and-build-logs-context_log_reduce_over_chars)) |
 | `CONTEXT_KEEP_ERRORS` | `0` | proxy, OpenCode 2 | `K` > 0: each trim leaves the K newest error tool results (and their calls' inputs) whole while clearing and masking the rest; `0` off ([clearing](clearing.md#error-results-context_keep_errors)) |
+| `CONTEXT_COLD_TRIM` | `0` | proxy, OpenCode 2 | `1`: after an idle gap longer than the prompt cache lives, trim to the target below the threshold too ([cache timing](context-proxy.md#prompt-cache-timing)) |
+| `CONTEXT_COLD_TRIM_SECONDS` | `3600` | proxy, OpenCode 2 | Cache lifetime a cold trim assumes when the request names none (non-Anthropic routes, the plugin) |
+| `CONTEXT_COLD_TRIM_MIN_GAIN_TOKENS` | `5000` | proxy, OpenCode 2 | Estimated tokens a cold trim must free, else the request goes up untrimmed |
+| `CONTEXT_CACHE_TTL_SPLIT` | `0` | proxy | `N` > 0, Anthropic route: message `cache_control` ttl `"1h"` goes up as `"5m"` while tools and system keep `"1h"`, until the thread's Nth idle gap over 5 minutes; `0` off ([cache timing](context-proxy.md#prompt-cache-timing)) |
 
 ## Server-side tool-result clearing
 

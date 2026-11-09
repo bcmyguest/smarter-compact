@@ -184,6 +184,14 @@ export const DEFAULT_CLEAR_INPUTS_OVER_CHARS = 2000;
 export const DEFAULT_STRIP_REASONING_MIN_TOKENS = 8000;
 // CONTEXT_LOG_REDUCE_OVER_CHARS decisions kept per session (trim state "logs"); same as core.LOG_MAX.
 const LOG_MAX = 512;
+// CONTEXT_COLD_TRIM: the cache lifetime assumed (OpenCode adds cache_control in its provider layer, unseen here), and
+// the least a cold trim must free; settings.DEFAULT_COLD_TRIM_SECONDS / DEFAULT_COLD_TRIM_MIN_GAIN_TOKENS.
+export const DEFAULT_COLD_TRIM_SECONDS = 3600;
+export const DEFAULT_COLD_TRIM_MIN_GAIN_TOKENS = 5000;
+// An idle gap longer than Anthropic's default 5-minute cache lifetime (adapters.SHORT_TTL_SECONDS).
+const SHORT_TTL_SECONDS = 300;
+// Per thread root, the last request's arrival (epoch seconds) and idle gaps over 5 minutes; core.LAST_REQUEST_KEY.
+const LAST_REQUEST_KEY = "last_request";
 // Thread keys of CONTEXT_STRIP_REASONING_EVERY, and keys a thread entry holds without a cut (core.py).
 const REASON_KEYS = ["reason", "reason_fp", "reason_batch"];
 const SIDE_KEYS = ["nudge_fp", "reason_batch"];
@@ -249,6 +257,12 @@ export function trimSettings(env = process.env, home = env.HOME) {
     trimToTokens: positiveInt("CONTEXT_TRIM_TO_TOKENS", DEFAULT_TRIM_TO_TOKENS),
     trimToByModel: positiveInt("CONTEXT_TRIM_TO_TOKENS", null) === null,
     trimMinGainTokens: int("CONTEXT_TRIM_MIN_GAIN_TOKENS", 0),
+    // After an idle gap over coldTrimSeconds the prompt cache is cold: trim to the target below the threshold too.
+    coldTrim: flag("CONTEXT_COLD_TRIM", "0"),
+    coldTrimSeconds: positiveInt("CONTEXT_COLD_TRIM_SECONDS", DEFAULT_COLD_TRIM_SECONDS),
+    coldTrimMinGainTokens: Math.max(int("CONTEXT_COLD_TRIM_MIN_GAIN_TOKENS", DEFAULT_COLD_TRIM_MIN_GAIN_TOKENS), 0),
+    // Proxy Anthropic route only (message cache_control ttl "1h" to "5m"); the plugin never sees cache_control.
+    cacheTtlSplit: Math.max(int("CONTEXT_CACHE_TTL_SPLIT", 0), 0),
     // Strip prose before the cut, masking wins (CONTEXT_STRIP_PROSE=1, default off).
     stripProse: flag("CONTEXT_STRIP_PROSE", "0"),
     // Mask tool results in the prose region, wins over stripProse (CONTEXT_MASK_OBSERVATIONS=0, default on).
@@ -1637,6 +1651,25 @@ function compressAll(messages, settings, store) {
 const validMessages = (messages) => Array.isArray(messages) && messages.length > 0
   && messages.every((m) => m && typeof m === "object" && !Array.isArray(m));
 
+/**
+ * [seconds since the thread's previous request or null, idle gaps over 5 minutes so far, this one included]; records
+ * now as the thread's last request in state (core._tick).
+ */
+function tick(state, root, now) {
+  const raw = state[LAST_REQUEST_KEY];
+  const seen = new Map(isObject(raw) ? Object.entries(raw) : []);
+  const prev = isObject(seen.get(root)) ? seen.get(root) : {};
+  seen.delete(root);
+  const at = Number.isInteger(prev.at) ? prev.at : null;
+  let gaps = Number.isInteger(prev.long) ? prev.long : 0;
+  const gap = at !== null ? now - at : null;
+  if (gap !== null && gap > SHORT_TTL_SECONDS) gaps += 1;
+  seen.set(root, { at: now, long: gaps });
+  while (seen.size > MAX_THREADS) seen.delete(seen.keys().next().value);
+  state[LAST_REQUEST_KEY] = Object.fromEntries(seen);
+  return [gap, gaps];
+}
+
 /** Contract session id, or null when the id is empty after trimming. */
 function sessionIdOf(request) {
   try { return sanitizeSessionId(request.sessionID); } catch { return null; }
@@ -1676,6 +1709,13 @@ async function trimSession(request, settings, deps, { original, sid, store, item
     const state = store.loadTrim(sid);
     const { threads } = state;
     const thread = threads.get(root);
+    let gap0 = null;
+    if (settings.coldTrim || (settings.cacheTtlSplit ?? 0) > 0) {
+      [gap0] = tick(state, root, Math.floor((deps.now ? deps.now() : new Date()).getTime() / 1000));
+      store.saveTrim(sid, state);
+    }
+    // CONTEXT_COLD_TRIM: the plugin sees no cache_control, so the lifetime is the configured one.
+    const coldTtl = settings.coldTrim && gap0 !== null ? settings.coldTrimSeconds ?? DEFAULT_COLD_TRIM_SECONDS : null;
     let logFresh = [];
     if (settings.logReduceOverChars > 0) {
       // CONTEXT_LOG_REDUCE_OVER_CHARS: decided on a result's first request, recorded, rendered on every later one.
@@ -1775,7 +1815,11 @@ async function trimSession(request, settings, deps, { original, sid, store, item
       }
     }
     const trimAt = trimAtFor(settings, request.model);
-    if (force || tokens >= trimAt) {
+    // CONTEXT_COLD_TRIM: the prompt cache expired since the thread's last request, so a trim to the target costs no
+    // extra cache write now, below the threshold too.
+    const cold = coldTtl !== null && !force && gap0 > coldTtl
+      && Math.min(trimToFor(settings, request.model), trimAt) < tokens && tokens < trimAt;
+    if (force || tokens >= trimAt || cold) {
       const nextClearAt = nextClear(items, settings.clearKeepResults, clear);
       // CONTEXT_KEEP_ERRORS: the trim exempts the newest error results the view still shows whole.
       const nextExempt = settings.keepErrors > 0 ? errorIds(items, settings.keepErrors, shown) : [];
@@ -1825,9 +1869,11 @@ async function trimSession(request, settings, deps, { original, sid, store, item
       const nextShown = new Map();
       if (moved) {
         const bare = render(tbase, next, "", first, nextGap, decorate, nextStrip, nextClearAt, mode, nextShown, inputs, old, tExempt);
-        if (!force && settings.trimMinGainTokens > 0) {
+        const gain = cold ? Math.max(settings.trimMinGainTokens ?? 0, settings.coldTrimMinGainTokens ?? DEFAULT_COLD_TRIM_MIN_GAIN_TOKENS)
+          : settings.trimMinGainTokens;
+        if (!force && gain > 0) {
           // A cut freeing fewer estimated tokens (pointer note not counted) waits for a bigger one.
-          moved = tokens - estimatePromptTokens(baseChars + sizeChars(old, bare), state.usage, root, ratio) >= settings.trimMinGainTokens;
+          moved = tokens - estimatePromptTokens(baseChars + sizeChars(old, bare), state.usage, root, ratio) >= gain;
         }
       }
       if (moved) {
@@ -1869,6 +1915,7 @@ async function trimSession(request, settings, deps, { original, sid, store, item
         clear = nextClearAt;
         const after = estimatePromptTokens(baseChars + sizeChars(old, rendered), state.usage, root, ratio);
         trim = { tokens_before: tokens, tokens_after: after, dropped };
+        if (cold) trim.location = "cold";
         if (settings.scratchpad) trim.scratchpad_chars = Math.min(pad.length, SCRATCHPAD_MAX_CHARS);
         [sent, exempt, nudgePos, llo] = [tbase, tExempt, null, nextLlo];
       } else if (thread && cut === null && !threads.has(root)) store.saveTrim(sid, state);

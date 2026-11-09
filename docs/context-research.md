@@ -476,6 +476,25 @@ Part is the share of verifier tests passed (CTRF). Eviction cost 63% more than t
 
 **What fills the prompt.** Right after a clearing-only trim in the replay, about 40% of the prompt was tool-call inputs (Write contents, Edit strings, Bash heredocs), 27% system prompt and tools, 25% tool results; clearing touches only results. In the live sessions the largest part is reasoning: each assistant message carries a redacted thinking block. Billed usage minus `count_tokens` of the same request without thinking (which does not count thinking for Haiku 5.5) put it at 64,124 of 98,631 prompt tokens (65%) for adaptive-rejection-sampler, 68,442 of 93,242 (73%) for regex-chess, 42,299 of 87,581 (48%) for make-mips-interpreter and about 37,000 of 90,831 (41%) for make-doom-for-mips, at the last request before the first trim; signature characters ÷ 3.1–3.3 matched the thinking tokens. A trim already strips the thinking of every assistant message but the latest (tool results arrive as user messages, so the latest run is the latest assistant message), and billed prompts fell from 98.6k to 34.5k, 93.2k to 21.6k, 89.4k to 36.1k and 92.8k to 25.7k. The size estimate charged signatures 0 characters, so it logged those trims as 99,228 → 99,015 and judged every clearing-only view too large; in a replay of 59 trajectories over the threshold its median error after a trim was +23,000 tokens. Lessons kept: large tool-call inputs get a placeholder like results do (`CONTEXT_CLEAR_INPUTS_OVER_CHARS`, `eaa4c67`); the estimate must count reasoning, for every provider format; and dropping reasoning must never drop the message.
 
+## Prompt-cache timing, offline (2026-11-09)
+
+Inputs: the `tb21-h55-*` bench session databases (684, 20,647 usage events) and their Claude Code transcripts (830, 23,518 requests, all writes 1h); the author's own sessions 2026-10-30 to 11-07 (229 threads, 10,372 usage events; 96 Claude Code transcripts that write only 1h). Gaps between usage events; a request counts as cold when its cache read is under half its prompt. Cost units: input 1, 1h write 2, 5m write 1.25, read 0.1, output 5.
+
+**Idle gaps.** Bench: p50 5 s, p99 434 s, max 1,255 s; 1.8% of gaps over 5 minutes, none over 1 hour. Own sessions: p99 381 s, 120 gaps over 5 minutes, 16 over 1 hour. With Claude Code's 1h TTL, Anthropic requests after 5–60 minutes idle found the cache warm (1–6% cold); after more than 1 hour, 14 of 15 were cold.
+
+**Cold-cache trim** ([`CONTEXT_COLD_TRIM`](context-proxy.md#prompt-cache-timing)). Bench: no trigger (no gap over 1 hour). Own sessions: 8 Anthropic requests after more than 1 hour idle with a prompt over the 66,000 target, 201,586 tokens above it in total. A trim there saves those tokens' 2× write (0.40M units) plus their 0.1× read on each later request until the next trim: 0.83M units counting at most 50 later requests, 9.8M counting all of them. Against 186M units of Anthropic usage in those sessions, that is 0.7–5.5%.
+
+**Split cache TTL** ([`CONTEXT_CACHE_TTL_SPLIT`](context-proxy.md#prompt-cache-timing)), simulated per transcript: tools and system (the smallest cache read) stay 1h, new conversation content is written at 1.25×, and after a gap over 5 minutes between request starts everything after the system prompt is written again at 1.25×.
+
+| Variant | Bench | Own sessions (1h-only) |
+| --- | --- | --- |
+| Split always | −9.5% | +21.2% (211 expiries rewrote 42.8M tokens) |
+| Split until the 1st gap over 5 min (`N=1`) | −7.8% | −1.5% |
+| `N=2` | −9.0% | −1.4% |
+| `N=3` | −9.4% | −1.4% |
+
+People idle 5–60 minutes between turns; unattended agents rarely do. An expiry costs 1.15× the conversation prefix, and the split saves 0.75× of each turn's new content, so the reverting variants keep most of the bench saving without the idle-session loss.
+
 ## Limitations
 
 - The primary run E uses Haiku 5.5 and two or three seeds per cell. Sonnet has two paired seeds on one task. Earlier run B baselines have one or two seeds per cell.

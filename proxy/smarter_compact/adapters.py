@@ -24,6 +24,9 @@ _CALL_TYPES = ("function_call", "custom_tool_call", "local_shell_call")
 CODEX_RESPONSES_ROUTE = "/backend-api/codex/responses"
 # Anthropic thinking blocks: each carries a signature over the conversation before it, so an edited prefix voids it.
 THINKING_TYPES = ("thinking", "redacted_thinking")
+# Anthropic prompt-cache lifetimes: cache_control ttl "1h", and the default "5m".
+LONG_TTL_SECONDS = 3600
+SHORT_TTL_SECONDS = 300
 
 
 def _cache_markers(item):
@@ -34,6 +37,32 @@ def _cache_markers(item):
         if isinstance(b, dict):
             count += _cache_markers(b)
     return count
+
+
+def _ttl_markers(messages):
+    """Every cache_control dict on the messages and their blocks, tool_result inner blocks included."""
+    for item in messages if isinstance(messages, list) else ():
+        if not isinstance(item, dict):
+            continue
+        if isinstance(item.get("cache_control"), dict):
+            yield item["cache_control"]
+        content = item.get("content")
+        if isinstance(content, list):
+            yield from _ttl_markers(content)
+
+
+def _short_ttl(item):
+    """item with each ttl "1h" cache_control (its own and its blocks', recursively) set to "5m"; item when none."""
+    out = item
+    control = item.get("cache_control")
+    if isinstance(control, dict) and control.get("ttl") == "1h":
+        out = {**item, "cache_control": {**control, "ttl": "5m"}}
+    content = item.get("content")
+    if isinstance(content, list):
+        blocks = [_short_ttl(b) if isinstance(b, dict) else b for b in content]
+        if any(a is not b for a, b in zip(blocks, content)):
+            out = {**out, "content": blocks}
+    return out
 
 
 class UnsupportedCallType(LookupError):
@@ -355,6 +384,32 @@ class AnthropicAdapter:
             if isinstance(item, dict):
                 at += [f"m-{len(messages) - j}"] * _cache_markers(item)
         return len(at), ",".join(at)
+
+    def cache_ttl_seconds(self, data):
+        """Lifetime of the conversation's cache entry: 3600 when a message marker or the top-level cache_control asks
+        for ttl "1h", 300 for any other such marker, None when the messages carry none."""
+        markers = list(_ttl_markers(data.get("messages")))
+        top = data.get("cache_control")
+        if isinstance(top, dict):
+            markers.append(top)
+        if not markers:
+            return None
+        return LONG_TTL_SECONDS if any(m.get("ttl") == "1h" for m in markers) else SHORT_TTL_SECONDS
+
+    def split_cache_ttl(self, data):
+        """data with every message marker's ttl "1h" turned "5m" when tools or system carry a "1h" marker, else data
+        itself. Copies what it changes: data, its messages list and each changed message and block."""
+        stable = [b.get("cache_control") for key in ("tools", "system") if isinstance(data.get(key), list)
+                  for b in data[key] if isinstance(b, dict)]
+        if not any(isinstance(c, dict) and c.get("ttl") == "1h" for c in stable):
+            return data
+        messages = data.get("messages")
+        if not isinstance(messages, list):
+            return data
+        out = [_short_ttl(m) if isinstance(m, dict) else m for m in messages]
+        if all(a is b for a, b in zip(out, messages)):
+            return data
+        return {**data, "messages": out}
 
     def add_instruction(self, data, text):
         """Append one text block to `system`; a string system becomes its own leading block."""

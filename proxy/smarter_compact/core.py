@@ -21,7 +21,7 @@ from . import ledger as ledger_mod
 from . import sessiondb
 from . import status as status_mod
 from . import ttl as ttl_mod
-from .adapters import AnthropicAdapter, UnsupportedCallType, adapter_for
+from .adapters import SHORT_TTL_SECONDS, AnthropicAdapter, UnsupportedCallType, adapter_for
 from .compress import (
     DEDUP_MIN_CHARS,
     DEDUP_PREFIX,
@@ -121,6 +121,9 @@ REASON_KEYS = ("reason", "reason_fp", "reason_batch")
 SIDE_KEYS = frozenset(("nudge_fp", "evict_fp", "reason_batch"))
 # CONTEXT_LOG_REDUCE_OVER_CHARS decisions kept per session (trim state "logs"), oldest dropped first.
 LOG_MAX = 512
+# CONTEXT_COLD_TRIM / CONTEXT_CACHE_TTL_SPLIT: per thread root, the last request's arrival (epoch seconds) and the idle
+# gaps over 5 minutes so far (trim state "last_request").
+LAST_REQUEST_KEY = "last_request"
 # A tool result that reports a failure (CONTEXT_KEEP_ERRORS, and no ledger observation): a nonzero exit, a traceback,
 # an exception line, a missing command or file, a test or compiler failure line. Matched per line, as in the plugin.
 _ERROR_RE = re.compile(
@@ -595,6 +598,37 @@ def _ledger_block(adapter, items, sent, state, nudges, found):
     if _nudged(adapter, sent, j, text) is sent:
         return None
     return {"at": j, "fp": fingerprint(items[j]), "text": text, "core": ledger_mod.core_id(core)}
+
+
+def _clock():
+    """Wall-clock seconds; tests replace it."""
+    return time.time()
+
+
+def _tick(state, root, now):
+    """(seconds since the thread's previous request or None, idle gaps over 5 minutes so far, this one included);
+    records now as the thread's last request in state."""
+    seen = state.get(LAST_REQUEST_KEY) if isinstance(state.get(LAST_REQUEST_KEY), dict) else {}
+    prev = seen.pop(root, None)
+    prev = prev if isinstance(prev, dict) else {}
+    at = prev.get("at") if type(prev.get("at")) is int else None
+    gaps = prev.get("long") if type(prev.get("long")) is int else 0
+    gap = now - at if at is not None else None
+    if gap is not None and gap > SHORT_TTL_SECONDS:
+        gaps += 1
+    seen[root] = {"at": now, "long": gaps}
+    while len(seen) > MAX_THREADS:
+        seen.pop(next(iter(seen)))
+    state[LAST_REQUEST_KEY] = seen
+    return gap, gaps
+
+
+def _split_ttl(adapter, data):
+    """data's messages with CONTEXT_CACHE_TTL_SPLIT applied (AnthropicAdapter.split_cache_ttl), set in place."""
+    out = adapter.split_cache_ttl(data)
+    if out is not data:
+        data["messages"] = out["messages"]
+    return data
 
 
 def first_user_index(adapter, items):
@@ -1140,6 +1174,18 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
         state = store.load_trim(sid)
         threads = state["threads"]
         thread = threads.get(root)
+        since, idle = None, 0
+        if settings.cold_trim or settings.cache_ttl_split > 0:
+            since, idle = _tick(state, root, int(_clock()))
+            store.save_trim(sid, state)
+        # CONTEXT_CACHE_TTL_SPLIT: the same decision on every request until the thread's Nth idle gap over 5 minutes.
+        split = settings.cache_ttl_split > 0 and idle < settings.cache_ttl_split and hasattr(adapter, "split_cache_ttl")
+        cold_ttl = None
+        if settings.cold_trim and since is not None:
+            # CONTEXT_COLD_TRIM: the conversation's cache lifetime as this request sends it, else the configured one.
+            ttl_data = adapter.split_cache_ttl(data) if split else data
+            cold_ttl = (adapter.cache_ttl_seconds(ttl_data) if hasattr(adapter, "cache_ttl_seconds") else None) \
+                or settings.cold_trim_seconds
         log_new = []
         if settings.log_reduce_over_chars > 0:
             # CONTEXT_LOG_REDUCE_OVER_CHARS: decided on a result's first request, recorded, rendered on every later one.
@@ -1266,8 +1312,12 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                                                                    state.get("usage"), root, ratio),
                            "tokens_after": tokens, "dropped": len(evicted)}
         trim_at = settings.trim_at_for(request["model"])
+        # CONTEXT_COLD_TRIM: the prompt cache expired since the thread's last request, so a trim to the target costs no
+        # extra cache write now, below the threshold too.
+        cold = cold_ttl is not None and not force and not evicting and since > cold_ttl \
+            and min(settings.trim_to_for(request["model"]), trim_at) < tokens < trim_at
         # Eviction replaces the threshold trim; a forced trim (/compact) still runs.
-        if force or (not evicting and tokens >= trim_at):
+        if force or (not evicting and tokens >= trim_at) or cold:
             new_clear = _next_clear(adapter, items, settings.clear_keep_results, clear)
             # CONTEXT_KEEP_ERRORS: the trim exempts the newest error results the view still shows whole.
             new_keep = tuple(_error_ids(adapter, items, settings.keep_errors, shown)) if settings.keep_errors > 0 \
@@ -1321,10 +1371,12 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                 new_shown = {}
                 bare = render(tadapter, tbase, new_cut, "", first, new_gap, new_strip, mode, new_shown, new_clear,
                               evict, inputs, old)
-                if not force and settings.trim_min_gain_tokens > 0:
+                gain = max(settings.trim_min_gain_tokens, settings.cold_trim_min_gain_tokens) if cold \
+                    else settings.trim_min_gain_tokens
+                if not force and gain > 0:
                     # A cut freeing fewer estimated tokens (pointer note not counted) waits for a bigger one.
                     freed = tokens - estimate_prompt_tokens(base_chars + _size(old, bare), state.get("usage"), root, ratio)
-                    moved = freed >= settings.trim_min_gain_tokens
+                    moved = freed >= gain
             if moved:
                 # The pointer counts every message absent from the view: dropped, or emptied by the strip.
                 dropped = len(items) - len(new_shown)
@@ -1375,6 +1427,8 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                 cut, gap, clear = new_cut, new_gap, new_clear
                 after = estimate_prompt_tokens(base_chars + _size(old, view), state.get("usage"), root, ratio)
                 trim = {"tokens_before": tokens, "tokens_after": after, "dropped": dropped}
+                if cold:
+                    trim["location"] = "cold"
                 if settings.scratchpad:
                     trim["scratchpad_chars"] = min(len(pad), SCRATCHPAD_MAX_CHARS)
                 sent, radapter, nudge_pos, llo = tbase, tadapter, None, new_llo
@@ -1454,6 +1508,8 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
     if settings.standing_instruction:
         # After trimming, so the cut, the token estimate and the session id never see it.
         add_standing_instruction(adapter, data, settings.reuse_rules)
+    if split:
+        _split_ttl(adapter, data)
     return data
 
 
@@ -1606,6 +1662,18 @@ def response_usage_counts(response, kwargs):
     return counts or dict.fromkeys(USAGE_FIELDS)
 
 
+def cache_write_split(response):
+    """{cache_creation_1h_tokens, cache_creation_5m_tokens} from the response usage's cache_creation object
+    (Anthropic), else {}."""
+    for obj in (response, _field(response, "response")):
+        usage = _field(obj, "usage") if obj is not None else None
+        split = _field(usage, "cache_creation") if usage is not None else None
+        if split is not None:
+            return {"cache_creation_1h_tokens": _count(_field(split, "ephemeral_1h_input_tokens")),
+                    "cache_creation_5m_tokens": _count(_field(split, "ephemeral_5m_input_tokens"))}
+    return {}
+
+
 def response_prompt_tokens(response, kwargs):
     """Prompt tokens LiteLLM reports for a finished call: the response's usage (or its .response's, for a Responses
     stream's completed event), else standard_logging_object.prompt_tokens; None when none is reported."""
@@ -1637,7 +1705,7 @@ def process_usage(kwargs, response, settings=None):
             streamed = _stream_edits.pop(call_id, None)
         store = Store(settings.context_dir)
         _record_event(store, sid, "usage", **request, **response_usage_counts(response, kwargs),
-                      applied_edits=applied_edits(response) or streamed)
+                      **cache_write_split(response), applied_edits=applied_edits(response) or streamed)
         tokens = response_prompt_tokens(response, kwargs)
         if tokens is None:
             return

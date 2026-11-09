@@ -15,7 +15,7 @@ from pathlib import Path
 
 from .tokens import fingerprint
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 # Version 1, executed in order on an empty database. Same strings as SCHEMA in cli/coding-agent/session-db.mjs.
 SCHEMA = (
     "CREATE TABLE messages (seq INTEGER PRIMARY KEY, fingerprint TEXT NOT NULL UNIQUE, thread TEXT NOT NULL, "
@@ -48,10 +48,14 @@ MIGRATIONS = (
     (4, ("ALTER TABLE events ADD COLUMN applied_edits TEXT",)),
     # Trims: the characters of agent scratchpad the note carried (CONTEXT_SCRATCHPAD); NULL with it off.
     (5, ("ALTER TABLE events ADD COLUMN scratchpad_chars INTEGER",)),
+    # Usage: Anthropic's cache writes by lifetime (usage.cache_creation ephemeral_1h / ephemeral_5m input tokens).
+    (6, ("ALTER TABLE events ADD COLUMN cache_creation_1h_tokens INTEGER",
+         "ALTER TABLE events ADD COLUMN cache_creation_5m_tokens INTEGER")),
 )
 EVENT_COLUMNS = ("at", "kind", "version", "location", "error", "tokens_before", "tokens_after", "dropped", "model",
                  "thread_root", "trimmed", "input_tokens", "cache_read_tokens", "cache_creation_tokens", "output_tokens",
-                 "breakpoints", "breakpoint_at", "applied_edits", "scratchpad_chars")
+                 "breakpoints", "breakpoint_at", "applied_edits", "scratchpad_chars", "cache_creation_1h_tokens",
+                 "cache_creation_5m_tokens")
 _INSERT_EVENT = f"INSERT INTO events ({', '.join(EVENT_COLUMNS)}) VALUES ({', '.join('?' * len(EVENT_COLUMNS))})"
 DB_SUFFIX = ".db"
 FILE_MODE = 0o600
