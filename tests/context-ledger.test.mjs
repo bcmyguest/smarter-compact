@@ -112,11 +112,11 @@ test("CONTEXT_LEDGER: blocks on new results, reuse pointers, nudges, byte-identi
   for (const [n, view] of (await grow(home, steps, offEnv)).entries()) assert.equal(JSON.stringify(view), JSON.stringify(turns(steps.slice(0, n + 1))));
   const views = await grow(home, steps, on);
   assert.equal(JSON.stringify(await run(home, turns(steps), offEnv)), JSON.stringify(turns(steps)));
-  assert.ok(views[0][2].content[0].result.value.startsWith(`${FILE}\n\n${LEDGER_HEAD}`));
+  assert.ok(views[0][2].content[0].result.value.startsWith(`${FILE}\n\n<system-reminder>\n${LEDGER_HEAD}`));
   assert.equal(JSON.stringify(views[1].slice(0, views[0].length)), JSON.stringify(views[0]));
   // The range read is covered by the whole cat, but its output differs: it stays whole, with no nudge.
   const p1 = resultsOf(views[1]).p1;
-  assert.ok(p1.startsWith(`${NUMBERED}\n\n${LEDGER_HEAD}`) && !p1.includes("Repeats in this batch"));
+  assert.ok(p1.startsWith(`${NUMBERED}\n\n<system-reminder>\n${LEDGER_HEAD}`) && !p1.includes("Repeats in this batch"));
   assert.deepEqual(sweepOrphanBlobs(path.join(home, "context")), []);
   const later = await run(home, turns([...steps, TEST]), on);
   assert.equal(JSON.stringify(later.slice(0, views[1].length)), JSON.stringify(views[1]));

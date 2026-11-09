@@ -95,16 +95,16 @@ class RecallResultsTests(unittest.TestCase):
         got = get_text(bid, (self.blobs / f"{bid}.txt").read_text())
         msgs += [call(1, GET, {"id": bid, "max_chars": 100000}), result(1, got)]
         second = self.send(msgs)
-        self.assertEqual(result_text(second[4]), got, "the get result goes out whole")
-        self.assertIn("\n  401744:\tmovss", result_text(second[4]))
-        self.assertNotIn("\\n", result_text(second[4]))
+        self.assertEqual(result_text(second[5]), got, "the get result goes out whole")
+        self.assertIn("\n  401744:\tmovss", result_text(second[5]))
+        self.assertNotIn("\\n", result_text(second[5]))
         self.assertEqual(self.blob_ids(), [bid], "no new blob for the get result")
 
         # The same get again (identical, over DEDUP_MIN_CHARS) gets no identical-result pointer either.
         msgs += [call(2, GET, {"id": bid, "max_chars": 100000}), result(2, got)]
         third = self.send(msgs, CONTEXT_DEDUP_RESULTS="1", CONTEXT_LEDGER="1")
-        self.assertEqual(result_text(third[6]), got)
-        self.assertFalse(result_text(third[6]).startswith(DEDUP_PREFIX))
+        self.assertEqual(result_text(third[7]), got)
+        self.assertFalse(result_text(third[7]).startswith(DEDUP_PREFIX))
         self.assertEqual(self.blob_ids(), [bid])
 
     def test_a_get_of_a_log_is_not_log_reduced(self):

@@ -11,6 +11,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from test_context_proxy import SID, Base, anth_history, anth_request  # noqa: E402
 
+from smarter_compact.adapters import wrap_note  # noqa: E402
+
 from smarter_compact.core import (  # noqa: E402
     SCRATCHPAD_LABEL, SCRATCHPAD_MAX_CHARS, recall_tool_names, scratchpad_nudge,
 )
@@ -61,7 +63,7 @@ class ScratchpadTests(Base):
         self.assertEqual(self.nudged(out), [len(msgs) - 1])
         last = out["messages"][-1]
         self.assertEqual(last["content"][:-1], msgs[-1]["content"])
-        self.assertEqual(last["content"][-1]["text"], scratchpad_nudge(SID, recall_tool_names(["Bash"])))
+        self.assertEqual(last["content"][-1]["text"], wrap_note(scratchpad_nudge(SID, recall_tool_names(["Bash"]))))
         later = reply(msgs, 1)
         again = self.on(later)
         self.assertEqual(self.nudged(again), [len(msgs) - 1])

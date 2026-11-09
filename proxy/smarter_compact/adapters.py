@@ -27,6 +27,9 @@ THINKING_TYPES = ("thinking", "redacted_thinking")
 # Anthropic prompt-cache lifetimes: cache_control ttl "1h", and the default "5m".
 LONG_TTL_SECONDS = 3600
 SHORT_TTL_SECONDS = 300
+# Proxy notes (trim note, ledger block, nudges) ride on their anchor item under this key while the route takes
+# mid-conversation system messages; core.lift_notes turns them into a system-role message and drops the key.
+NOTES_KEY = "_smarter_compact_notes"
 
 
 def _cache_markers(item):
@@ -198,7 +201,32 @@ def strip_reminders(text):
     return _REMINDER_RE.sub("", text).strip()
 
 
-class AnthropicAdapter:
+def wrap_note(text):
+    """A note shown inside a user or tool message, marked as Claude Code marks injected context; "" stays ""."""
+    return f"<system-reminder>\n{text}\n</system-reminder>" if text else text
+
+
+class _Notes:
+    """Where proxy notes go: inline and wrapped (wrap_note), unless note_role names the role of the mid-conversation
+    system messages the client already sends (set per request from mid_system_role); then on NOTES_KEY."""
+    note_role = None
+
+    def mid_system_role(self, items):
+        """Role of the first pinned item after an unpinned one: the route takes mid-conversation system messages."""
+        seen = False
+        for x in items:
+            if not self.is_pinned(x):
+                seen = True
+            elif seen:
+                return x.get("role")
+        return None
+
+    def _carried(self, item, note, lead=False):
+        notes = item.get(NOTES_KEY) or []
+        return {**item, NOTES_KEY: [note, *notes] if lead else [*notes, note]}
+
+
+class AnthropicAdapter(_Notes):
     name = "anthropic"
     items_key = "messages"
     context_keys = ("system", "tools")
@@ -447,17 +475,30 @@ class AnthropicAdapter:
     def prepend_note(self, item, note):
         # Always list form: Claude Code sends the same turn as a text block first and as a string later, and both
         # must render to the same blocks (cache_control aside) to keep the prompt-cache prefix.
+        if self.note_role:
+            return self._carried(item, note, lead=True)
         content = item.get("content")
         blocks = [{"type": "text", "text": content}] if isinstance(content, str) else list(content)
-        return {**item, "content": [{"type": "text", "text": note}, *blocks]}
+        return {**item, "content": [{"type": "text", "text": wrap_note(note)}, *blocks]}
 
     def appended_note(self, item, note):
         """item with note as its last text block (CONTEXT_SCRATCHPAD nudge); None for an assistant message."""
         if item.get("role") == "assistant":
             return None
+        if self.note_role:
+            return self._carried(item, note)
         content = item.get("content")
         blocks = [{"type": "text", "text": content}] if isinstance(content, str) else list(content or ())
-        return {**item, "content": [*blocks, {"type": "text", "text": note}]}
+        return {**item, "content": [*blocks, {"type": "text", "text": wrap_note(note)}]}
+
+    def note_message(self, notes):
+        return {"role": "system", "content": [{"type": "text", "text": t} for t in notes]}
+
+    def noted_system(self, item, notes):
+        """The client's system message with notes after its blocks: two system messages may not sit side by side."""
+        content = item.get("content")
+        blocks = [{"type": "text", "text": content}] if isinstance(content, str) else list(content or ())
+        return {**item, "content": [*blocks, *({"type": "text", "text": t} for t in notes)]}
 
     def rows(self, item, names):
         role = item.get("role", "user")
@@ -486,7 +527,7 @@ class AnthropicAdapter:
         return out
 
 
-class ChatAdapter:
+class ChatAdapter(_Notes):
     name = "chat"
     items_key = "messages"
     context_keys = ("tools", "functions")
@@ -615,19 +656,26 @@ class ChatAdapter:
         return {**item, "content": res[0]}
 
     def prepend_note(self, item, note):
+        if self.note_role:
+            return self._carried(item, note, lead=True)
         content = item.get("content")
         if isinstance(content, list):
-            return {**item, "content": [{"type": "text", "text": note}, *content]}
-        return {**item, "content": f"{note}\n\n{content or ''}"}
+            return {**item, "content": [{"type": "text", "text": wrap_note(note)}, *content]}
+        return {**item, "content": f"{wrap_note(note)}\n\n{content or ''}"}
 
     def appended_note(self, item, note):
         """item with note after its content (CONTEXT_SCRATCHPAD nudge); None for an assistant message."""
         if item.get("role") not in ("user", "tool"):
             return None
+        if self.note_role:
+            return self._carried(item, note)
         content = item.get("content")
         if isinstance(content, list):
-            return {**item, "content": [*content, {"type": "text", "text": note}]}
-        return {**item, "content": f"{content or ''}\n\n{note}"}
+            return {**item, "content": [*content, {"type": "text", "text": wrap_note(note)}]}
+        return {**item, "content": f"{content or ''}\n\n{wrap_note(note)}"}
+
+    def note_message(self, notes):
+        return {"role": self.note_role, "content": "\n\n".join(notes)}
 
     def rows(self, item, names):
         role = item.get("role")
@@ -648,7 +696,7 @@ class ChatAdapter:
         return out
 
 
-class ResponsesAdapter:
+class ResponsesAdapter(_Notes):
     name = "responses"
     items_key = "input"
     context_keys = ("instructions", "tools")
@@ -788,21 +836,30 @@ class ResponsesAdapter:
         return {**item, "output": res[0]}
 
     def prepend_note(self, item, note):
+        if self.note_role:
+            return self._carried(item, note, lead=True)
         content = item.get("content")
         if isinstance(content, list):
-            return {**item, "content": [{"type": "input_text", "text": note}, *content]}
-        return {**item, "content": f"{note}\n\n{content or ''}"}
+            return {**item, "content": [{"type": "input_text", "text": wrap_note(note)}, *content]}
+        return {**item, "content": f"{wrap_note(note)}\n\n{content or ''}"}
 
     def appended_note(self, item, note):
         """item with note after its content or string output (CONTEXT_SCRATCHPAD nudge); None for other items."""
-        if item.get("type") in _RESULT_TYPES and isinstance(item.get("output"), str):
-            return {**item, "output": f"{item['output']}\n\n{note}"}
-        if not self.is_turn_start(item):
+        result = item.get("type") in _RESULT_TYPES and isinstance(item.get("output"), str)
+        if not (result or self.is_turn_start(item)):
             return None
+        if self.note_role:
+            return self._carried(item, note)
+        if result:
+            return {**item, "output": f"{item['output']}\n\n{wrap_note(note)}"}
         content = item.get("content")
         if isinstance(content, list):
-            return {**item, "content": [*content, {"type": "input_text", "text": note}]}
-        return {**item, "content": f"{content or ''}\n\n{note}"}
+            return {**item, "content": [*content, {"type": "input_text", "text": wrap_note(note)}]}
+        return {**item, "content": f"{content or ''}\n\n{wrap_note(note)}"}
+
+    def note_message(self, notes):
+        return {"type": "message", "role": self.note_role,
+                "content": [{"type": "input_text", "text": t} for t in notes]}
 
     def rows(self, item, names):
         t = item.get("type", "message")

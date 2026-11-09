@@ -12,6 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from smarter_compact import Settings, process_request  # noqa: E402
+from smarter_compact.adapters import wrap_note  # noqa: E402
 from smarter_compact.core import reasoning_text  # noqa: E402
 from smarter_compact.tokens import request_chars, signed_chars  # noqa: E402
 
@@ -83,7 +84,8 @@ class StripOldReasoningTests(unittest.TestCase):
         view = self.trim(msgs)
         # Every message stays; the note rides on the task.
         self.assertEqual([m["role"] for m in view], [m["role"] for m in msgs])
-        self.assertEqual(view[0]["content"], [{"type": "text", "text": reasoning_text(SID)}, *msgs[0]["content"]])
+        self.assertEqual(view[0]["content"],
+                         [{"type": "text", "text": wrap_note(reasoning_text(SID))}, *msgs[0]["content"]])
         for j in range(1, 9, 2):
             self.assertEqual(view[j]["content"], msgs[j]["content"][1:])
             self.assertEqual(view[j + 1], msgs[j + 1])

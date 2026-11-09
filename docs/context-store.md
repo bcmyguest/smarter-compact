@@ -50,7 +50,7 @@ A trim keeps, in their original order:
 - pinned messages before the cut (Anthropic `system` messages, which Claude Code uses for its environment, model id and deferred-tool list; Chat and Responses `system` / `developer` messages; OpenCode 2 `system` messages). Pinned messages are not written to the store;
 - the **first real user turn**, verbatim: Anthropic, the first `user` message that is not only `tool_result` blocks; Chat, the first `user` message; Responses, the first user `message` item; OpenCode 2, the first `user` message that is not only `tool-result` parts. It usually states the task, so every trim keeps it ahead of the pointer;
 - the **reply before the cut**: the agent message just before the cut turn, when it is a final reply (an assistant message with no tool calls; Responses, a `message` item), so the cut turn reads as an answer to it;
-- the cut turn, with the pointer block prepended;
+- the cut turn, carrying the pointer note ([note placement](#note-placement));
 - everything after the cut turn except the **in-turn gap**.
 
 A trim runs when the `.force` flag exists or the request's estimated prompt tokens reach the threshold. The estimate is calibrated from the provider's reported usage, with `CONTEXT_CHARS_PER_TOKEN` (default 2.5) as the fallback ratio ([context-proxy.md](context-proxy.md#token-estimate)); it never moves an existing cut.
@@ -301,7 +301,7 @@ It is a constant (`STANDING_INSTRUCTION` in `proxy/smarter_compact/core.py` and 
 | Responses | Appended to `instructions` after a blank line (or set as `instructions` when absent). `instructions` precede every input item and stay fixed for a session, so a trim of `input` never moves the instruction |
 | OpenCode 2 | One `{type: "text"}` entry pushed onto `event.system`, after the session banner |
 
-Pointer block placed at the start of the cut turn after a trim:
+Pointer note added at the cut turn after a trim ([note placement](#note-placement)):
 
 ```
 [smarter-compact: continuing session <sid>; <n> earlier messages are NOT in your context. Older turns were moved out to save space, so a gap in what you see (missing batches, lines, keys) is in them. Continue the task from where you were. The tools smart_compact_search and smart_compact_sql are available to you in this request. You MUST call smart_compact_search(session_id="<sid>", query=... or pattern=...) before relying on anything in them, and never claim "not found", "never received" or "no search tool" without calling it. Dropped user turns may hold instructions or corrections that still apply: search them (smart_compact_search with role="user") before changing course. To recover a file you read earlier, search for the text you need instead of reading it again, and re-read only the lines you still lack (offset/limit). Every message of this session is stored and queryable with smart_compact_search and smart_compact_sql(session_id="<sid>", sql=...).]
@@ -309,7 +309,20 @@ Pointer block placed at the start of the cut turn after a trim:
 
 It names no file path, so the proxy (in its container) and the OpenCode 2 plugin (on the host) produce the same bytes.
 
-The block is computed once per cut and stored in the trim state, so later requests repeat it byte for byte. The OpenCode 2 plugin puts the block in its own text part, followed by a blank line; when OpenCode 2 compacts a session, the same block (without the blank line) becomes the compaction summary.
+The block is computed once per cut and stored in the trim state, so later requests repeat it byte for byte. The OpenCode 2 plugin puts the wrapped block in its own text part, followed by a blank line; when OpenCode 2 compacts a session, the same block (unwrapped, without the blank line) becomes the compaction summary.
+
+### Note placement
+
+The trim note (pointer, clearing-only, reasoning-strip, with the scratchpad block ahead of it), the scratchpad nudge and the [ledger](clearing.md#ledger-context_ledger) block with its nudge lines are notes from the proxy, not the user. Where a note goes depends on what the client already sends:
+
+| Request | Where the note goes |
+| --- | --- |
+| Holds a client system message after its first unpinned item (Claude Code: `<total_tokens>`, `# Environment`; Codex: `developer` items) | System-role text, unwrapped, after the run of user / tool items it belongs to (the cut turn for the trim note, the tool results for the ledger block, the newest item for the nudge). Anthropic adds it as text blocks at the end of the client's system message that already follows there, since two system messages may not be adjacent, else inserts `{"role": "system", "content": [text blocks]}`. Chat inserts `{"role": <the client's role>, "content": "<notes joined by a blank line>"}`; Responses inserts `{"type": "message", "role": <the client's role>, "content": [input_text parts]}` |
+| No such message (and always in the OpenCode 2 / Pi plugin) | Inline, as before, wrapped the way Claude Code marks injected context: `<system-reminder>\n<note>\n</system-reminder>`. Anthropic: its own text block (first for the trim note, last for the others); Chat and Responses string content or output: after a blank line; plugin: its own text part, or after the tool result's text and a blank line |
+
+The test is the client's own mid-conversation system message: it shows the route accepts one (Claude 4.8+ and the 5 family take the role; older Claude models reject it, and LiteLLM's OpenAI-shaped path places or converts it itself). OpenCode 2 drops system messages on some provider paths, so the plugin never uses the role.
+
+A note is recorded state (trim state `note`, `nudge`, `ledger`), not client content: the client never stores it, the proxy renders it from that state on every request, so a note re-renders byte for byte until the next trim and is never written to `messages` rows. A note belongs to its anchor item: when a trim drops the anchor, the note goes with it, while client system messages stay pinned. A trim keeps only the newest ledger block and re-arms the nudge, as before. Tool-output placeholders (cleared, compressed, repeated-result and reuse pointers, input placeholders) replace the tool's own content and are never wrapped.
 
 Compressed tool result:
 

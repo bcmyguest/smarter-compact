@@ -13,7 +13,7 @@ The scratchpad is a small notes file the agent keeps for its own task state. Eve
 
 ## Nudge
 
-When the estimated prompt passes `CONTEXT_SCRATCHPAD_NUDGE_AT` (default `0.75`) of the trim threshold, the proxy appends one `<compact-scratchpad-nudge>` block to the newest user or tool-result item. The text is fixed for a session and tool name and stays on that item, byte for byte, until the next trim, so the prompt cache misses once. It tells the agent to save its notes and keep working (the nudge is automatic, not a stopping point, and the user is not waiting for an update), and to create a pad if it has none, listing what to note for itself:
+When the estimated prompt passes `CONTEXT_SCRATCHPAD_NUDGE_AT` (default `0.75`) of the trim threshold, the proxy attaches one `<compact-scratchpad-nudge>` block to the newest user or tool-result item: system-role text after it when the client already sends mid-conversation system messages, else inline in `<system-reminder>` tags ([note placement](context-store.md#note-placement)). The text is fixed for a session and tool name and stays on that item, byte for byte, until the next trim, so the prompt cache misses once. It tells the agent to save its notes and keep working (the nudge is automatic, not a stopping point, and the user is not waiting for an update), and to create a pad if it has none, listing what to note for itself:
 
 - goal and how it is checked
 - what works, what fails
@@ -39,7 +39,7 @@ The pad is capped at 2,500 characters. An edit whose result would exceed the cap
 
 ## At a trim
 
-The trim note opens with the pad, ahead of the recall instructions:
+The trim note opens with the pad, ahead of the recall instructions (shown inline, the whole note sits in one `<system-reminder>` wrapper; [note placement](context-store.md#note-placement)):
 
 ```text
 Your scratchpad, kept across trims (possibly stale; update it if the goal, plan or a key fact changed):

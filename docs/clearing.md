@@ -78,7 +78,7 @@ For the newest tool results only (after the request's last assistant message), b
 - a stale read is allowed with no nudge: after an edit, a re-read is the expected action (§3.4 reuses only unchanged files);
 - a test rerun with no edit since gets a nudge line.
 
-The block is appended to the newest tool result, once per batch and only when its listing changed since the last recorded block (or it carries nudges), at most 1,500 characters (oldest paths dropped first):
+The block goes with the newest tool result ([note placement](context-store.md#note-placement)), once per batch and only when its listing changed since the last recorded block (or it carries nudges), at most 1,500 characters (oldest paths dropped first):
 
 ```text
 [smarter-compact ledger, from your tool calls: current = unchanged since you read it, stale = may have changed since]
@@ -90,7 +90,7 @@ Repeats in this batch:
 - `pytest -q tests` already ran with no file change since; rerun tests only for new evidence.
 ```
 
-The block is recorded in the trim state (`ledger`: the item's index and fingerprint, the text). Older blocks are already-sent bytes, so they stay until the next trim, which keeps only the newest recorded block (thread keys `ledger_from` / `ledger_from_fp`). Placement: Anthropic adds a text block after the tool results of the user message, so masking a result leaves its block. Chat, Responses (string output) and the OpenCode 2 / Pi plugin append it after the result text, so clearing that result clears its block too. Each request that adds reuse pointers writes a `reuse` event.
+The block is recorded in the trim state (`ledger`: the item's index and fingerprint, the text). Older blocks are already-sent bytes, so they stay until the next trim, which keeps only the newest recorded block (thread keys `ledger_from` / `ledger_from_fp`). Placement ([note placement](context-store.md#note-placement)): when the client already sends mid-conversation system messages (Claude Code, Codex), the block is system-role text right after the tool results, added to the client's system message there on Anthropic, so masking a result leaves its block. Otherwise it is inline, wrapped as `<system-reminder>\n…\n</system-reminder>`: Anthropic adds it as a text block after the tool results of the user message; Chat, Responses (string output) and the OpenCode 2 / Pi plugin append it after the result text, so clearing that result clears its block too. Each request that adds reuse pointers writes a `reuse` event.
 
 Measured offline on `tb21-h55-inputs` and `tb21-h55-reuse` (48 trials, Claude Code with Haiku 5.5, about 32 requests each), replaying each main transcript through the proxy (trim at 95,000, target 40,000, clearing 10): 607 blocks, 12.6 per trial, 316 characters on average (4,000 characters per trial), 48 of 48 trials. Billed input rose 0.19% and trims rose by 0.02 per trial. No reuse pointer and no nudge fired. Of 115 file reads, 47 re-read a path already read, 19 were covered by an earlier read, and 15 of those were still current. Every one of the 15 followed a whole-file read that head/tail compression had already shortened, which shows only a part of the file, so none counted as covered.
 

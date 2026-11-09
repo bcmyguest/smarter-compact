@@ -35,7 +35,7 @@ def results(view):
 
 def ledger_texts(view):
     return [b["text"] for m in view if isinstance(m.get("content"), list) for b in m["content"]
-            if b.get("type") == "text" and b["text"].startswith(ledger.LEDGER_HEAD)]
+            if b.get("type") == "text" and b["text"].startswith("<system-reminder>\n" + ledger.LEDGER_HEAD)]
 
 
 CAT = ("Bash", {"command": "cat a.py"}, FILE)
@@ -236,18 +236,18 @@ class OtherFormatTests(LedgerBase):
     def test_chat(self):
         outs = [self.run_req({"messages": self.chat([CAT, READ_RANGE][:n]), **headers()}, "acompletion")["messages"]
                 for n in (1, 2)]
-        self.assertTrue(outs[0][-1]["content"].startswith(FILE + "\n\n" + ledger.LEDGER_HEAD))
+        self.assertTrue(outs[0][-1]["content"].startswith(FILE + "\n\n<system-reminder>\n" + ledger.LEDGER_HEAD))
         self.assertEqual(json.dumps(outs[1][:len(outs[0])]), json.dumps(outs[0]))
-        self.assertTrue(outs[1][-1]["content"].startswith(NUMBERED + "\n\n" + ledger.LEDGER_HEAD))
+        self.assertTrue(outs[1][-1]["content"].startswith(NUMBERED + "\n\n<system-reminder>\n" + ledger.LEDGER_HEAD))
         off = self.run_req({"messages": self.chat([CAT, READ_RANGE]), **headers()}, "acompletion", ledger=False)
         self.assertEqual(off["messages"], self.chat([CAT, READ_RANGE]))
 
     def test_responses(self):
         outs = [self.run_req({"input": self.responses([CAT, READ_RANGE][:n]), **headers()}, "aresponses")["input"]
                 for n in (1, 2)]
-        self.assertTrue(outs[0][-1]["output"].startswith(FILE + "\n\n" + ledger.LEDGER_HEAD))
+        self.assertTrue(outs[0][-1]["output"].startswith(FILE + "\n\n<system-reminder>\n" + ledger.LEDGER_HEAD))
         self.assertEqual(json.dumps(outs[1][:len(outs[0])]), json.dumps(outs[0]))
-        self.assertTrue(outs[1][-1]["output"].startswith(NUMBERED + "\n\n" + ledger.LEDGER_HEAD))
+        self.assertTrue(outs[1][-1]["output"].startswith(NUMBERED + "\n\n<system-reminder>\n" + ledger.LEDGER_HEAD))
         off = self.run_req({"input": self.responses([CAT, READ_RANGE]), **headers()}, "aresponses", ledger=False)
         self.assertEqual(off["input"], self.responses([CAT, READ_RANGE]))
 

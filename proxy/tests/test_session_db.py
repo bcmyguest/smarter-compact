@@ -259,7 +259,8 @@ class FailOpenTests(DbBase):
         err = io.StringIO()
         with redirect_stderr(err):
             out = self.run_req(history(3), trim_at_tokens=1)
-        self.assertTrue(out["messages"][2]["content"][0]["text"].startswith("[smarter-compact: continuing session"))
+        self.assertTrue(out["messages"][2]["content"][0]["text"].startswith(
+            "<system-reminder>\n[smarter-compact: continuing session"))
         self.assertEqual(err.getvalue().count("smarter-compact: fail-open"), 1)
         self.assertNotIn("question", err.getvalue())
 

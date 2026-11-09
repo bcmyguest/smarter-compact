@@ -21,7 +21,7 @@ from . import ledger as ledger_mod
 from . import sessiondb
 from . import status as status_mod
 from . import ttl as ttl_mod
-from .adapters import SHORT_TTL_SECONDS, AnthropicAdapter, UnsupportedCallType, adapter_for
+from .adapters import NOTES_KEY, SHORT_TTL_SECONDS, AnthropicAdapter, UnsupportedCallType, adapter_for
 from .compress import (
     DEDUP_MIN_CHARS,
     DEDUP_PREFIX,
@@ -367,6 +367,29 @@ def _nudged(adapter, items, at, text):
         return items
     item = adapter.appended_note(items[at], text) if hasattr(adapter, "appended_note") else None
     return items if item is None else [*items[:at], item, *items[at + 1:]]
+
+
+def lift_notes(adapter, view):
+    """view with the notes items carry (NOTES_KEY) moved into a system-role message (adapter.note_message): after the
+    run of user/tool items holding them, ahead of the next assistant item. A pinned (client) message there takes them
+    instead on Anthropic (noted_system), where two system messages may not be adjacent. view itself when none."""
+    if not any(NOTES_KEY in x for x in view):
+        return view
+    out, pending = [], []
+    for x in view:
+        if pending and (adapter.is_pinned(x) or adapter.is_assistant(x)):
+            if adapter.is_pinned(x) and hasattr(adapter, "noted_system"):
+                x = adapter.noted_system(x, pending)
+            else:
+                out.append(adapter.note_message(pending))
+            pending = []
+        if NOTES_KEY in x:
+            pending += [t for t in x[NOTES_KEY] if t]
+            x = {k: v for k, v in x.items() if k != NOTES_KEY}
+        out.append(x)
+    if pending:
+        out.append(adapter.note_message(pending))
+    return out
 
 
 def add_standing_instruction(adapter, data, reuse=True):
@@ -837,7 +860,10 @@ def strip_reasoning(adapter, items, keep, bound, cut, note, prose=False, shown=N
         if j == cut:
             x = adapter.prepend_note(x, note)
         elif region and mergeable and adapter.same_role(out[-1], x):
+            notes = (out[-1].get(NOTES_KEY) or []) + (x.get(NOTES_KEY) or [])
             out[-1] = adapter.merged(out[-1], x)
+            if notes:
+                out[-1] = {**out[-1], NOTES_KEY: notes}
             continue
         out.append(x)
         mergeable = region
@@ -1179,6 +1205,8 @@ def _rewrite(data, call_type, settings, route, call_id):
 
 
 def _rewrite_session(data, adapter, original, items, sid, store, settings, call_id, recall=()):
+    # Notes become system-role messages only on a route the client already sends mid-conversation ones to.
+    adapter.note_role = adapter.mid_system_role(original)
     roots = [x for x in items if not adapter.is_pinned(x)]
     if not roots:
         if settings.standing_instruction:
@@ -1524,6 +1552,7 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
     # Measured like the estimate, before the standing instruction, so calibration compares like with like.
     _await_usage(data.get("litellm_call_id") or call_id, sid, root,
                  request_chars(*context) + _size(settings.strip_old_reasoning, view), request)
+    view = lift_notes(adapter, view)
     if not (len(view) == len(original) and all(a is b for a, b in zip(view, original))):
         data[adapter.items_key] = view
     if settings.server_clear and isinstance(adapter, AnthropicAdapter) and _is_claude(data.get("model")):

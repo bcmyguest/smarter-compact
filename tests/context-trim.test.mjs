@@ -25,6 +25,7 @@ import {
   trimContext,
   trimSettings,
   trimToFor,
+  wrapNote,
 } from "../plugin/lib/context-trim.mjs";
 import { LEDGER_HEAD } from "../plugin/lib/context-ledger.mjs";
 import { callContextStoreTool } from "../plugin/lib/mcp/context-store.mjs";
@@ -58,6 +59,12 @@ test("the pointer states what was removed, denies a summary, and names both tool
   assert.match(note, /To recover a file you read earlier, search for the text you need instead of reading it again/);
   assert.match(note, /re-read only the lines you still lack \(offset\/limit\)/);
   assert.match(note, /smart_compact_sql\(session_id="sess-1", sql=\.\.\.\)\.\]$/);
+});
+
+// Same form as wrap_note in proxy adapters.py (proxy/tests/test_note_placement.py checks the bytes against this).
+test("an inline note is wrapped the way Claude Code marks injected context", () => {
+  assert.equal(wrapNote("[smarter-compact: x]"), "<system-reminder>\n[smarter-compact: x]\n</system-reminder>");
+  assert.equal(wrapNote(""), "");
 });
 
 test("the standing instruction is the same string on every call", () => {
@@ -304,7 +311,7 @@ test("clearing drops turns only when it is not enough", withHome(async (home) =>
   const messages = clearTurns(`\n${"x".repeat(300)}`);
   const view = await clearRun(home, messages, requestChars(messages));
   assert.ok(view.length < messages.length);
-  const note = view.find((m) => m.content[0]?.text?.startsWith("[smarter-compact:")).content[0].text;
+  const note = view.find((m) => m.content[0]?.text?.startsWith("<system-reminder>\n[smarter-compact:")).content[0].text;
   assert.match(note, /earlier messages are NOT in your context/);
   assert.match(note, /Older tool outputs/);
 }));
@@ -334,7 +341,7 @@ const LONG = `\n${"x".repeat(300)}`;
 const LEDGER = `${LEDGER_HEAD}\nModified (latest last): /src/f0.py, /src/f2.py\nRead (latest last):\n- /src/f4.py: whole current`;
 /** A tool message with the ledger block appended to its last result's text, as the plugin renders it. */
 const ledgered = (m, text = LEDGER) => ({ ...m, content: m.content.map((p, i) => (i === m.content.length - 1
-  ? { ...p, result: { ...p.result, value: `${p.result.value}\n\n${text}` } } : p)) });
+  ? { ...p, result: { ...p.result, value: `${p.result.value}\n\n${wrapNote(text)}` } } : p)) });
 
 /** Two answered turns, then a running turn: "now this", the steps as text + tool-call / tool-result, and a latest run. */
 function inFlightTurn(pad = "", steps = STEPS) {
@@ -444,7 +451,7 @@ test("the progress note lists dropped then region steps in message order", withH
   assert.match(note, /- `pytest -q tests\/` -> exit 1/);
   assert.ok(!note.includes("make build"));
   const strip = noteOf(await expRun(home, messages, { ...STRIP, ...progress }, "strip"));
-  assert.match(strip, /- `pytest -q tests\/` -> exit 1\n- `make build` -> ok\n*$/);
+  assert.match(strip, /- `pytest -q tests\/` -> exit 1\n- `make build` -> ok\n<\/system-reminder>\n*$/);
   // The default (masking) adds the masked steps too; the note goes before the recovery line.
   const masked = noteOf(await expRun(home, inFlightTurn(LONG), {}, "mask"));
   assert.match(masked, /- `make build` -> ok\nOlder tool outputs/);
@@ -460,7 +467,7 @@ test("the progress note reads OpenCode and Pi tool names, trimming command white
   ];
   const note = noteOf(await expRun(home, inFlightTurn("", steps), { ...STRIP, CONTEXT_PROGRESS_NOTE: "1" }));
   assert.match(note, /Files written or edited \(latest last\): \/src\/a\.ts, \/src\/b\.ts\n/);
-  assert.match(note, /- `npm test -- --runInBand` -> failed\n- `make build` -> ok\n*$/);
+  assert.match(note, /- `npm test -- --runInBand` -> failed\n- `make build` -> ok\n<\/system-reminder>\n*$/);
 }));
 
 test("prose strip keeps the pair of a message before a system message; masking does not", withHome(async (home) => {
@@ -668,7 +675,7 @@ test("a single-turn loop strips reasoning from all but the latest message, dropp
   const messages = reasonLoop(5);
   const view = await reasonRun(home, messages, fullChars(messages) - 1);
   assert.deepEqual(view.map((m) => m.role), messages.map((m) => m.role));
-  assert.ok(view[0].content[0].text.startsWith(reasoningText(SID)));
+  assert.ok(view[0].content[0].text.startsWith(wrapNote(reasoningText(SID))));
   assert.deepEqual(view[0].content.slice(1), messages[0].content);
   for (let j = 1; j < 9; j += 2) {
     assert.deepEqual(view[j].content, messages[j].content.filter((p) => !isReasoning(p)));
@@ -778,7 +785,7 @@ test("a new result identical to one still shown becomes a pointer; only the newe
   const view = await dupRun(home, messages);
   // p0 keeps the ledger block it got as the newest result; p1 still becomes the dedup pointer, as in the proxy.
   assert.deepEqual(view.slice(0, 4), [...messages.slice(0, 2), ledgered(messages[2], LEDGER_LOG), messages[3]]);
-  assert.deepEqual(resultsOf(view), { p0: `${DUP}\n\n${LEDGER_LOG}`, p1: pointer });
+  assert.deepEqual(resultsOf(view), { p0: `${DUP}\n\n${wrapNote(LEDGER_LOG)}`, p1: pointer });
   // Every later request renders the same bytes.
   const later = [...messages, { role: "assistant", content: [{ type: "text", text: "done" }] }, { role: "user", content: [{ type: "text", text: "next" }] }];
   assert.equal(JSON.stringify((await dupRun(home, later)).slice(0, view.length)), JSON.stringify(view));
@@ -826,7 +833,7 @@ test("the pointer stays when the earlier copy is later cleared or dropped", with
   const results = resultsOf(cleared);
   assert.ok(results.p0.startsWith(MASK_PREFIX));
   // p1 keeps the ledger block it carried as the newest result of the first request.
-  assert.equal(results.p1, `${dedupPlaceholder(DUP)}\n\n${LEDGER_LOG}`);
+  assert.equal(results.p1, `${dedupPlaceholder(DUP)}\n\n${wrapNote(LEDGER_LOG)}`);
   assert.equal(JSON.stringify(await dupRun(home, messages, env)), JSON.stringify(cleared));
   // A trim that drops the earlier copy's turn (a fresh session, so no earlier cut) still renders the same pointer.
   const other = fs.mkdtempSync(path.join(os.tmpdir(), "sc-dedup-"));
@@ -836,7 +843,7 @@ test("the pointer stays when the earlier copy is later cleared or dropped", with
     dropped = await dupRun(other, messages, { ...env, CONTEXT_TRIM_AT_TOKENS: "1000", CONTEXT_TRIM_TO_TOKENS: "900" });
   } finally { fs.rmSync(other, { recursive: true, force: true }); }
   assert.ok(!("p0" in resultsOf(dropped)));
-  assert.equal(resultsOf(dropped).p1, `${dedupPlaceholder(DUP)}\n\n${LEDGER_LOG}`);
+  assert.equal(resultsOf(dropped).p1, `${dedupPlaceholder(DUP)}\n\n${wrapNote(LEDGER_LOG)}`);
 }));
 
 test("an earlier copy not shown in full gets no pointer", withHome(async (home) => {
@@ -845,5 +852,5 @@ test("an earlier copy not shown in full gets no pointer", withHome(async (home) 
   const results = resultsOf(view);
   assert.ok(!("p0" in results) || results.p0.startsWith(MASK_PREFIX));
   // No pointer: the ledger block names the repeat in a nudge line instead.
-  assert.equal(results.p1, `${DUP}\n\n${LEDGER_LOG}${NUDGE_LOG}`);
+  assert.equal(results.p1, `${DUP}\n\n${wrapNote(`${LEDGER_LOG}${NUDGE_LOG}`)}`);
 }));

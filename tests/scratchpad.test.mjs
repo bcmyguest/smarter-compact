@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
-  SCRATCHPAD_LABEL, SCRATCHPAD_MAX_CHARS, recallToolNames, scratchpadNudge, trimContext, trimSettings,
+  SCRATCHPAD_LABEL, SCRATCHPAD_MAX_CHARS, recallToolNames, scratchpadNudge, trimContext, trimSettings, wrapNote,
 } from "../plugin/lib/context-trim.mjs";
 import {
   CONTEXT_STORE_MCP_TOOLS, callContextStoreTool, contextStoreTools,
@@ -82,7 +82,7 @@ test("the nudge goes on the newest item once and re-renders identically", withHo
   assert.deepEqual(nudgedAt(view), [msgs.length - 1]);
   const last = view.at(-1);
   assert.deepEqual(last.content.slice(0, -1), msgs.at(-1).content);
-  assert.equal(last.content.at(-1).text, scratchpadNudge(SID, recallToolNames([])));
+  assert.equal(last.content.at(-1).text, wrapNote(scratchpadNudge(SID, recallToolNames([]))));
   const later = reply(msgs, 1);
   const again = await on(home, later);
   assert.deepEqual(nudgedAt(again), [msgs.length - 1]);
@@ -95,7 +95,7 @@ test("a tool message carries the nudge on its last text result", withHome(async 
   const msgs = reply(ask(history(3), 0), 1);
   const view = await on(home, msgs);
   assert.deepEqual(nudgedAt(view), [msgs.length - 1]);
-  assert.match(view.at(-1).content[0].result.value, /^res 1\n\n<compact-scratchpad-nudge>/);
+  assert.match(view.at(-1).content[0].result.value, /^res 1\n\n<system-reminder>\n<compact-scratchpad-nudge>/);
 }));
 
 test("no nudge below the threshold or on an assistant item", withHome(async (home) => {

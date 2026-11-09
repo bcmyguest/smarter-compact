@@ -13,6 +13,7 @@ from test_context_proxy import SID, Base, anth_request, headers  # noqa: E402
 
 from smarter_compact import Settings, ttl  # noqa: E402
 from smarter_compact.compress import DEDUP_MIN_CHARS, DEDUP_PREFIX, MASK_PREFIX, blob_id, dedup_placeholder  # noqa: E402
+from smarter_compact.adapters import wrap_note  # noqa: E402
 from smarter_compact.ledger import LEDGER_HEAD  # noqa: E402
 
 OUT = "line of output\n" * 40  # 600 chars
@@ -36,7 +37,7 @@ def anth_turns(outs):
 
 def ledgered(msg, text=LEDGER):
     """msg with the ledger block appended as a text block (Anthropic)."""
-    return {**msg, "content": [*msg["content"], {"type": "text", "text": text}]}
+    return {**msg, "content": [*msg["content"], {"type": "text", "text": wrap_note(text)}]}
 
 
 def anth_results(view):
@@ -190,7 +191,7 @@ class OtherFormatTests(DedupBase):
         msgs = chat_turns([OUT, OUT])
         out = self.run_req({"messages": copy.deepcopy(msgs), **headers()}, "acompletion")["messages"]
         self.assertEqual(out[:-1], msgs[:-1])
-        self.assertEqual(out[-1], {**msgs[-1], "content": f"{POINTER}\n\n{LEDGER_X}"})
+        self.assertEqual(out[-1], {**msgs[-1], "content": f"{POINTER}\n\n{wrap_note(LEDGER_X)}"})
         again = self.run_req({"messages": copy.deepcopy(msgs) + [{"role": "user", "content": "go"}], **headers()},
                              "acompletion")["messages"]
         self.assertEqual(again[:len(out)], out)
@@ -202,7 +203,7 @@ class OtherFormatTests(DedupBase):
         items = responses_turns([OUT, OUT])
         out = self.run_req({"input": copy.deepcopy(items), **headers()}, "aresponses")["input"]
         self.assertEqual(out[:-1], items[:-1])
-        self.assertEqual(out[-1], {**items[-1], "output": f"{POINTER}\n\n{LEDGER_X}"})
+        self.assertEqual(out[-1], {**items[-1], "output": f"{POINTER}\n\n{wrap_note(LEDGER_X)}"})
         again = self.run_req({"input": copy.deepcopy(items) + [
             {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "go"}]}], **headers()},
             "aresponses")["input"]

@@ -484,6 +484,13 @@ function compactJson(value) {
   return JSON.stringify(value ?? null);
 }
 
+/**
+ * A note shown inside a user or tool message, marked as Claude Code marks injected context; "" stays "".
+ * Same as wrap_note in proxy adapters.py. OpenCode 2 drops mid-conversation system messages on some provider
+ * paths, so the plugin always shows notes inline this way.
+ */
+export const wrapNote = (text) => (text ? `<system-reminder>\n${text}\n</system-reminder>` : text);
+
 export function stripReminders(text) {
   return text.replace(REMINDER_RE, "").trim();
 }
@@ -555,7 +562,7 @@ export function compressMessage(message, overTokens, onBlob, skip = new Set()) {
  * proxy's Chat adapter uses the same "\n\n" for string content.
  */
 export function prependNote(message, note) {
-  return { ...message, content: [{ type: "text", text: `${note}\n\n` }, ...parts(message)] };
+  return { ...message, content: [{ type: "text", text: `${wrapNote(note)}\n\n` }, ...parts(message)] };
 }
 
 function logRows(message, names) {
@@ -1357,14 +1364,14 @@ export function scratchpadBlock(text) {
 export function appendedNote(message, note) {
   if (message?.role === "user") {
     const content = typeof message.content === "string" ? [{ type: "text", text: message.content }] : parts(message);
-    return { ...message, content: [...content, { type: "text", text: note }] };
+    return { ...message, content: [...content, { type: "text", text: wrapNote(note) }] };
   }
   if (message?.role !== "tool") return null;
   const content = parts(message);
   const at = content.findLastIndex((p) => p?.type === "tool-result" && p.result?.type === "text" && typeof p.result.value === "string");
   if (at < 0) return null;
   const next = [...content];
-  next[at] = { ...content[at], result: { ...content[at].result, value: `${content[at].result.value}\n\n${note}` } };
+  next[at] = { ...content[at], result: { ...content[at].result, value: `${content[at].result.value}\n\n${wrapNote(note)}` } };
   return { ...message, content: next };
 }
 

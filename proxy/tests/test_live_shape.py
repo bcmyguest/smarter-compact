@@ -99,22 +99,25 @@ class HookLiveShapeTests(unittest.TestCase):
     def test_ledger_on_the_tool_results_before_the_trailing_system_message(self):
         first = self.call(1)
         sent = messages(1)
-        # The block goes on the new tool_result message, after its blocks; the system message stays as is.
-        self.assertEqual(first[3]["content"][:2], sent[3]["content"])
-        added = texts(first[3])[1:]
+        # The tool_result message stays as is; the block goes after the trailing system message's blocks, as two
+        # system messages may not be adjacent.
+        self.assertEqual(len(first), len(sent))
+        self.assertEqual(json.dumps(first[:4]), json.dumps(sent[:4]))
+        self.assertEqual(first[4]["content"][0], sent[4]["content"][0])
+        added = texts(first[4])[1:]
         self.assertEqual(len(added), 1)
         self.assertTrue(added[0].startswith(ledger.LEDGER_HEAD))
         self.assertIn("/app/a.py", added[0])
-        self.assertEqual(first[4], sent[4])
-        self.assertEqual(json.dumps(first[:3]), json.dumps(sent[:3]))
 
         second = self.call(2)
-        # The recorded block re-renders byte-identically; the new result gets its own.
-        self.assertEqual(json.dumps(second[3]), json.dumps(first[3]))
-        new = texts(second[6])
+        # The recorded block re-renders byte-identically (cache_control moved on); the new result gets its own.
+        self.assertEqual(json.dumps(second[:4]), json.dumps(first[:4]))
+        self.assertEqual(texts(second[4]), texts(first[4]))
+        self.assertEqual(second[6], messages(2)[6])
+        new = texts(second[7])[1:]
+        self.assertEqual(len(new), 1)
         self.assertTrue(new[0].startswith(ledger.LEDGER_HEAD))
         self.assertIn("/app/b.py", new[0])
-        self.assertEqual(second[7], messages(2)[7])
 
         state = json.loads((Path(self.tmp.name) / "context" / "sessions" / f"{SID}.trim.json").read_text())
         self.assertEqual([d["at"] for d in state["ledger"]], [3, 6])

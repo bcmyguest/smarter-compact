@@ -190,7 +190,8 @@ class CalibrationFlowTests(Base):
         # Between the fallback estimate and the calibrated one: only calibration trims.
         out = self.run_req(msgs, trim_at_tokens=fallback + 1)["messages"]
         self.assertLess(len(out), len(msgs))
-        self.assertTrue(out[-2]["content"][0]["text"].startswith("[smarter-compact: continuing session"))
+        self.assertTrue(out[-2]["content"][0]["text"].startswith(
+            "<system-reminder>\n[smarter-compact: continuing session"))
 
     def test_calibration_never_moves_an_existing_cut(self):
         msgs = history(4)

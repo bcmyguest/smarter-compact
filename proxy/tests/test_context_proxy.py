@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from smarter_compact import Settings, process_request  # noqa: E402
-from smarter_compact.adapters import _litellm_thinking  # noqa: E402
+from smarter_compact.adapters import _litellm_thinking, wrap_note  # noqa: E402
 from smarter_compact.compress import blob_id, compress_text  # noqa: E402
 from smarter_compact.core import (  # noqa: E402
     STANDING_INSTRUCTION, pointer_text, reasoning_text, recall_tool_names, request_tool_names,
@@ -95,7 +95,7 @@ class Base(unittest.TestCase):
         return Settings(**base)
 
     def ptr(self, dropped, sid=SID):
-        return pointer_text(sid, dropped)
+        return wrap_note(pointer_text(sid, dropped))
 
     def run_req(self, data, call_type="anthropic_messages", **kw):
         return process_request(data, call_type, self.settings(**kw))
@@ -180,7 +180,7 @@ class AnthropicTrimTests(Base):
         # CONTEXT_STRIP_OLD_REASONING: the trim only strips older thinking; every message stays.
         msgs = anth_history(1)
         out = self.run_req(anth_request(copy.deepcopy(msgs)), trim_at_tokens=1)
-        note = {"type": "text", "text": reasoning_text(SID)}
+        note = {"type": "text", "text": wrap_note(reasoning_text(SID))}
         self.assertEqual(out["messages"][0]["content"], [note, *msgs[0]["content"]])
         self.assertEqual(out["messages"][1:], strip_thinking(msgs)[1:])
         self.assertEqual(self.log_rows(), [])
@@ -509,7 +509,8 @@ class FirstUserPinTests(Base):
         first = self.run_req(anth_request(copy.deepcopy(msgs)), trim_at_tokens=1)["messages"]
         self.assertEqual(first[0], msgs[0])
         self.assertEqual(first[1], msgs[7])
-        self.assertTrue(first[2]["content"][0]["text"].startswith("[smarter-compact: continuing session"))
+        self.assertTrue(first[2]["content"][0]["text"].startswith(
+            "<system-reminder>\n[smarter-compact: continuing session"))
         rows = self.log_rows()
         self.assertFalse(any(r["text"].startswith("question 0") for r in rows))
         # Later requests: the same bytes for the pinned turn, the pointer turn and everything after.
@@ -546,7 +547,8 @@ class FirstUserPinTests(Base):
                  {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "tuY", "content": "y"}]}]
         out = self.run_req(anth_request(copy.deepcopy(msgs)), trim_at_tokens=1)["messages"]
         # Only older thinking goes (CONTEXT_STRIP_OLD_REASONING); the first user turn and every message stay.
-        self.assertEqual(out[0]["content"], [{"type": "text", "text": reasoning_text(SID)}, *msgs[0]["content"]])
+        self.assertEqual(out[0]["content"],
+                         [{"type": "text", "text": wrap_note(reasoning_text(SID))}, *msgs[0]["content"]])
         self.assertEqual(out[1:], strip_thinking(msgs)[1:])
         self.assertEqual(self.log_rows(), [])
 
@@ -696,7 +698,7 @@ class InTurnGapTests(Base):
         msgs = [{"role": "user", "content": "task"}] + anth_loop(3)
         out = self.run_req(anth_request(copy.deepcopy(msgs)), trim_at_tokens=1)["messages"]
         # No gap: only older thinking goes (CONTEXT_STRIP_OLD_REASONING), every exchange stays.
-        note = {"type": "text", "text": reasoning_text(SID)}
+        note = {"type": "text", "text": wrap_note(reasoning_text(SID))}
         self.assertEqual(out[0]["content"], [note, {"type": "text", "text": "task"}])
         self.assertEqual(out[1:], strip_thinking(msgs)[1:])
         self.assertEqual(self.log_rows(), [])
