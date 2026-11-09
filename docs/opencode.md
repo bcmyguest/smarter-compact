@@ -25,9 +25,9 @@ Keep the clone in place; OpenCode resolves the package from it.
 ## OpenCode 2
 
 The plugin registers its context hooks by itself, and *attempts* to register its search MCP
-tools the same way (`ctx.mcp.add`, OpenCode >= 2.2). That attempt can end without a connected
-server — the call is accepted and nothing connects — so **write the `mcp` entry below as well**;
-it is the configuration to rely on, and registering twice is harmless. Options are the same keys
+tools the same way (`ctx.mcp.add`, OpenCode >= 2.2). OpenCode can accept that call and still
+connect no server, so **write the `mcp` entry below as well** and rely on it. Registering twice
+is harmless. Options are the same keys
 as `CONTEXT_*` env vars (camelCase in JSON):
 
 ```jsonc

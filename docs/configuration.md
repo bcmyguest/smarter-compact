@@ -16,7 +16,7 @@ A setting the proxy reads and OpenCode 2 does not has no effect on OpenCode 2 se
 3. `~/.config/smarter-compact/config.toml`, for trim thresholds, `standing_instruction` and `[context_store]`.
 4. Built-in default.
 
-OpenCode plugin options override the environment ([which reach what](#opencode-plugin-options)). Under Docker compose, the host shell or `./.env` sets the variables `compose.yaml` lists; `proxy.env` supplies the rest; the container does not read `config.toml`, so set its settings as variables.
+OpenCode plugin options override the environment ([which reach what](#opencode-plugin-options)). Under Docker compose, the host shell or `./.env` sets the variables `compose.yaml` lists, and `proxy.env` supplies the rest. The container does not read `config.toml`, so set those settings as variables.
 
 ## Trim
 

@@ -43,7 +43,7 @@ Keep `smarter-compact-demo.mp4` (the graphs video) for X and LinkedIn later.
 > | Lookup questions | 0.71 | 1.00 |
 > | Count questions | 0.00 | 1.00 |
 >
-> **On average: 72% lower cost** across four task sizes, seed-matched against keeping everything (−87%, −19%, −89%, −94%). The smallest size's saving isn't significant; on the log tasks, the longer the session, the bigger the saving. Answers got better too: +0.47 score on the log tasks (95% CI 0.34–0.58, eight pairs).
+> **On average: 72% lower cost** than keeping everything, across four task sizes (−87%, −19%, −89%, −94%). The smallest size's saving isn't significant. On the log tasks, the longer the session, the bigger the saving. Answers got better too: +0.47 score on the log tasks (95% CI 0.34–0.58, eight pairs).
 >
 > Honest limits: synthetic tasks, small samples (2–3 runs per size), and real-session results (Compact-Bench) are still pending. Claude Code's own compaction never fired in these runs, so it behaved like keep-everything.
 >

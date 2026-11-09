@@ -1,6 +1,6 @@
 # How it works
 
-Context management (smart compaction) keeps long coding-agent sessions under a token limit without an LLM summary. Every message goes into a local SQLite session store; older turns leave the context and the turn they precede carries a pointer to them; the agent searches the store when it needs a detail back.
+Context management (smart compaction) keeps long coding-agent sessions under a token limit without an LLM summary. Every message goes into a local SQLite session store. Older turns leave the context, and the next kept turn carries a pointer to them. The agent searches the store when it needs a detail back.
 
 <p align="center">
 <picture>
@@ -18,7 +18,7 @@ Context management (smart compaction) keeps long coding-agent sessions under a t
 </picture>
 </p>
 
-Each request goes through four steps ([context proxy](context-proxy.md) has implementation detail):
+Each request goes through these steps ([context proxy](context-proxy.md) has implementation detail):
 
 | Step | When | Effect |
 | --- | --- | --- |

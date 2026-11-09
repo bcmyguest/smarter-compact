@@ -1,6 +1,6 @@
 # Agents
 
-Smart compaction only works when something **sees and rewrites the model request** before it is sent. Each agent gets that in one of two ways, or not at all.
+Smart compaction needs something that **sees and rewrites the model request** before it is sent: a proxy or an in-process hook. Agents with neither get search tools only.
 
 | Tier | Agents | How |
 | --- | --- | --- |

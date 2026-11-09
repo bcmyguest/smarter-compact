@@ -1,6 +1,6 @@
 # Quick start
 
-Install from npm (`npm install -g smarter-compact`). Register plugins with **`smarter-compact plugins add <claude|codex>`** (resolves the installed package path itself; no `npm root -g`). You do not need a git clone for that. **`smarter-compact enable -g`** detects Claude Code, Codex, and OpenCode (config dirs or `opencode` on PATH), wires each one at the proxy, and starts the proxy. A **git clone** is optional if you are developing the trimmer or prefer a fixed checkout path.
+Install from npm with `npm install -g smarter-compact`, then register plugins with **`smarter-compact plugins add <claude|codex>`**. It finds the installed package itself, so you need neither `npm root -g` nor a git clone. **`smarter-compact enable -g`** detects Claude Code, Codex, and OpenCode (by config dir, or `opencode` on PATH), points each at the proxy, and starts the proxy. Clone the repo only to develop the trimmer or to pin a checkout path.
 
 ## Claude Code
 
@@ -10,7 +10,7 @@ smarter-compact plugins add claude
 smarter-compact enable claude
 ```
 
-Start a new `claude` session after `enable`. The marketplace install registers the search tools and the compact command. `enable` points `ANTHROPIC_BASE_URL` at `http://127.0.0.1:4101`, starts the LiteLLM proxy in the background when needed, and stores a key in `~/.config/smarter-compact/proxy.env` (mode 600). Session hooks also ensure the proxy is up. A previous base URL is saved in `~/.config/smarter-compact/proxy-backup.json` and restored by `smarter-compact disable claude`. Logs: `~/.config/smarter-compact/proxy.log`. Set `SMARTER_COMPACT_AUTO_PROXY=0` to disable auto-start.
+Start a new `claude` session after `enable`. The marketplace install registers the search tools and the compact command. `enable` points `ANTHROPIC_BASE_URL` at `http://127.0.0.1:4101`, starts the LiteLLM proxy in the background when needed, and stores a key in `~/.config/smarter-compact/proxy.env` (mode 600). Session hooks also ensure the proxy is up. `enable` saves any previous base URL in `~/.config/smarter-compact/proxy-backup.json`, and `smarter-compact disable claude` restores it. Logs: `~/.config/smarter-compact/proxy.log`. Set `SMARTER_COMPACT_AUTO_PROXY=0` to disable auto-start.
 
 On Claude Code 2.1.275 or later you can install the plugin from inside Claude Code instead of running `plugins add`:
 

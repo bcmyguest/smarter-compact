@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![GitHub](https://img.shields.io/badge/github-bcmyguest%2Fsmarter--compact-blue)](https://github.com/bcmyguest/smarter-compact)
 
-**Context management (smart compaction) for coding agents.** Long sessions keep small, cached prompts: every message goes into a local SQLite session store, older turns leave the prompt once it reaches your token limit, and the turn they precede carries a pointer to them.
+**Context management (smart compaction) for coding agents.** Long sessions keep small, cached prompts. Every message goes into a local SQLite session store. Once the prompt reaches your token limit, older turns leave it, and the next kept turn carries a pointer to them.
 
 <p align="center">
 <img src="docs/media/smarter-compact-demo.gif" alt="How it works: the prompt fills, turns 1–4 move to the session store, a search pulls a line back. Then a Claude Code session: the agent reads three log files, edits code and runs tests; the prompt crosses 95k and Smarter Compact moves 31 messages to the session store (97k to 51k); later the agent answers a question about the trimmed logs with smart_compact_sql and smart_compact_get (illustrative session); then the benchmark savings chart, 72% average." width="720" />
@@ -22,22 +22,22 @@ The agent searches the store with `smart_compact_search`, `smart_compact_sql`, a
 
 Trimmed context is marked with a `[smarter-compact: …]` pointer.
 
-You need Node 24 or newer (for `node:sqlite`) and, for agents that trim through the proxy, LiteLLM `1.109.0rc1` (pinned) on `PATH` as `litellm`. `smarter-compact enable` installs it with `uv tool install` when it is missing or another version; without uv it stops and changes no agent config. The plugin has no API key of its own. Your agent keeps its own login.
+You need Node 24 or newer (for `node:sqlite`). Agents that trim through the proxy also need LiteLLM `1.109.0rc1` (pinned) on `PATH` as `litellm`. `smarter-compact enable` installs it with `uv tool install` when it is missing or another version. Without uv, it stops and changes no agent config. The plugin has no API key of its own. Your agent keeps its own login.
 
 ### How agents integrate
 
-Smart compaction only works when something **sees and rewrites the model request** before it is sent. That happens in one of two ways:
+Smart compaction needs something that **sees and rewrites the model request** before it is sent: a proxy or an in-process hook.
 
 | Tier | Agents | What you get |
 | --- | --- | --- |
 | **Full trim (proxy)** | Claude Code, Codex, OpenCode 1 | `smarter-compact enable` points the CLI at the loopback LiteLLM proxy; every turn is stored and older turns drop off the wire at the token threshold. |
 | **Full trim (in-process)** | OpenCode 2, Pi | JS port of the trim core in the agent's **`context` hook**; includes prose strip, observation masking and the progress note ([OpenCode plugin](docs/opencode.md), [Pi extension](https://pi.dev/docs/latest/extensions#context) in this package). No proxy URL. |
 
-Cursor and Copilot CLI are **not** supported for automatic trim (hooks + MCP only). See [Optional: Cursor and Copilot](#optional-cursor-and-copilot) if you still want search tools there.
+Cursor and Copilot CLI get hooks and MCP search tools only, with no automatic trim. See [Optional: Cursor and Copilot](#optional-cursor-and-copilot).
 
 ## Install
 
-Install from npm (`npm install -g smarter-compact`). Register plugins with **`smarter-compact plugins add <claude|codex>`** (resolves the installed package path itself; no `npm root -g`). You do not need a git clone for that. **`smarter-compact enable -g`** detects Claude Code, Codex, and OpenCode (config dirs or `opencode` on PATH), wires each one at the proxy, and starts the proxy. A **git clone** is optional if you are developing the trimmer or prefer a fixed checkout path.
+Install from npm with `npm install -g smarter-compact`, then register plugins with **`smarter-compact plugins add <claude|codex>`**. It finds the installed package itself, so you need neither `npm root -g` nor a git clone. **`smarter-compact enable -g`** detects Claude Code, Codex, and OpenCode (by config dir, or `opencode` on PATH), points each at the proxy, and starts the proxy. Clone the repo only to develop the trimmer or to pin a checkout path.
 
 ### Claude Code
 
@@ -47,7 +47,7 @@ smarter-compact plugins add claude
 smarter-compact enable claude
 ```
 
-Start a new `claude` session after `enable`. The marketplace install registers the search tools and the compact command. `enable` points `ANTHROPIC_BASE_URL` at `http://127.0.0.1:4101`, starts the LiteLLM proxy in the background when needed, and stores a key in `~/.config/smarter-compact/proxy.env` (mode 600). Session hooks also ensure the proxy is up. A previous base URL is saved in `~/.config/smarter-compact/proxy-backup.json` and restored by `smarter-compact disable claude`. Logs: `~/.config/smarter-compact/proxy.log`. Set `SMARTER_COMPACT_AUTO_PROXY=0` to disable auto-start.
+Start a new `claude` session after `enable`. The marketplace install registers the search tools and the compact command. `enable` points `ANTHROPIC_BASE_URL` at `http://127.0.0.1:4101`, starts the LiteLLM proxy in the background when needed, and stores a key in `~/.config/smarter-compact/proxy.env` (mode 600). Session hooks also ensure the proxy is up. `enable` saves any previous base URL in `~/.config/smarter-compact/proxy-backup.json`, and `smarter-compact disable claude` restores it. Logs: `~/.config/smarter-compact/proxy.log`. Set `SMARTER_COMPACT_AUTO_PROXY=0` to disable auto-start.
 
 On Claude Code 2.1.275 or later you can install the plugin from inside Claude Code instead of running `plugins add`:
 
@@ -155,7 +155,7 @@ After `npm install -g smarter-compact`, the command on your PATH is **`smarter-c
 | `smarter-compact proxy` | Run LiteLLM in the foreground (debugging; hooks normally start it detached) |
 | `smarter-compact status` | Same numbers as the slash command |
 
-A fail-open sends the request on untrimmed and records the error. The request is not blocked.
+A fail-open sends the request on untrimmed and records the error, so a failed trim never blocks a request.
 
 ## Where state lives
 
