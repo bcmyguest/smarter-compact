@@ -358,10 +358,10 @@ function chartScene(u, still = false) {
 }
 
 const SAVINGS = [
-  { task: "kv-store R4000", ratio: 0.130 },
-  { task: "log-triage L1600", ratio: 0.811, ns: true },
-  { task: "log-triage L6400", ratio: 0.109 },
-  { task: "log-triage L12800", ratio: 0.062 },
+  { task: "kv-store R4000", ratio: 0.140 },
+  { task: "log-triage L1600", ratio: 0.318 },
+  { task: "log-triage L6400", ratio: 0.102 },
+  { task: "log-triage L12800", ratio: 0.059 },
 ];
 const AVG_SAVING = Math.round(100 * (1 - SAVINGS.reduce((a, r) => a + r.ratio, 0) / SAVINGS.length));
 function savingsScene(u, still = false) {
@@ -391,9 +391,9 @@ function savingsScene(u, still = false) {
       <span><span class="dot" style="background:var(--keep);margin-right:6px"></span>Keep everything</span>
       <span><span class="dot" style="background:var(--smart);margin-right:6px"></span>Smarter Compact</span></div>
     ${rows}
-    <div style="position:absolute;left:56px;top:470px;font-size:19px;color:var(--ink);opacity:${f(2.9)}">Better answers too: <b style="color:var(--good)">+0.47</b> <span style="color:var(--muted)">score on log tasks (95% CI 0.34–0.58)</span></div>
+    <div style="position:absolute;left:56px;top:470px;font-size:19px;color:var(--ink);opacity:${f(2.9)}">Better answers too: <b style="color:var(--good)">+0.46</b> <span style="color:var(--muted)">score on log tasks (95% CI 0.34–0.57)</span></div>
     <div class="install" style="top:520px;opacity:${f(3.5, 0.3)}"><span class="p">$</span>${still ? cmd : typed}<span style="color:var(--good)">${still ? "" : caret}</span></div>
-    <div class="foot" style="opacity:${f(3.0)}">Paired list-price cost, Smarter Compact ÷ keep everything, seed-matched trials. ContextBench synthetic tasks, Claude Haiku 5.5, 2–3 pairs per size. Average is the mean of the four ratios (0.28). L1600's interval includes no saving.</div>`;
+    <div class="foot" style="opacity:${f(3.0)}">Paired list-price cost, Smarter Compact ÷ keep everything, seed-matched trials. ContextBench synthetic tasks, Claude Haiku 5.5, 2–3 pairs per size. Average is the mean of the four ratios (0.15).</div>`;
 }
 
 function heroScene(gh) {

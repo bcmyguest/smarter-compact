@@ -6,7 +6,7 @@ One subreddit, one post. Assets are in `promo/out/` (rebuild with `promo/build.s
 
 ## What to upload
 
-Post **`terminal-demo.mp4`** as a native video. It opens with a 6-second diagram of the prompt trimming into the session store, then shows a Claude Code session the way readers know it: three prompts, the trim when the context crosses 95k, then a question about logs that already left the prompt, answered with `smart_compact_sql` and `smart_compact_get`. It ends on the 72% average. Reddit autoplays MP4 in the feed; a GIF gets re-encoded and looks worse.
+Post **`terminal-demo.mp4`** as a native video. It opens with a 6-second diagram of the prompt trimming into the session store, then shows a Claude Code session the way readers know it: three prompts, the trim when the context crosses 95k, then a question about logs that already left the prompt, answered with `smart_compact_sql` and `smart_compact_get`. It ends on the 85% average. Reddit autoplays MP4 in the feed; a GIF gets re-encoded and looks worse.
 
 Put the body below in the post. Then add `card-results-2400x1350.png` (the savings bars) as your first comment, for the people who want the chart.
 
@@ -20,7 +20,7 @@ Keep `smarter-compact-demo.mp4` (the graphs video) for X and LinkedIn later.
 
 ## Title options
 
-- **Smarter Compact: keeps long coding-agent sessions small by moving older turns to a local SQLite store the agent can search. 72% lower cost on average in benchmarks**
+- **Smarter Compact: keeps long coding-agent sessions small by moving older turns to a local SQLite store the agent can search. 85% lower cost on average in benchmarks**
 - **I built a context manager for Claude Code: every turn kept verbatim, prompt stays under your limit, agent queries its own history**
 - **Long Claude Code sessions with small, cached prompts: older turns go to SQLite, the agent searches them when it needs a detail**
 
@@ -43,7 +43,7 @@ Keep `smarter-compact-demo.mp4` (the graphs video) for X and LinkedIn later.
 > | Lookup questions | 0.71 | 1.00 |
 > | Count questions | 0.00 | 1.00 |
 >
-> **On average: 72% lower cost** than keeping everything, across four task sizes (−87%, −19%, −89%, −94%). The smallest size's saving isn't significant. On the log tasks, the longer the session, the bigger the saving. Answers got better too: +0.47 score on the log tasks (95% CI 0.34–0.58, eight pairs).
+> **On average: 85% lower cost** than keeping everything, across four task sizes (−86%, −68%, −90%, −94%). On the log tasks, the longer the session, the bigger the saving. Answers got better too: +0.46 score on the log tasks (95% CI 0.34–0.57, eight pairs).
 >
 > Honest limits: synthetic tasks, small samples (2–3 runs per size), and real-session results (Compact-Bench) are still pending. Claude Code's own compaction never fired in these runs, so it behaved like keep-everything.
 >
@@ -67,10 +67,10 @@ Keep `smarter-compact-demo.mp4` (the graphs video) for X and LinkedIn later.
 
 ## Numbers that are safe to say
 
-- **72% average cost saving** is the mean of four paired cost ratios (0.130, 0.811, 0.109, 0.062 → 0.28). Say "on average across four benchmark sizes", not "72% cheaper" flat: per size it ranges from 19% (not significant) to 94%.
+- **85% average cost saving** is the mean of four paired cost ratios (0.140, 0.318, 0.102, 0.059 → 0.155; run G). Say "on average across four benchmark sizes", not "85% cheaper" flat: per size it ranges from 68% to 94%.
 - 762k → 95k peak prompt and $6.07 → $0.38 apply only to the L12800 example.
 - Count questions 0.00 → 1.00 and lookups 0.71 → 1.00 at L12800.
-- +0.47 pooled score (95% CI 0.34–0.58), eight pairs.
+- +0.46 pooled score (95% CI 0.34–0.57), eight pairs.
 - Always mention synthetic tasks, Haiku 5.5, and 2–3 runs per size.
 
 The example chart's line shape is illustrative; its peaks and costs are measured, and its trims follow that run's settings (at 95k, down to about 29k).

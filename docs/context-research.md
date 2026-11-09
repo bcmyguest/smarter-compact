@@ -236,6 +236,22 @@ Sonnet 5 has two paired log L6400 seeds. Smart minus none score was +0.0625 [0.0
 
 The coding-task replay used Haiku 4.5. Its `step2c` brief required changing strings pinned by existing exact-string tests while forbidding assertion edits; all four `step2c` trials therefore report `tests_rc=1`. Two of four smart-arm replays searched the session store once. This does not diagnose the earlier hour-long subagents, whose transcripts were not scored for scratchpad behavior. The decision-consistency trial set remains partial. Scratchpad read-path work is outside `main`, so no scratchpad benefit is claimed here.
 
+## Run G: current defaults against run E baselines (2026-11-09)
+
+Smart compaction at v0.9.0 (commit `3acd9b5`) cost 0.155 times as much as keeping everything, averaged over four task sizes: an 85% saving, against 72% in run E. Run G reran only `e-smart`, with run E's model (Haiku 5.5), harness (Claude Code strict mode), tasks (kv R4000, log L1600/L6400/L12800), seeds (45–47) and the 95k Haiku threshold. The keep-everything and default native rows are run E's; neither arm runs Smarter Compact code, so they still apply. Since run E the smart arm gained input clearing, the reasoning strip, reuse rules, dedup pointers, kept errors, log reduction, notes as system messages and the scratchpad; the ledger is off. The bench allowed `smart_compact_scratchpad` next to the three search tools and gave the MCP server a writable store. All 12 trials wrote a pad, 1 to 11 times each. Trials ran against a frozen export of `main` through openmem `bench/run_ctx.sh` run `G`; rows are in openmem `bench/results-G/summary.json`. Run F (2026-11-04, commit `0a7b3ee`) was an unpublished check of the same arm.
+
+| Task, size | Pairs | Smart/none cost ratio, run G | Run E | Smart score, run G / run E | Smart cost per trial, run G / run E |
+| --- | --- | --- | --- | --- | --- |
+| kv R4000 | 3 | 0.140 [0.138, 0.141] | 0.130 [0.128, 0.132] | 1.000 / 1.000 | $0.15 / $0.14 |
+| log L1600 | 3 | 0.318 [0.092, 0.559] | 0.811 [0.102, 1.528] | 1.000 / 1.000 | $0.16 / $0.36 |
+| log L6400 | 3 | 0.102 [0.101, 0.104] | 0.109 [0.107, 0.111] | 0.861 / 0.875 | $0.19 / $0.20 |
+| log L12800 | 2 | 0.059 [0.058, 0.060] | 0.062 [0.062, 0.063] | 1.000 / 1.000 | $0.49 / $0.38 |
+| Mean of four ratios | | 0.155 (85% saving) | 0.278 (72% saving) | | |
+
+Each ratio is the mean of per-seed smart/none list-price cost ratios; its interval bootstraps the pairs (20,000 resamples, RNG seed 0, `ci.py`'s `boot_ci`). Score and cost per trial average three seeds; L12800 has two pairs because keep-everything has only seeds 45–46. The unpaired L12800 seed 47 cost $0.74 and took 37 minutes, with 16 trims. Every interval now lies below 1; run E's L1600 interval crossed it.
+
+The paired log-score advantage was +0.464 against keep-everything (95% bootstrap interval 0.339–0.573, eight pairs; task-clustered 0.324–0.639) and +0.491 against default native (0.361–0.597, nine pairs; task-clustered 0.329–0.648). Run E gave +0.469 and +0.495. The one score below 1.0 was L6400 seed 46: lookups 1.00, counts 0.17. Paired smart/none agent-wall-time ratios were 1.086 [1.003, 1.149] at R4000, 1.290 [0.501, 2.210] at L1600, 0.941 [0.892, 1.005] at L6400 and 0.879 [0.708, 1.050] at L12800. The 12 trials cost $2.95 at list price.
+
 ## SWE-bench boundary: where the effect does not reach (2026-11-03)
 
 `bench/swebench` runs the Complexity-Trap arms on SWE-bench Verified: `none` keeps everything, `smart` trims and gets the recall tools. The 45-instance set, `hard45`, holds Verified instances labelled one-to-four-hours-plus to fix. With Qwen 3.8 Flash (self-hosted, via the `cairn2` endpoint) the `none` arm resolved **45/45**, so the quality endpoint is pinned at 100% before any arm is measured.

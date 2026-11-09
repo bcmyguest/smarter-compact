@@ -1,12 +1,14 @@
 # Benchmarks
 
-On ContextBench with Claude Haiku 5.5, smart compaction cost 72% less than keeping everything, averaged over four task sizes, and scored higher on every log-triage size. On kv-store every setting scored 1.00.
+On ContextBench with Claude Haiku 5.5, smart compaction cost 85% less than keeping everything, averaged over four task sizes, and scored higher on every log-triage size. On kv-store every setting scored 1.00.
 
 The benchmark is [ContextBench](https://github.com/RulinShao/ContextBench) (Context Language Models, [arXiv:2609.37725](https://arxiv.org/abs/2609.37725), [Hugging Face dataset](https://huggingface.co/datasets/context-language-model/ContextBench)). `kv-store` asks for earlier values; `log-triage` asks lookup and count questions. Three settings ran on the same held-out seeds through Claude Code in headless strict mode, which has no Bash or file tools:
 
 - keep everything;
 - Claude Code's default native compaction, which never compacted in these tasks;
 - **Smarter Compact** smart compaction, the trimmer in this repo.
+
+The cost saving and the score difference come from [run G](context-research.md#run-g-current-defaults-against-run-e-baselines-2026-11-09) (2026-11-09): the smart setting rerun at v0.9.0 on the same seeds, paired with run E's keep-everything trials, which have no proxy. The quality, time and cost charts and tables below are run E (2026-10-30), whose smart setting predates input clearing, the scratchpad and the other current defaults.
 
 Each cell has two or three seeds. Method and limits: [Context research](context-research.md) and the [evidence plan](https://github.com/bcmyguest/openmem/blob/main/docs/evidence-plan.md#completed-seed-paired-comparisons), which covers the bootstrap intervals. The bench harness lives in OpenMem.
 
@@ -48,10 +50,10 @@ Smart compaction takes longer per trial than native compaction (527 s vs 479 s) 
 # Cost and prompt cache
 
 <p align="center">
-<img src="media/contextbench-savings.png" alt="Average cost saving 72%: paired cost of Smarter Compact relative to keep everything, kv-store R4000 −87%, log-triage L1600 −19% (not significant), L6400 −89%, L12800 −94%" width="720" />
+<img src="media/contextbench-savings.png" alt="Average cost saving 85%: paired cost of Smarter Compact relative to keep everything, kv-store R4000 −86%, log-triage L1600 −68%, L6400 −90%, L12800 −94%" width="720" />
 </p>
 
-Smart compaction saved **72% on average** across the four sizes. Per size it cost 0.130 times as much as keeping everything at kv R4000, 0.811 at L1600, 0.109 at L6400 and 0.062 at L12800; the mean of these four ratios is 0.28. Each ratio compares runs on the same seed. The L1600 interval crosses 1, so that size shows no reliable saving. The [research page](context-research.md) gives each interval.
+Smart compaction saved **85% on average** across the four sizes (run G). Per size it cost 0.140 times as much as keeping everything at kv R4000, 0.318 at L1600, 0.102 at L6400 and 0.059 at L12800; the mean of these four ratios is 0.155. Each ratio compares runs on the same seed, and every interval lies below 1. Run E's smart setting saved 72% (mean ratio 0.278); its L1600 interval crossed 1. The [research page](context-research.md#run-g-current-defaults-against-run-e-baselines-2026-11-09) gives each interval.
 
 <p align="center">
 <picture>
@@ -78,9 +80,9 @@ Source: [ContextBench](https://github.com/RulinShao/ContextBench) synthetic task
 
 # What this shows
 
-On the log tasks smart compaction scored **0.469** higher than keep everything (95% interval 0.339–0.578, eight paired trials). It scored **0.495** higher than default native, which never compacted here (0.384–0.593, nine pairs). All three settings scored 1.0 on kv R4000. Smart compaction cost less on every paired trial at kv-store R4000, log-triage L6400 and log-triage L12800. At L1600 the cost interval includes no saving, and the wall-time interval includes a slowdown over 20%. The samples are small and synthetic, so they do not show the effect carries over to coding sessions.
+On the log tasks smart compaction scored **0.464** higher than keep everything (95% interval 0.339–0.573, eight paired trials; run G). It scored **0.491** higher than default native, which never compacted here (0.361–0.597, nine pairs). Run E gave 0.469 and 0.495. All three settings scored 1.0 on kv R4000. Smart compaction cost less on every paired trial at every size. At L1600 the wall-time interval includes a slowdown over 20% (ratio 1.290, 0.501–2.210). The samples are small and synthetic, so they do not show the effect carries over to coding sessions.
 
-Each pair runs both settings on the same seed. The intervals above bootstrap over pairs. A bootstrap that resamples the three task sizes gives 0.329–0.639 against keep everything and 0.352–0.648 against default native ([deviations from the pre-registration](context-research.md#deviations-from-the-pre-registration)).
+Each pair runs both settings on the same seed. The intervals above bootstrap over pairs. A bootstrap that resamples the three task sizes gives 0.324–0.639 against keep everything and 0.329–0.648 against default native (run E: 0.329–0.639 and 0.352–0.648) ([deviations from the pre-registration](context-research.md#deviations-from-the-pre-registration)).
 
 On Sonnet 5 at log L6400 (two paired seeds), smart compaction scored 0.0625 higher (0.0417–0.0833) and cost 0.401 times as much as keep everything (0.361–0.441). [Exclusions, price basis, and pending work](https://github.com/bcmyguest/openmem/blob/main/docs/evidence-plan.md#completed-seed-paired-comparisons).
 
