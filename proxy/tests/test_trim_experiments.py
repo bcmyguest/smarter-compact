@@ -13,9 +13,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_context_proxy import BIG, Base, anth_history, anth_request  # noqa: E402
 
 from smarter_compact import Settings  # noqa: E402
-from smarter_compact.adapters import AnthropicAdapter, wrap_note  # noqa: E402
+from smarter_compact.adapters import AnthropicAdapter  # noqa: E402
 from smarter_compact.core import MASK_PREFIX, mask_placeholder  # noqa: E402
-from smarter_compact.ledger import LEDGER_HEAD  # noqa: E402
 from smarter_compact.tokens import request_chars  # noqa: E402
 
 # Step k of the in-flight turn: (tool name, input, result text, is_error).
@@ -26,10 +25,6 @@ STEPS = [
     ("Bash", {"command": "make build"}, "built", False),
     ("Read", {"file_path": "/src/f4.py"}, "contents", False),
 ]
-
-# The CONTEXT_LEDGER block (on by default) the latest run's result carries: STEPS' edit, write and read.
-LEDGER = (f"{LEDGER_HEAD}\nModified (latest last): /src/f0.py, /src/f2.py\nRead (latest last):\n"
-          "- /src/f4.py: whole current")
 
 
 def in_flight_turn(pad=""):
@@ -49,11 +44,6 @@ def in_flight_turn(pad=""):
         {"type": "tool_use", "id": "sL", "name": "Bash", "input": {"command": "ls"}}]})
     msgs.append({"role": "user", "content": [{"type": "tool_result", "tool_use_id": "sL", "content": "ok"}]})
     return msgs
-
-
-def ledgered(msg):
-    """msg with the ledger block appended as a text block."""
-    return {**msg, "content": [*msg["content"], {"type": "text", "text": wrap_note(LEDGER)}]}
 
 
 def blocks(m):
@@ -96,8 +86,8 @@ class ProseStripTests(Base):
         self.assertEqual(ids_in(view, "tool_use", "id"), ids_in(view, "tool_result", "tool_use_id"))
         texts = [b.get("text") for m in view if isinstance(m.get("content"), list) for b in m["content"]]
         self.assertIn("step 3", texts)
-        # The latest run and its result go out byte-identical, the result with the ledger block appended.
-        self.assertEqual(json.dumps(view[-2:]), json.dumps([msgs[-2], ledgered(msgs[-1])]))
+        # The latest run and its result go out byte-identical.
+        self.assertEqual(json.dumps(view[-2:]), json.dumps(msgs[-2:]))
         # Step 3's text merged into step 4's message, so roles still alternate.
         roles = [m["role"] for m in view]
         self.assertEqual(roles[0], "user")
@@ -147,14 +137,13 @@ class ProseStripTests(Base):
     def test_in_context_matches_view_after_strip(self):
         msgs = in_flight_turn()
         view = self.run_req(anth_request(copy.deepcopy(msgs)), trim_at_tokens=1, strip_prose=True)["messages"]
-        # The view also carries the ledger block, which is no stored row.
-        self.assertEqual(sorted(self.stored_in_context() + [("text", wrap_note(LEDGER))]), self.view_rows(msgs, view))
+        self.assertEqual(self.stored_in_context(), self.view_rows(msgs, view))
         trimmed = [r["text"] for r in self.db_rows(where="in_context = 0 AND kind = 'tool_use'")]
         self.assertIn("make build", " ".join(trimmed))
         # A later untrimmed request keeps the same flags for the same rows.
         more = msgs + [{"role": "assistant", "content": [{"type": "text", "text": "done"}]}]
         view = self.run_req(anth_request(copy.deepcopy(more)), trim_at_tokens=BIG, strip_prose=True)["messages"]
-        self.assertEqual(sorted(self.stored_in_context() + [("text", wrap_note(LEDGER))]), self.view_rows(more, view))
+        self.assertEqual(self.stored_in_context(), self.view_rows(more, view))
 
     def test_pointer_counts_messages_absent_from_view(self):
         msgs = in_flight_turn()
@@ -196,7 +185,7 @@ class MaskObservationsTests(Base):
         self.assertEqual(results["s3"], mask_placeholder("built" + LONG))
         # s4's result is the message right before the latest run: kept, as prose strip keeps it.
         self.assertEqual(results["s4"], "contents" + LONG)
-        self.assertEqual(json.dumps(view[-2:]), json.dumps([msgs[-2], ledgered(msgs[-1])]))
+        self.assertEqual(json.dumps(view[-2:]), json.dumps(msgs[-2:]))
         # Same messages and roles as without masking; only result contents differ.
         self.assertEqual([m["role"] for m in view], [m["role"] for m in off])
         self.assertEqual(results_in(off)["s3"], "built" + LONG)
@@ -260,9 +249,7 @@ class MaskObservationsTests(Base):
     def test_in_context_matches_view(self):
         msgs = in_flight_turn(LONG)
         view = self.mask(msgs, trim_at_tokens=1)
-        # The view also carries the ledger block, which is no stored row.
-        self.assertEqual(sorted(self.stored_in_context("sid-1") + [("text", wrap_note(LEDGER))]),
-                         self.view_rows(msgs, view))
+        self.assertEqual(self.stored_in_context("sid-1"), self.view_rows(msgs, view))
         # The call stays in context; its masked result's original text does not.
         kept = [r["text"] for r in self.db_rows("sid-1", "in_context = 1 AND kind = 'tool_use'")]
         self.assertIn("make build", " ".join(kept))
@@ -271,8 +258,7 @@ class MaskObservationsTests(Base):
         self.assertNotIn("contents" + LONG, out)
         more = msgs + [{"role": "assistant", "content": [{"type": "text", "text": "done"}]}]
         view = self.mask(more, trim_at_tokens=BIG)
-        self.assertEqual(sorted(self.stored_in_context("sid-1") + [("text", wrap_note(LEDGER))]),
-                         self.view_rows(more, view))
+        self.assertEqual(self.stored_in_context("sid-1"), self.view_rows(more, view))
 
     def test_pointer_counts_and_names_recovery(self):
         msgs = in_flight_turn(LONG)
@@ -390,7 +376,7 @@ class ClearResultsTests(Base):
                 if b.get("type") == "thinking"]
         # The history's thinking (SIG0, SIG1) goes; the latest run's stays.
         self.assertEqual(sigs, ["SIGL=="])
-        self.assertEqual(json.dumps(view[-2:]), json.dumps([msgs[-2], ledgered(msgs[-1])]))
+        self.assertEqual(json.dumps(view[-2:]), json.dumps(msgs[-2:]))
 
     def test_store_keeps_full_results(self):
         msgs = in_flight_turn(HUGE)

@@ -125,8 +125,8 @@ class Settings:
     # A new tool result identical to one still shown in full becomes a pointer to it (CONTEXT_DEDUP_RESULTS=0 off).
     dedup_results: bool = True
     # Execution ledger: files read and changed appended to new tool results, repeated reads pointed at or nudged
-    # (CONTEXT_LEDGER=0 turns it off).
-    ledger: bool = True
+    # (CONTEXT_LEDGER=1 turns it on).
+    ledger: bool = False
     # Every N assistant steps, strip signed reasoning before the latest assistant message; 0 is off
     # (CONTEXT_STRIP_REASONING_EVERY), gated by strip_reasoning_min_tokens (CONTEXT_STRIP_REASONING_MIN_TOKENS).
     strip_reasoning_every: int = 0
@@ -220,7 +220,7 @@ class Settings:
             standing_instruction=_flag(env, "CONTEXT_STANDING_INSTRUCTION"),
             reuse_rules=_flag(env, "CONTEXT_REUSE_RULES"),
             dedup_results=_flag(env, "CONTEXT_DEDUP_RESULTS"),
-            ledger=_flag(env, "CONTEXT_LEDGER", "1"),
+            ledger=_flag(env, "CONTEXT_LEDGER", "0"),
             strip_reasoning_every=max(_int(env, "CONTEXT_STRIP_REASONING_EVERY", 0), 0),
             strip_reasoning_min_tokens=max(_int(env, "CONTEXT_STRIP_REASONING_MIN_TOKENS",
                                                 DEFAULT_STRIP_REASONING_MIN_TOKENS), 0),

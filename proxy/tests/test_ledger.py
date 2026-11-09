@@ -126,9 +126,9 @@ class WalkTests(unittest.TestCase):
 
 
 class SettingTests(unittest.TestCase):
-    def test_default_on(self):
-        self.assertTrue(Settings.from_env({}).ledger)
-        self.assertFalse(Settings.from_env({"CONTEXT_LEDGER": "0"}).ledger)
+    def test_default_off(self):
+        self.assertFalse(Settings.from_env({}).ledger)
+        self.assertTrue(Settings.from_env({"CONTEXT_LEDGER": "1"}).ledger)
 
 
 class AnthropicTests(LedgerBase):

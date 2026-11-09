@@ -495,6 +495,37 @@ Inputs: the `tb21-h55-*` bench session databases (684, 20,647 usage events) and 
 
 People idle 5–60 minutes between turns; unattended agents rarely do. An expiry costs 1.15× the conversation prefix, and the split saves 0.75× of each turn's new content, so the reverting variants keep most of the bench saving without the idle-session loss.
 
+## Ledger (2026-11-09)
+
+**Result.** The ledger is off by default. With Haiku 5.5 it made the agent stop early, and it saved no money.
+
+**Source.** Turning Interaction History into Execution State ([arXiv 2608.00808](https://arxiv.org/html/2608.00808), §3.3–3.4). The paper keeps a ledger of files read and changed, shows it to the model, and reuses or nudges repeated reads and test runs. On 500 SWE-bench Verified tasks (Table 4), GPT-5 mini went from 281 to 321 resolved and from $23.60 to $16.78. MiniMax M2.5 resolved 379 at baseline, 385 with inform only, 402 with govern only and 405 with both. Our version is described under [clearing](clearing.md#ledger-context_ledger).
+
+**The attach bug.** Claude Code ends each request with a system message. The proxy attached the ledger block to the last item, so it never fired under Claude Code until `f75186b` moved it to the newest unpinned item.
+
+**Early stops as user text.** In v0.8.0 and v0.8.1 the block went out as plain user text. The runs on either side of `f75186b` form a natural experiment: 16 of 16 trials passed while the ledger never fired, and 32 of 55 passed once it did (p ≈ 0.0007). A controlled check on path-tracing-reverse, 12 trials per arm:
+
+| Arm | Full passes | Ended asking the user |
+| --- | --- | --- |
+| Ledger as user text | 7/12 | 5 |
+| Ledger off, all else identical | 12/12 | 0 |
+| Native Claude Code, all runs | 10/10 | 0 |
+
+**As a system message.** `ae7d5e1` moved every proxy note into its own system message, or an inline `<system-reminder>` where the request has none. On path-tracing-reverse, 12 trials per arm:
+
+| Arm | Full passes | Cost per trial |
+| --- | --- | --- |
+| Ledger on, no trims | 12/12 | |
+| Ledger on, trims at 95,000 | 10/12 | $0.091 |
+| Ledger off, trims at 95,000 | 12/12 | $0.093 |
+| Native Claude Code | | $0.287 |
+
+Both failures stopped early, and both came after a trim. The ledger changed cost by $0.002 a trial.
+
+**The 5-task arm.** `tb21-h55-conf-nostrip` ran the ledger, keep-errors and log reduction together. It cost 18% less than the previous defaults, but its path-tracing-reverse score of 0.67 came from these early stops.
+
+**Decision.** `CONTEXT_LEDGER` is off by default again. Notes stay in their own system message.
+
 ## Limitations
 
 - The primary run E uses Haiku 5.5 and two or three seeds per cell. Sonnet has two paired seeds on one task. Earlier run B baselines have one or two seeds per cell.

@@ -104,14 +104,13 @@ test("ledger effects and walk match the proxy rules", () => {
 });
 
 test("CONTEXT_LEDGER: blocks on new results, reuse pointers, nudges, byte-identical re-renders", withHome(async (home) => {
-  assert.equal(trimSettings({}, os.tmpdir()).ledger, true);
+  assert.equal(trimSettings({}, os.tmpdir()).ledger, false);
   const on = { CONTEXT_LEDGER: "1" };
-  const offEnv = { CONTEXT_LEDGER: "0" };
   // Off: old bytes, also with recorded state.
   const steps = [CAT, READ_RANGE];
-  for (const [n, view] of (await grow(home, steps, offEnv)).entries()) assert.equal(JSON.stringify(view), JSON.stringify(turns(steps.slice(0, n + 1))));
+  for (const [n, view] of (await grow(home, steps)).entries()) assert.equal(JSON.stringify(view), JSON.stringify(turns(steps.slice(0, n + 1))));
   const views = await grow(home, steps, on);
-  assert.equal(JSON.stringify(await run(home, turns(steps), offEnv)), JSON.stringify(turns(steps)));
+  assert.equal(JSON.stringify(await run(home, turns(steps))), JSON.stringify(turns(steps)));
   assert.ok(views[0][2].content[0].result.value.startsWith(`${FILE}\n\n<system-reminder>\n${LEDGER_HEAD}`));
   assert.equal(JSON.stringify(views[1].slice(0, views[0].length)), JSON.stringify(views[0]));
   // The range read is covered by the whole cat, but its output differs: it stays whole, with no nudge.
@@ -149,7 +148,7 @@ test("CONTEXT_LEDGER: only a byte-identical re-read becomes the dedup pointer; a
     assert.deepEqual(sweepOrphanBlobs(path.join(other, "context")), []);
     const later = await run(other, turns([CAT, CAT, TEST]), noDedup);
     assert.equal(JSON.stringify(later.slice(0, views.at(-1).length)), JSON.stringify(views.at(-1)));
-    assert.equal(JSON.stringify(await grow(third, [CAT, CAT])), JSON.stringify(views));
+    assert.equal(JSON.stringify(await grow(third, [CAT, CAT], { CONTEXT_LEDGER: "1" })), JSON.stringify(views));
   } finally {
     fs.rmSync(other, { recursive: true, force: true });
     fs.rmSync(third, { recursive: true, force: true });

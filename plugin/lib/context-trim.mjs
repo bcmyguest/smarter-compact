@@ -244,8 +244,8 @@ export function trimSettings(env = process.env, home = env.HOME) {
     reuseRules: flag("CONTEXT_REUSE_RULES"),
     // A new tool result identical to one still shown in full becomes a pointer to it (CONTEXT_DEDUP_RESULTS=0 off).
     dedupResults: flag("CONTEXT_DEDUP_RESULTS"),
-    // Execution ledger on new tool results, repeated reads pointed at or nudged (CONTEXT_LEDGER=0 turns it off).
-    ledger: flag("CONTEXT_LEDGER", "1"),
+    // Execution ledger on new tool results, repeated reads pointed at or nudged (CONTEXT_LEDGER=1 turns it on).
+    ledger: flag("CONTEXT_LEDGER", "0"),
     // Every N assistant steps, strip signed reasoning before the latest assistant message; 0 is off.
     stripReasoningEvery: Math.max(int("CONTEXT_STRIP_REASONING_EVERY", 0), 0),
     stripReasoningMinTokens: Math.max(int("CONTEXT_STRIP_REASONING_MIN_TOKENS", DEFAULT_STRIP_REASONING_MIN_TOKENS), 0),
