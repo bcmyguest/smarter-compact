@@ -9,6 +9,7 @@ import re
 
 from .compress import (
     DEDUP_PREFIX,
+    REUSE_PREFIX,
     compress_text,
     compressed_blob_id,
     mask_placeholder,
@@ -262,7 +263,8 @@ class AnthropicAdapter:
     def _masked(block):
         text = _plain_text(block.get("content", ""), ("text",))
         placeholder = mask_placeholder(text)
-        if len(_compact_json(block.get("content", ""))) <= len(placeholder) or text.startswith(DEDUP_PREFIX):
+        if len(_compact_json(block.get("content", ""))) <= len(placeholder) or text.startswith((DEDUP_PREFIX,
+                                                                                                    REUSE_PREFIX)):
             return block
         return {**block, "content": placeholder}
 
@@ -318,6 +320,10 @@ class AnthropicAdapter:
         """(id, name, input) of each client tool_use block, in order."""
         return [(b.get("id"), b.get("name"), b.get("input") if isinstance(b.get("input"), dict) else {})
                 for b in self._blocks(item) or () if isinstance(b, dict) and b.get("type") == "tool_use"]
+
+    def calls(self, item):
+        """(id, name, input) of each client tool call (CONTEXT_LEDGER): tool_calls."""
+        return self.tool_calls(item)
 
     def tool_results(self, item):
         """{tool_use_id: (is_error, text)} of the message's tool_result blocks."""
@@ -507,6 +513,22 @@ class ChatAdapter:
         return {c.get("id"): _json_args((c.get("function") or {}).get("arguments"))
                 for c in item.get("tool_calls") or () if isinstance(c, dict)}
 
+    def calls(self, item):
+        """(id, name, parsed arguments or {}) of each tool call (CONTEXT_LEDGER)."""
+        out = []
+        for c in item.get("tool_calls") or ():
+            if isinstance(c, dict):
+                fn = c.get("function") or {}
+                args = _json_args(fn.get("arguments"))
+                out.append((c.get("id"), fn.get("name"), args if isinstance(args, dict) else {}))
+        return out
+
+    def tool_results(self, item):
+        """{tool_call_id: (False, text)} of a tool message: Chat has no error flag."""
+        if item.get("role") != "tool":
+            return {}
+        return {item.get("tool_call_id"): (False, _plain_text(item.get("content", ""), ("text",)))}
+
     def tool_names(self, items):
         names = {}
         for item in items:
@@ -660,6 +682,27 @@ class ResponsesAdapter:
             if key in item:
                 return {item.get("call_id"): _json_args(item[key]) if key == "arguments" else item[key]}
         return {}
+
+    def calls(self, item):
+        """[(call_id, name, args)] of a call item (CONTEXT_LEDGER): function arguments parsed, a custom tool's input
+        as {"input": text}, a local shell action's command."""
+        t = item.get("type")
+        if t == "function_call":
+            args = _json_args(item.get("arguments"))
+            return [(item.get("call_id"), item.get("name"), args if isinstance(args, dict) else {})]
+        if t == "custom_tool_call":
+            raw = item.get("input")
+            return [(item.get("call_id"), item.get("name"), {"input": raw} if isinstance(raw, str) else {})]
+        if t == "local_shell_call":
+            action = item.get("action") if isinstance(item.get("action"), dict) else {}
+            return [(item.get("call_id"), "shell", {"command": action.get("command")})]
+        return []
+
+    def tool_results(self, item):
+        """{call_id: (False, text)} of a tool output item: Responses has no error flag."""
+        if item.get("type") not in _RESULT_TYPES:
+            return {}
+        return {item.get("call_id"): (False, _plain_text(item.get("output", ""), self._TEXT_TYPES))}
 
     def tool_names(self, items):
         return {i.get("call_id"): i.get("name", "shell" if i.get("type") == "local_shell_call" else None)

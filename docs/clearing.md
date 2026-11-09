@@ -54,6 +54,63 @@ It becomes:
 
 Measured offline on runs `tb21-h55-inputs` (24 trials) and `tb21-h55-rtk` (48 trials), Claude Code with Haiku 5.5: replaying each trial's main transcript through the proxy with the trial's arm settings, on and off, it fired once in 72 trials (one 392-character result in `make-doom-for-mips__Sgo2JKM`, 7,128 characters fewer across that trial's later requests, about 2,900 tokens at 2.5 characters per token). The session databases agree: 1 of 2,322 tool results of at least 200 characters repeats an earlier one byte for byte; 72 repeat at any length, averaging 96 characters, shorter than the pointer. In these runs the saving is negligible.
 
+## Ledger (`CONTEXT_LEDGER`)
+
+Off by default until a benchmark arm measures it. The source is Turning Interaction History into Execution State: A Runtime Layer for Long-Horizon Coding Agents ([arXiv 2608.00808](https://arxiv.org/html/2608.00808)). Its state view holds "a fixed task anchor and two ledger-derived components. The _current focus_ lists the files most recently modified by the agent. The _observation index_ records which files or line ranges have already been observed and reports the current status of those observations" (§3.3). An observation is current "when neither the stored file counter nor the stored global counter differs from its current value". Each repeated action gets one of three verdicts: "Allow executes the command unchanged. Reuse suppresses the command and returns a reference to a still-visible result from an earlier equivalent interaction. Nudge allows the command to execute but augments the resulting observation with a short message indicating that the action may repeat prior work." It also states: "A partial read is reusable only when the proposed line range is fully covered by an earlier observation" and "A test command repeated without an intervening edit receives Nudge" (§3.4). On 500 SWE-bench Verified tasks with mini-swe-agent (Table 4), GPT-5 mini went from 281 to 321 resolved (56.2% to 64.2%) and from $23.60 to $16.78; MiniMax M2.5 resolved 379 at baseline, 385 with inform only, 402 with govern only and 405 with both, at $34.31 against $23.39. The paper renders the view "at the end of the current model input", regenerated each step. Here that would break the prompt cache, so each block is recorded and stays where it was first sent.
+
+The ledger is rebuilt on every request from the tool calls the request carries:
+
+| Call | Ledger entry |
+| --- | --- |
+| `Read` / `read` / `read_file` / `view` with a path (`file_path`, `filePath`, `path`, `notebook_path`, `file`) | read; `offset`/`limit` give the range; numbered output (`  12→`, `  12\t`) gives the lines actually shown |
+| shell (`Bash`, `bash`, `shell`, `exec_command`, `local_shell`) running one plain `cat <path>`, `sed -n 'A,Bp' <path>`, `head [-n N] <path>` or `tail [-n N] <path>` | read (whole, `A`–`B`, `1`–`N`, last `N`) |
+| `Edit` / `Write` / `MultiEdit` / `NotebookEdit` / `write_file` / `create_file`; `apply_patch` headers (`*** Update File:`); shell `>`/`>>` targets, `sed -i` and `tee` files | edit: that file's counter goes up |
+| any other shell command that is not read-only (the [eviction](eviction.md) read-only rule) and not a test run | global counter up: every earlier read may be stale |
+| a test run (`pytest`, `go test`, `cargo test`, `npm test`, `jest`, `python -m unittest`, …) | test: a rerun with no edit since is nudged |
+
+A read covers a later one when its file and the global counters are unchanged, it was not an error, was not cut short (truncated by the harness, or head/tail compressed by the proxy) and shows every line the later one asks for. A read to the end of the file is covered only by an untruncated read to the end, or by the same whole read through the same tool.
+
+For the newest tool results only (after the request's last assistant message), before they are first sent:
+
+- a covered read whose earlier copy the view still shows in full becomes `[smarter-compact: this read repeats an earlier one still shown above (<path>, <range>; the file is unchanged since); smart_compact_get(id="<id>") returns this output]`, when its text is at least 200 characters. The decision joins the [repeated-result](#repeated-results-context_dedup_results) list (`dedup`, with `"kind": "reuse"` and the pointer text), so every later request renders the same bytes. The pointer is never masked, and its output is written to `blobs/<id>.txt` and kept by the TTL sweep like a dedup pointer's;
+- a covered read whose earlier copy is gone (cleared, masked, dropped) stays as it is and gets a nudge line in the ledger block, so a pointer never sends the agent to content it cannot see;
+- a stale read is allowed with no nudge: after an edit, a re-read is the expected action (§3.4 reuses only unchanged files);
+- a test rerun with no edit since gets a nudge line.
+
+The block is appended to the newest tool result, once per batch and only when its listing changed since the last recorded block (or it carries nudges), at most 1,500 characters (oldest paths dropped first):
+
+```text
+[smarter-compact ledger, from your tool calls: current = unchanged since you read it, stale = may have changed since]
+Modified (latest last): src/a.py ×2, tests/test_a.py
+Read (latest last):
+- src/a.py: whole stale; lines 40-80 current
+- README.md: whole current
+Repeats in this batch:
+- `pytest -q tests` already ran with no file change since; rerun tests only for new evidence.
+```
+
+The block is recorded in the trim state (`ledger`: the item's index and fingerprint, the text). Older blocks are already-sent bytes, so they stay until the next trim, which keeps only the newest recorded block (thread keys `ledger_from` / `ledger_from_fp`). Placement: Anthropic adds a text block after the tool results of the user message, so masking a result leaves its block. Chat, Responses (string output) and the OpenCode 2 / Pi plugin append it after the result text, so clearing that result clears its block too. Each request that adds reuse pointers writes a `reuse` event.
+
+Measured offline on `tb21-h55-inputs` and `tb21-h55-reuse` (48 trials, Claude Code with Haiku 5.5, about 32 requests each), replaying each main transcript through the proxy (trim at 95,000, target 40,000, clearing 10): 607 blocks, 12.6 per trial, 316 characters on average (4,000 characters per trial), 48 of 48 trials. Billed input rose 0.19% and trims rose by 0.02 per trial. No reuse pointer and no nudge fired. Of 115 file reads, 47 re-read a path already read, 19 were covered by an earlier read, and 15 of those were still current. Every one of the 15 followed a whole-file read that head/tail compression had already shortened, which shows only a part of the file, so none counted as covered.
+
+## Test and build logs (`CONTEXT_LOG_REDUCE_OVER_CHARS`)
+
+Off by default (`0`). With `N` > 0, a new tool result (after the request's last assistant message, not yet sent) is reduced when its text is over N characters and one of its lines looks like test or build output: a pytest session header or summary, `Ran N tests`, jest `Tests:`, `--- FAIL` / `ok pkg 0.1s`, `test result:`, `Compiling x v1`, `error[E0308]`, `make: `, `file:1:2: error:`, `error TS2322:`, Maven `[INFO] BUILD`, Gradle `BUILD FAILED in`, `npm ERR!`. The reduced form keeps:
+
+- every line matching LogDx-CI's failure pattern `error|failed|failure|traceback|exception|assert|panic|exit code|##\[error\]` (case-insensitive), with 3 lines before and 8 after, overlapping windows merged, a window identical to an earlier one skipped, at most 8,000 characters of windows;
+- the last 40 lines;
+- runs of one repeated line folded to `<line> ×N`, gaps marked `… N lines …`;
+
+under `[smarter-compact: tool result compressed, test/build log of <lines> lines, <chars> chars, reduced to its failure lines and last 40 lines — smart_compact_get(id="<id>") returns the full text]`. It applies only when the reduced form is shorter. The full text goes to `blobs/<id>.txt` before the request leaves. The stored row keeps the full text with that `blob_id`, so the sweep keeps the blob, and a later mask or dedup pointer names the same blob. The decision is recorded in the trim state (`logs`: the item's index and fingerprint, the call id, the blob id), so later requests render the same bytes. A result already sent whole is never reduced. Reduction runs before head/tail [compression](context-proxy.md) (`CONTEXT_COMPRESS_OVER_TOKENS`), which skips the reduced form; results that are not logs still get head/tail. Each request that reduces logs writes a `log_reduce` event.
+
+Source: LogDx-CI: Benchmarking Log Reduction Tools for LLM Root-Cause Diagnosis ([arXiv 2605.28876](https://arxiv.org/html/2605.28876v1)). Its grep reducer is "Regex-filtered failure-pattern lines + 3/8 context" (Table 2); the pattern above is `baseline_grep`'s default in its [repository](https://github.com/eyuansu62/LogDx) (`tools/run_baseline.py`). The best hybrid, `hybrid-grep-120k-rtk-tail` (grep when it fits in 120k tokens, else RTK, else the last 200 lines), scored 0.747 in the agent loop against 0.749 for a gpt-5-mini summary (Table 5), at about $0.031 against $0.18 per case. This rule keeps grep plus a 40-line tail, since a single tool result is far below 120k tokens.
+
+Measured offline on `tb21-h55-inputs` and `tb21-h55-reuse` (48 trials) at `6000`: it fired once in 48 trials, on 1 of 1,633 tool results, and saved 21,528 characters on that result.
+
+## Error results (`CONTEXT_KEEP_ERRORS`)
+
+Off by default (`0`). With `K` > 0, each trim records the call ids of the K newest error tool results the view still shows whole (thread key `keep_errors`). Clearing, observation masking and input clearing leave those results and their calls' inputs whole until the next trim, which records a new set. A result already cleared stays cleared, so the set only moves forward and requests between trims render the same bytes. A result counts as an error when its block says so (Anthropic `is_error`, an OpenCode 2 `error` result) or a line of it starts with `Exit code N` (N ≠ 0), `Traceback (most recent call last)`, `<Name>Error: ` / `<Name>Exception: `, `FAILED`, `FAIL`, `ERROR` or `error: `, or contains `command not found` or `No such file or directory`. Results are cleared on the Anthropic route and in the OpenCode 2 / Pi plugin, so those are where this applies. A trim may still drop the turn that holds an error.
+
 ## Getting a result back
 
 One call returns a cleared result: `smart_compact_get(id="<id>")` with the id from its placeholder, in 12,000-character pages. Addressable Recall Compaction ([ARC](https://arxiv.org/abs/2607.25066)) motivates this: recalling compacted tool outputs by id beat similarity search on needle-in-a-haystack, 99.40% against 88.12%.

@@ -11,6 +11,9 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { withProxyEnvSecrets } from "./brand.mjs";
+import {
+  LEDGER_HEAD, LEDGER_MAX, REUSE_PREFIX, coreId, ledgerBlock, nudgeLine, reduceLog, reusePlaceholder, walk,
+} from "./context-ledger.mjs";
 import { contextRoot, sanitizeSessionId } from "./context-store.mjs";
 import { blobRef, chain, dropSession, openSession, scheduleEmbedding, storeSettings } from "./session-db.mjs";
 
@@ -177,6 +180,16 @@ export const TRIM_NEW = 2;
 export const DEFAULT_SCRATCHPAD_NUDGE_AT = 0.75;
 // A cleared tool call's input strings over this many characters become placeholders; same as proxy settings.py.
 export const DEFAULT_CLEAR_INPUTS_OVER_CHARS = 2000;
+// CONTEXT_STRIP_REASONING_MIN_TOKENS: the least reasoning a batched strip must take off; same as proxy settings.py.
+export const DEFAULT_STRIP_REASONING_MIN_TOKENS = 8000;
+// CONTEXT_LOG_REDUCE_OVER_CHARS decisions kept per session (trim state "logs"); same as core.LOG_MAX.
+const LOG_MAX = 512;
+// Thread keys of CONTEXT_STRIP_REASONING_EVERY, and keys a thread entry holds without a cut (core.py).
+const REASON_KEYS = ["reason", "reason_fp", "reason_batch"];
+const SIDE_KEYS = ["nudge_fp", "reason_batch"];
+// A tool result reporting a failure (CONTEXT_KEEP_ERRORS; no ledger observation); same as core._ERROR_RE, per line.
+const ERROR_RE = new RegExp("^Exit code [1-9]|Traceback \\(most recent call last\\)|^[A-Za-z_.]*(?:Error|Exception): "
+  + "|command not found|No such file or directory|^(?:FAILED|FAIL|ERROR)(?![A-Za-z0-9_])|^error(?:\\[E[0-9]+\\])?: ");
 /** Part types whose payload is binary; each is charged a flat 6400 characters (about 1600 tokens). */
 const BINARY_BLOCK_TYPES = new Set(["image", "document", "input_image", "input_file", "image_url", "file", "media"]);
 const BINARY_BLOCK_CHARS = 6400;
@@ -220,6 +233,15 @@ export function trimSettings(env = process.env, home = env.HOME) {
     reuseRules: flag("CONTEXT_REUSE_RULES"),
     // A new tool result identical to one still shown in full becomes a pointer to it (CONTEXT_DEDUP_RESULTS=0 off).
     dedupResults: flag("CONTEXT_DEDUP_RESULTS"),
+    // Execution ledger on new tool results, repeated reads pointed at or nudged (CONTEXT_LEDGER=1, default off).
+    ledger: flag("CONTEXT_LEDGER", "0"),
+    // Every N assistant steps, strip signed reasoning before the latest assistant message; 0 is off.
+    stripReasoningEvery: Math.max(int("CONTEXT_STRIP_REASONING_EVERY", 0), 0),
+    stripReasoningMinTokens: Math.max(int("CONTEXT_STRIP_REASONING_MIN_TOKENS", DEFAULT_STRIP_REASONING_MIN_TOKENS), 0),
+    // A new test/build tool result over N chars keeps its failure lines and tail; 0 is off.
+    logReduceOverChars: Math.max(int("CONTEXT_LOG_REDUCE_OVER_CHARS", 0), 0),
+    // The K newest error tool results stay whole through trim clearing and masking; 0 is off.
+    keepErrors: Math.max(int("CONTEXT_KEEP_ERRORS", 0), 0),
     trimAtTokens: int("CONTEXT_TRIM_AT_TOKENS", DEFAULT_TRIM_AT_TOKENS),
     trimAtByModel: int("CONTEXT_TRIM_AT_TOKENS", null) === null,
     trimDefault: overrides.default ?? DEFAULT_TRIM_AT_TOKENS,
@@ -695,7 +717,7 @@ export function chooseGap(items, cut, after, first, fits) {
  * gets each index that reaches the view mapped to its sent form (no note, undecorated, unmerged). Proxy render.
  */
 export function render(items, cut, note, first = null, gap = null, decorate = (m) => m, strip = null, clear = null,
-  mode = false, shown = null, inputs = 0, old = false) {
+  mode = false, shown = null, inputs = 0, old = false, exempt = null) {
   if (cut === null) {
     if (shown) items.forEach((x, j) => shown.set(j, x));
     return items.map(decorate);
@@ -703,8 +725,9 @@ export function render(items, cut, note, first = null, gap = null, decorate = (m
   const keep = keptIndices(items, cut, gap, first);
   const top = stripTop(items, old);
   const bound = strip === null ? top : Math.min(strip, top);
-  const ids = mode ? proseIds(items, keep, bound, cut, mode) : new Set();
-  const calls = inputs > 0 ? clearedCalls(items, clear, first) : new Set();
+  // CONTEXT_KEEP_ERRORS: no result or input of a call in `exempt` is masked (proxy _Exempt).
+  const ids = without(mode ? proseIds(items, keep, bound, cut, mode) : new Set(), exempt);
+  const calls = without(inputs > 0 ? clearedCalls(items, clear, first) : new Set(), exempt);
   const out = [];
   let mergeable = false;
   for (let j = 0; j < items.length; j++) {
@@ -721,7 +744,7 @@ export function render(items, cut, note, first = null, gap = null, decorate = (m
         region = true;
       }
     }
-    x = cleared(x, j, clear, first, inputs, calls);
+    x = cleared(x, j, clear, first, inputs, calls, exempt);
     shown?.set(j, x);
     if (j === cut) x = prependNote(decorate(x), note);
     else {
@@ -737,15 +760,20 @@ export function render(items, cut, note, first = null, gap = null, decorate = (m
   return out;
 }
 
-/** The message with each tool result whose id is in ids (every one when ids is null) and longer than its maskPlaceholder replaced by it; itself when none changes. */
-function maskResults(message, ids) {
+/** ids without the members of exempt; ids itself when exempt is empty. */
+function without(ids, exempt) {
+  return exempt?.size && ids?.size ? new Set([...ids].filter((id) => !exempt.has(id))) : ids;
+}
+
+/** The message with each tool result whose id is in ids (every one when ids is null) and not in exempt, and longer than its maskPlaceholder replaced by it; itself when none changes. */
+function maskResults(message, ids, exempt = null) {
   const content = parts(message);
   let next = null;
   content.forEach((p, i) => {
-    if (p?.type !== "tool-result" || (ids && !ids.has(p.id))) return;
+    if (p?.type !== "tool-result" || (ids && !ids.has(p.id)) || exempt?.has(p.id)) return;
     const text = resultText(p.result);
     const placeholder = maskPlaceholder(text);
-    if (cpLen(text) <= cpLen(placeholder) || text.startsWith(DEDUP_PREFIX)) return;
+    if (cpLen(text) <= cpLen(placeholder) || text.startsWith(DEDUP_PREFIX) || text.startsWith(REUSE_PREFIX)) return;
     next ??= [...content];
     next[i] = { ...p, result: { type: p.result?.type === "error" ? "error" : "text", value: placeholder } };
   });
@@ -807,9 +835,9 @@ function mergeMessages(a, b) {
  * clear bound (the first user turn and pinned messages aside), and the inputs of its calls in `calls` (clearedCalls)
  * over `inputs` chars; the message itself otherwise. Proxy _cleared.
  */
-export function cleared(message, j, clear, first, inputs = 0, calls = null) {
+export function cleared(message, j, clear, first, inputs = 0, calls = null, exempt = null) {
   if (clear === null || j >= clear || j === first || isPinned(message)) return message;
-  return maskInputs(maskResults(message, null), calls, inputs);
+  return maskInputs(maskResults(message, null, exempt), without(calls, exempt), inputs);
 }
 
 /** Call ids whose result the clear bound clears: every result of a message before it (first and pinned aside). Proxy _cleared_calls. */
@@ -843,10 +871,10 @@ function nextClear(items, keepResults, clear) {
 }
 
 /** Whether bound next masks a result (or an input) of a kept message that bound old leaves whole. */
-function clearsMore(items, keep, old, next, first, inputs = 0) {
+function clearsMore(items, keep, old, next, first, inputs = 0, exempt = null) {
   if (next === null) return false;
   const calls = inputs > 0 ? clearedCalls(items, next, first) : null;
-  return [...keep].some((j) => (old === null || j >= old) && cleared(items[j], j, next, first, inputs, calls) !== items[j]);
+  return [...keep].some((j) => (old === null || j >= old) && cleared(items[j], j, next, first, inputs, calls, exempt) !== items[j]);
 }
 
 /** Index where the trailing run of assistant messages ending at the last one starts; items.length if none. */
@@ -1014,7 +1042,10 @@ function deduped(items, found) {
     let x = items[j];
     for (const d of decisions) {
       const text = resultTexts(x).get(d.id);
-      if (text !== undefined && (compressedBlobId(text) || blobId(text)) === d.bid) x = replacedResult(x, d.id, dedupPlaceholder(text));
+      if (text === undefined || (compressedBlobId(text) || blobId(text)) !== d.bid) continue;
+      // CONTEXT_LEDGER reuse decisions carry their recorded pointer.
+      const ptr = d.kind === "reuse" ? d.ptr : dedupPlaceholder(text);
+      if (typeof ptr === "string") x = replacedResult(x, d.id, ptr);
     }
     if (x !== items[j]) {
       out ??= [...items];
@@ -1035,12 +1066,166 @@ function dedupNew(items, shown, found) {
     const whole = j > last ? resultTexts(items[j]) : new Map();
     for (const [id, text] of resultTexts(shown.get(j))) {
       if (j > last && !decided.has(id) && seen.has(text) && cpLen(text) >= DEDUP_MIN_CHARS && whole.get(id) === text
-          && !text.startsWith(DEDUP_PREFIX) && !text.startsWith(MASK_PREFIX)) {
+          && !text.startsWith(DEDUP_PREFIX) && !text.startsWith(MASK_PREFIX) && !text.startsWith(REUSE_PREFIX)) {
         out.push([{ at: j, fp: fingerprint(items[j]), id, src: seen.get(text), bid: compressedBlobId(text) || blobId(text) }, text]);
       } else if (!seen.has(text)) seen.set(text, id);
     }
   }
   return out;
+}
+
+const lastAssistant = (items) => items.findLastIndex((x) => x?.role === "assistant");
+
+/** Whether a tool result reports a failure: an error result, else an ERROR_RE line (proxy _is_error). */
+export function isErrorResult(isError, text) {
+  return Boolean(isError) || String(text || "").split("\n").some((line) => ERROR_RE.test(line));
+}
+
+/**
+ * {items, fresh}: items with each recorded CONTEXT_LOG_REDUCE_OVER_CHARS decision's result, and each new one's, shown as
+ * its reduceLog form, then compressed as usual; fresh the new decisions (text results after the last assistant
+ * message that reduceLog takes). Proxy _log_reduced.
+ */
+function logReduced(original, items, decisions, settings, store) {
+  const found = decisions.length ? dedupFound(original, decisions) : new Map();
+  const last = lastAssistant(original);
+  const fresh = [];
+  for (let j = last >= 0 ? last + 1 : original.length; j < original.length; j++) {
+    if (found.has(j)) continue;
+    for (const [id, text] of resultTexts(original[j])) {
+      if (!reduceLog(text, settings.logReduceOverChars)) continue;
+      const d = { at: j, fp: fingerprint(original[j]), id, bid: blobId(text) };
+      fresh.push(d);
+      found.set(j, [...(found.get(j) ?? []), d]);
+    }
+  }
+  let out = null;
+  for (const [j, ds] of found) {
+    let x = original[j];
+    for (const d of ds) {
+      const text = resultTexts(x).get(d.id);
+      const r = text !== undefined && blobId(text) === d.bid ? reduceLog(text, 1) : null;
+      if (!r) continue;
+      store.writeBlob(r.id, text);
+      x = replacedResult(x, d.id, r.reduced);
+    }
+    if (x === original[j]) continue;
+    if (settings.compressOverTokens > 0) x = compressMessage(x, settings.compressOverTokens, (id, t) => store.writeBlob(id, t));
+    out ??= [...items];
+    out[j] = x;
+  }
+  return { items: out ?? items, fresh };
+}
+
+/** Call ids of the k newest error tool results the view (shown) still carries whole, newest first; proxy _error_ids. */
+function errorIds(items, k, shown) {
+  const out = [];
+  for (let j = items.length - 1; j >= 0; j--) {
+    if (!shown.has(j)) continue;
+    const results = new Map(parts(items[j]).filter((p) => p?.type === "tool-result").map((p) => [p.id, p.result]));
+    const now = new Map(parts(shown.get(j)).filter((p) => p?.type === "tool-result").map((p) => [p.id, resultText(p.result)]));
+    for (const [id, result] of [...results].reverse()) {
+      const text = resultText(result);
+      if (isErrorResult(result?.type === "error", text) && now.has(id) && now.get(id) === text) {
+        out.push(id);
+        if (out.length >= k) return out;
+      }
+    }
+  }
+  return out;
+}
+
+/** items with signed reasoning stripped from every assistant message before bound, never emptying one; proxy _reason_stripped. */
+function reasonStripped(items, bound) {
+  if (bound === null) return items;
+  let out = null;
+  for (let j = 0; j < Math.min(bound, items.length); j++) {
+    const x = items[j];
+    const bare = x?.role === "assistant" ? bareOf(x, true) : x;
+    if (bare === null || bare === x) continue;
+    out ??= [...items];
+    out[j] = bare;
+  }
+  return out ?? items;
+}
+
+const pickKeys = (entry, keys) => Object.fromEntries(Object.entries(entry ?? {}).filter(([k]) => keys.includes(k)));
+
+/** [j, result id, tool name, args, text, isError] of each tool result whose call the items hold; proxy _ledger_steps. */
+function ledgerSteps(items) {
+  const calls = new Map();
+  const steps = [];
+  items.forEach((x, j) => {
+    for (const p of parts(x)) if (p?.type === "tool-call") calls.set(p.id, [p.name, isObject(p.input) ? p.input : {}]);
+    const results = new Map(parts(x).filter((p) => p?.type === "tool-result").map((p) => [p.id, p.result]));
+    for (const [id, result] of results) {
+      if (!calls.has(id)) continue;
+      const [name, args] = calls.get(id);
+      calls.delete(id);
+      const text = resultText(result);
+      steps.push([j, id, name, args, text, isErrorResult(result?.type === "error", text)]);
+    }
+  });
+  return steps;
+}
+
+/** Whether the view (shown) carries result id of items[j] in full; proxy _visible. */
+function visibleIn(items, shown, j, id) {
+  const full = j >= 0 && j < items.length ? resultTexts(items[j]).get(id) : undefined;
+  const now = shown.has(j) ? resultTexts(shown.get(j)).get(id) : undefined;
+  return full !== undefined && now !== undefined && now.startsWith(full);
+}
+
+/** {state, reuse: [[decision, text]], nudges} for the new tool results under CONTEXT_LEDGER; proxy _ledger_new. */
+function ledgerNew(items, shown, found, fresh) {
+  const last = lastAssistant(items);
+  if (last < 0) return { state: null, reuse: [], nudges: [] };
+  const { state, repeats } = walk(ledgerSteps(items), last + 1);
+  const key = (j, id) => JSON.stringify([j, id]);
+  const decided = new Set([...[...found].flatMap(([j, ds]) => ds.map((d) => key(j, d.id))), ...fresh.map(([d]) => key(d.at, d.id))]);
+  const gone = new Set(fresh.map(([d]) => key(d.at, d.src)));
+  const reuse = [];
+  const nudges = [];
+  for (const r of repeats) {
+    if (decided.has(key(r.j, r.rid))) continue;
+    if ("test" in r) {
+      nudges.push(nudgeLine(r));
+      continue;
+    }
+    const src = r.covers.find(([j, id]) => !decided.has(key(j, id)) && !gone.has(key(j, id)) && visibleIn(items, shown, j, id)) ?? null;
+    const text = resultTexts(items[r.j]).get(r.rid);
+    if (src === null) nudges.push(nudgeLine(r));
+    else if (text !== undefined && cpLen(text) >= DEDUP_MIN_CHARS
+        && ![DEDUP_PREFIX, MASK_PREFIX, REUSE_PREFIX].some((prefix) => text.startsWith(prefix))) {
+      const bid = compressedBlobId(text) || blobId(text);
+      reuse.push([{ kind: "reuse", at: r.j, fp: fingerprint(items[r.j]), id: r.rid, src: src[1], bid, ptr: reusePlaceholder(r, bid) }, text]);
+      decided.add(key(r.j, r.rid));
+    }
+  }
+  return { state, reuse, nudges };
+}
+
+/** items with each recorded ledger block at or after index lo appended to its message; proxy _ledgered. */
+function ledgered(items, found, lo) {
+  for (const j of [...found.keys()].sort((a, b) => a - b)) {
+    if (lo !== null && j < lo) continue;
+    for (const d of found.get(j)) items = nudged(items, j, typeof d.text === "string" ? d.text : null);
+  }
+  return items;
+}
+
+/** The ledger block decision for this request's newest message, or null; proxy _ledger_block. */
+function newLedgerBlock(items, sent, state, nudges, found) {
+  const j = items.length - 1;
+  const last = lastAssistant(items);
+  if (state === null || last < 0 || j <= last || found.has(j) || !parts(items[j]).some((p) => p?.type === "tool-result")) return null;
+  const tail = nudges.length ? `\nRepeats in this batch:\n${nudges.slice(0, 3).join("\n")}` : "";
+  const core = ledgerBlock(state, cpLen(tail));
+  const prev = found.size ? found.get(Math.max(...found.keys())).at(-1)?.core ?? null : null;
+  if (!(core || tail) || (!tail && coreId(core) === prev)) return null;
+  const text = (core || LEDGER_HEAD) + tail;
+  if (nudged(sent, j, text) === sent) return null;
+  return { at: j, fp: fingerprint(items[j]), text, core: coreId(core) };
 }
 
 /** Start of every cleared tool-input string's placeholder; never re-masked. Same as compress.INPUT_MASK_PREFIX. */
@@ -1196,10 +1381,10 @@ function proseIds(items, keep, bound, cut, mode) {
 }
 
 /** Shrink sizes (requestChars per message; sizeChars with `old`) to what prose stripping (or masking) leaves before stripTop. */
-function proseSizes(items, cut, sizes, mode, inputs = 0, old = false) {
+function proseSizes(items, cut, sizes, mode, inputs = 0, old = false, exempt = null) {
   const keep = new Set(items.keys());
   const bound = stripTop(items, old);
-  const ids = proseIds(items, keep, bound, cut, mode);
+  const ids = without(proseIds(items, keep, bound, cut, mode), exempt);
   if (!ids.size) return;
   for (const j of proseRegion(items, keep, bound, cut, mode)) {
     const x = mode === "mask" ? maskInputs(maskResults(items[j], ids), ids, inputs) : withoutToolCalls(items[j], ids);
@@ -1211,12 +1396,12 @@ function proseSizes(items, cut, sizes, mode, inputs = 0, old = false) {
  * requestChars per message after prose stripping or masking (mode) and clearing before `clear`, inputs over `inputs`
  * chars included; with `old` sizes carry signed payloads (sizeChars) less the reasoning stripped before stripTop. Proxy _trim_sizes.
  */
-function trimSizes(items, cut, mode, clear, first, inputs = 0, old = false) {
+function trimSizes(items, cut, mode, clear, first, inputs = 0, old = false, exempt = null) {
   const sizes = items.map((x) => sizeChars(old, x));
-  if (mode) proseSizes(items, cut, sizes, mode, inputs, old);
+  if (mode) proseSizes(items, cut, sizes, mode, inputs, old, exempt);
   const calls = inputs > 0 ? clearedCalls(items, clear, first) : null;
   for (let j = 0; j < (clear ?? 0); j++) {
-    const x = cleared(items[j], j, clear, first, inputs, calls);
+    const x = cleared(items[j], j, clear, first, inputs, calls, exempt);
     if (x !== items[j]) sizes[j] = Math.min(sizes[j], sizeChars(old, x));
   }
   if (old) {
@@ -1485,43 +1670,115 @@ async function trimSession(request, settings, deps, { original, sid, store, item
     const state = store.loadTrim(sid);
     const { threads } = state;
     const thread = threads.get(root);
+    let logFresh = [];
+    if (settings.logReduceOverChars > 0) {
+      // CONTEXT_LOG_REDUCE_OVER_CHARS: decided on a result's first request, recorded, rendered on every later one.
+      const logs = Array.isArray(state.logs) ? state.logs : [];
+      ({ items, fresh: logFresh } = logReduced(original, items, logs, settings, store));
+      if (logFresh.length) {
+        state.logs = [...logs, ...logFresh].slice(-LOG_MAX);
+        store.saveTrim(sid, state);
+      }
+    }
     // CONTEXT_DEDUP_RESULTS: recorded pointers render on every request; fingerprints stay on the original items.
-    const dedup = settings.dedupResults !== false && Array.isArray(state.dedup) ? state.dedup : [];
-    const found = dedup.length ? dedupFound(items, dedup) : new Map();
-    const base = deduped(items, found);
+    // CONTEXT_LEDGER reuse pointers share the list ("kind": "reuse").
+    const raw = (settings.dedupResults !== false || settings.ledger) && Array.isArray(state.dedup) ? state.dedup : [];
+    const dedup = raw.filter((d) => isObject(d) && (d.kind === "reuse" ? Boolean(settings.ledger) : settings.dedupResults !== false));
+    let found = dedup.length ? dedupFound(items, dedup) : new Map();
+    const ledgers = settings.ledger && Array.isArray(state.ledger) ? state.ledger : [];
+    let lfound = ledgers.length ? dedupFound(items, ledgers) : new Map();
+    const every = settings.stripReasoningEvery ?? 0;
+    let rbound = every > 0 && thread?.reason_fp ? locate(items, thread.reason, thread.reason_fp) : null;
+    const reasonLocated = rbound !== null || !thread?.reason_fp;
+    const makeBase = (decided) => reasonStripped(deduped(items, decided), rbound);
+    let base = makeBase(found);
     let cut = null;
     let gap = null;
     let strip = null;
     let note = null;
     let clear = null;
+    let exempt = null;
+    let llo = null;
     const nudgeAt = thread?.nudge_fp ? locate(items, thread.nudge_at, thread.nudge_fp) : null;
-    // A thread holding only a scratchpad nudge has no cut to locate.
-    if (thread && (thread.cut_fp || !("nudge_fp" in thread))) {
+    // A thread holding only a scratchpad nudge or batched reasoning state has no cut to locate.
+    if (thread && (thread.cut_fp || !SIDE_KEYS.some((k) => k in thread))) {
       cut = locate(items, thread.cut, thread.cut_fp);
-      if (cut === null) threads.delete(root);
-      else {
+      if (cut === null) {
+        threads.delete(root);
+        const carried = pickKeys(thread, REASON_KEYS);
+        if (Object.keys(carried).length) {
+          threads.set(root, { format: FORMAT, updated: utcNow(deps.now?.()), ...carried });
+          store.saveTrim(sid, state);
+        }
+      } else {
         note = thread.note;
         if (thread.gap_fp) gap = locate(items, thread.gap, thread.gap_fp, cut + 2);
         // From 0: a trim on the last user turn records strip as the reply before the cut.
         if (thread.strip_fp) strip = locate(items, thread.strip, thread.strip_fp);
         if (thread.clear_fp) clear = locate(items, thread.clear, thread.clear_fp);
+        // CONTEXT_KEEP_ERRORS: the error results the last trim exempted stay whole until the next trim.
+        if (settings.keepErrors > 0 && Array.isArray(thread.keep_errors) && thread.keep_errors.length) exempt = new Set(thread.keep_errors);
+        if (settings.ledger && thread.ledger_from_fp) llo = locate(items, thread.ledger_from, thread.ledger_from_fp);
       }
     }
     let shown = new Map();
     const mode = regionMode(settings);
-    // The items as sent: the recorded nudge stays on its item, byte-identical, until the next trim.
-    let sent = nudged(base, nudgeAt, threads.has(root) ? thread.nudge : null);
+    // The items as sent: the recorded nudge stays on its item, byte-identical, until the next trim, and so do the
+    // recorded ledger blocks from llo on (CONTEXT_LEDGER).
+    let nudgePos = nudgeAt;
+    let nudgeText = threads.has(root) ? threads.get(root).nudge : null;
+    const dress = (b) => ledgered(nudged(b, nudgePos, nudgeText), lfound, llo);
+    let sent = dress(base);
     const inputs = settings.clearInputsOverChars ?? 0;
     const old = Boolean(settings.stripOldReasoning);
-    let rendered = render(sent, cut, note, first, gap, decorate, strip, clear, mode, shown, inputs, old);
+    let rendered = render(sent, cut, note, first, gap, decorate, strip, clear, mode, shown, inputs, old, exempt);
     const force = store.forceRequested(sid);
     const ratio = settings.charsPerToken > 0 ? settings.charsPerToken : DEFAULT_CHARS_PER_TOKEN;
     const toolNames = recallToolNames(request.tools);
     const baseChars = requestChars(request.system, request.tools);
-    const tokens = estimatePromptTokens(baseChars + sizeChars(old, rendered), state.usage, root, ratio);
+    let tokens = estimatePromptTokens(baseChars + sizeChars(old, rendered), state.usage, root, ratio);
+    let reasonEvent = null;
+    if (every > 0) {
+      // CONTEXT_STRIP_REASONING_EVERY: at each new batch of `every` assistant steps the reasoning bound may move to the
+      // latest assistant message, when that strips at least stripReasoningMinTokens.
+      const batch = Math.floor(items.filter((x) => x?.role === "assistant").length / every);
+      const lastBatch = reasonLocated ? thread?.reason_batch : null;
+      if (batch > 0 && (!Number.isInteger(lastBatch) || batch > lastBatch)) {
+        const entry = threads.get(root) ?? { format: FORMAT, updated: utcNow(deps.now?.()) };
+        if (!reasonLocated) for (const k of REASON_KEYS) delete entry[k];
+        entry.reason_batch = batch;
+        threads.set(root, entry);
+        const top = latestMessageStart(items);
+        if (top < items.length && (rbound === null || top > rbound)) {
+          const movedBase = reasonStripped(base, top);
+          const movedShown = new Map();
+          const rsent = ledgered(nudged(movedBase, nudgePos, nudgeText), lfound, llo);
+          const rview = render(rsent, cut, note, first, gap, decorate, strip, clear, mode, movedShown, inputs, old, exempt);
+          const freed = estimatePromptTokens(baseChars + sizeChars(true, rendered), state.usage, root, ratio)
+            - estimatePromptTokens(baseChars + sizeChars(true, rview), state.usage, root, ratio);
+          if (movedBase !== base && freed >= (settings.stripReasoningMinTokens ?? DEFAULT_STRIP_REASONING_MIN_TOKENS)) {
+            Object.assign(entry, { reason: top, reason_fp: fingerprint(items[top]) });
+            [rbound, base, sent, rendered, shown] = [top, movedBase, rsent, rview, movedShown];
+            const after = estimatePromptTokens(baseChars + sizeChars(old, rendered), state.usage, root, ratio);
+            reasonEvent = { tokens_before: tokens, tokens_after: after, dropped: 0 };
+            tokens = after;
+          }
+        }
+        while (threads.size > MAX_THREADS) threads.delete(threads.keys().next().value);
+        store.saveTrim(sid, state);
+      }
+    }
     const trimAt = trimAtFor(settings, request.model);
     if (force || tokens >= trimAt) {
       const nextClearAt = nextClear(items, settings.clearKeepResults, clear);
+      // CONTEXT_KEEP_ERRORS: the trim exempts the newest error results the view still shows whole.
+      const nextExempt = settings.keepErrors > 0 ? errorIds(items, settings.keepErrors, shown) : [];
+      const tExempt = nextExempt.length ? new Set(nextExempt) : null;
+      // CONTEXT_LEDGER: a trim keeps only the newest recorded ledger block.
+      const nextLlo = lfound.size ? Math.max(...lfound.keys()) : llo;
+      const tbase = ledgered(base, lfound, nextLlo);
+      // Reasoning the batched strip already took off counts as gone (CONTEXT_STRIP_REASONING_EVERY).
+      const ritems = reasonStripped(items, rbound);
       // A target at or above the threshold could not land a trim under it, so the threshold caps it.
       const target = Math.min(trimToFor(settings, request.model), trimAt);
       const under = (sizes, c, g) => {
@@ -1534,16 +1791,16 @@ async function trimSession(request, settings, deps, { original, sid, store, item
       const [anchor, anchorGap] = cut !== null ? [cut, gap] : [first, null];
       // With `old`, stripping earlier reasoning settles a trim like clearing; a forced trim still drops turns.
       const strips = old && !force && first !== null
-        && stripsMore(items, keptIndices(items, anchor, anchorGap, first), cut, strip, stripTop(items, old));
+        && stripsMore(ritems, keptIndices(items, anchor, anchorGap, first), cut, strip, stripTop(items, old));
       if ((nextClearAt !== null || strips) && first !== null) {
         // Clearing (and stripping) first: the current cut, or the first user turn (dropping nothing).
-        if (under(trimSizes(base, anchor, mode, nextClearAt, first, inputs, old), anchor, anchorGap)) [next, nextGap] = [anchor, anchorGap];
+        if (under(trimSizes(base, anchor, mode, nextClearAt, first, inputs, old, tExempt), anchor, anchorGap)) [next, nextGap] = [anchor, anchorGap];
       }
       if (next === null) {
         next = chooseCut(items, cut === null ? -1 : cut, first);
         if (next === null) next = cut !== null ? cut : lastTurnIndex(items);
         if (next !== null) {
-          const sizes = trimSizes(base, next, mode, nextClearAt, first, inputs, old);
+          const sizes = trimSizes(base, next, mode, nextClearAt, first, inputs, old, tExempt);
           const after = next === cut && gap !== null ? gap : next + 1;
           nextGap = chooseGap(items, next, after, first, (g) => under(sizes, next, g));
           if (nextGap === null && next === cut) nextGap = gap;
@@ -1555,13 +1812,13 @@ async function trimSession(request, settings, deps, { original, sid, store, item
       if (next !== null && !moved) {
         // A newer clear bound alone moves the trim when it masks a result the current bound left whole.
         const kept = keptIndices(items, next, nextGap, first);
-        moved = clearsMore(base, kept, clear, nextClearAt, first, inputs);
+        moved = clearsMore(base, kept, clear, nextClearAt, first, inputs, tExempt);
         // So does a strip bound that takes reasoning off a message the current view still sends.
-        if (!moved && old) moved = stripsMore(items, kept, cut, strip, nextStrip);
+        if (!moved && old) moved = stripsMore(ritems, kept, cut, strip, nextStrip);
       }
       const nextShown = new Map();
       if (moved) {
-        const bare = render(base, next, "", first, nextGap, decorate, nextStrip, nextClearAt, mode, nextShown, inputs, old);
+        const bare = render(tbase, next, "", first, nextGap, decorate, nextStrip, nextClearAt, mode, nextShown, inputs, old, tExempt);
         if (!force && settings.trimMinGainTokens > 0) {
           // A cut freeing fewer estimated tokens (pointer note not counted) waits for a bigger one.
           moved = tokens - estimatePromptTokens(baseChars + sizeChars(old, bare), state.usage, root, ratio) >= settings.trimMinGainTokens;
@@ -1571,7 +1828,7 @@ async function trimSession(request, settings, deps, { original, sid, store, item
         const ts = utcNow(deps.now?.());
         // The pointer counts every message absent from the view: dropped, or emptied by the strip.
         dropped = items.length - nextShown.size;
-        const masked = (mode === "mask" || nextClearAt !== null) && [...nextShown].some(([j, x]) => x !== base[j]
+        const masked = (mode === "mask" || nextClearAt !== null) && [...nextShown].some(([j, x]) => x !== tbase[j]
           && [MASK_PREFIX, INPUT_MASK_PREFIX].some((prefix) => JSON.stringify(x.content ?? null).includes(prefix)));
         if (old && !dropped && !masked) {
           // Stripping earlier reasoning alone drops and masks nothing.
@@ -1586,8 +1843,11 @@ async function trimSession(request, settings, deps, { original, sid, store, item
         }
         const pad = settings.scratchpad ? store.readScratchpad(sid) : "";
         if (pad) note = `${scratchpadBlock(pad)}\n${note}`; // first, ahead of the recall instructions
+        const carried = pickKeys(threads.get(root), REASON_KEYS);
         threads.delete(root);
-        const entry = { cut: next, cut_fp: fingerprint(items[next]), note, format: FORMAT, updated: ts };
+        const entry = { cut: next, cut_fp: fingerprint(items[next]), note, format: FORMAT, updated: ts, ...carried };
+        if (nextExempt.length) entry.keep_errors = nextExempt;
+        if (nextLlo !== null && settings.ledger) Object.assign(entry, { ledger_from: nextLlo, ledger_from_fp: fingerprint(items[nextLlo]) });
         if (nextGap !== null) Object.assign(entry, { gap: nextGap, gap_fp: fingerprint(items[nextGap]) });
         strip = nextStrip;
         if (strip < items.length) Object.assign(entry, { strip, strip_fp: fingerprint(items[strip]) });
@@ -1597,14 +1857,14 @@ async function trimSession(request, settings, deps, { original, sid, store, item
         store.saveTrim(sid, state);
         if (force) store.clearForce(sid);
         shown = new Map();
-        rendered = render(base, next, note, first, nextGap, decorate, strip, nextClearAt, mode, shown, inputs, old);
+        rendered = render(tbase, next, note, first, nextGap, decorate, strip, nextClearAt, mode, shown, inputs, old, tExempt);
         cut = next;
         gap = nextGap;
         clear = nextClearAt;
         const after = estimatePromptTokens(baseChars + sizeChars(old, rendered), state.usage, root, ratio);
         trim = { tokens_before: tokens, tokens_after: after, dropped };
         if (settings.scratchpad) trim.scratchpad_chars = Math.min(pad.length, SCRATCHPAD_MAX_CHARS);
-        sent = base;
+        [sent, exempt, nudgePos, llo] = [tbase, tExempt, null, nextLlo];
       } else if (thread && cut === null && !threads.has(root)) store.saveTrim(sid, state);
     } else if (thread && cut === null && !threads.has(root)) store.saveTrim(sid, state);
     let nudge = null;
@@ -1619,28 +1879,49 @@ async function trimSession(request, settings, deps, { original, sid, store, item
         threads.set(root, entry);
         while (threads.size > MAX_THREADS) threads.delete(threads.keys().next().value);
         store.saveTrim(sid, state);
-        sent = nudged(base, last, text);
+        [nudgePos, nudgeText] = [last, text];
+        sent = dress(base);
         shown = new Map();
-        rendered = render(sent, cut, note, first, gap, decorate, strip, clear, mode, shown, inputs, old);
+        rendered = render(sent, cut, note, first, gap, decorate, strip, clear, mode, shown, inputs, old, exempt);
         nudge = { tokens_before: tokens };
       }
     }
     const ts = utcNow(deps.now?.());
     const fresh = settings.dedupResults !== false ? dedupNew(items, shown, found) : [];
-    if (fresh.length) {
+    const { state: lstate, reuse, nudges: lnudges } = settings.ledger ? ledgerNew(items, shown, found, fresh)
+      : { state: null, reuse: [], nudges: [] };
+    if (fresh.length || reuse.length) {
       // Recorded before the request leaves, so every later request renders the same pointer.
-      for (const [d, text] of fresh) if (!compressedBlobId(text)) store.writeBlob(d.bid, text);
-      state.dedup = [...dedup, ...fresh.map(([d]) => d)].slice(-DEDUP_MAX);
+      for (const [d, text] of [...fresh, ...reuse]) if (!compressedBlobId(text)) store.writeBlob(d.bid, text);
+      state.dedup = [...raw, ...[...fresh, ...reuse].map(([d]) => d)].slice(-DEDUP_MAX);
       store.saveTrim(sid, state);
-      sent = deduped(sent, dedupFound(items, fresh.map(([d]) => d)));
+      if (settings.ledger) {
+        // Rebuilt in the order every later request renders: pointers, then the nudge and ledger blocks.
+        found = dedupFound(items, [...dedup, ...[...fresh, ...reuse].map(([d]) => d)]);
+        base = makeBase(found);
+        sent = dress(base);
+      } else sent = deduped(sent, dedupFound(items, fresh.map(([d]) => d)));
       shown = new Map();
-      rendered = render(sent, cut, note, first, gap, decorate, strip, clear, mode, shown, inputs, old);
+      rendered = render(sent, cut, note, first, gap, decorate, strip, clear, mode, shown, inputs, old, exempt);
+    }
+    const block = settings.ledger ? newLedgerBlock(items, sent, lstate, lnudges, lfound) : null;
+    if (block) {
+      // Recorded on the newest message, so every later request re-renders the block unchanged.
+      state.ledger = [...ledgers, block].slice(-LEDGER_MAX);
+      store.saveTrim(sid, state);
+      lfound = new Map([...lfound, [block.at, [block]]]);
+      sent = dress(base);
+      shown = new Map();
+      rendered = render(sent, cut, note, first, gap, decorate, strip, clear, mode, shown, inputs, old, exempt);
     }
     writeMaskedBlobs(store, sent, shown);
     storeMessages(store, sid, settings, original, sent, cut, shown, ts, deps);
     if (trim) recordEvent(store, sid, "trim", trim, ts);
     if (nudge) recordEvent(store, sid, "nudge", nudge, ts);
     if (fresh.length) recordEvent(store, sid, "dedup", { dropped: fresh.length }, ts);
+    if (reuse.length) recordEvent(store, sid, "reuse", { dropped: reuse.length }, ts);
+    if (reasonEvent) recordEvent(store, sid, "strip_batch", reasonEvent, ts);
+    if (logFresh.length) recordEvent(store, sid, "log_reduce", { dropped: logFresh.length }, ts);
     trimmed = trim ? TRIM_NEW : cut !== null ? TRIM_KEPT : TRIM_NONE;
     return rendered;
   });

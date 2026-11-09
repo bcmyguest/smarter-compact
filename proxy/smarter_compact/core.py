@@ -17,6 +17,7 @@ from pathlib import Path
 
 from . import embed as embed_mod
 from . import evict as evict_mod
+from . import ledger as ledger_mod
 from . import sessiondb
 from . import status as status_mod
 from . import ttl as ttl_mod
@@ -26,11 +27,13 @@ from .compress import (
     DEDUP_PREFIX,
     INPUT_MASK_PREFIX,
     MASK_PREFIX,
+    REUSE_PREFIX,
     blob_id,
     cleared_inputs,
     compressed_blob_id,
     dedup_placeholder,
     mask_placeholder,
+    reduce_log,
     result_blob_id,
 )
 from .session import resolve_session_id
@@ -112,6 +115,17 @@ _BUILD_RE = re.compile(
 _EXIT_RE = re.compile(r"\bexit(?:ed with)?(?: code| status)?:? (-?\d+)", re.IGNORECASE)
 # A thread entry's CONTEXT_EVICTION state: the sticky id set, its batch number, and the item it was computed on.
 EVICT_KEYS = ("evict", "evict_batch", "evict_at", "evict_fp")
+# A thread entry's CONTEXT_STRIP_REASONING_EVERY state: the reasoning bound, its fingerprint, the last batch checked.
+REASON_KEYS = ("reason", "reason_fp", "reason_batch")
+# Keys a thread entry may hold without a cut: the scratchpad nudge, eviction and batched reasoning state.
+SIDE_KEYS = frozenset(("nudge_fp", "evict_fp", "reason_batch"))
+# CONTEXT_LOG_REDUCE_OVER_CHARS decisions kept per session (trim state "logs"), oldest dropped first.
+LOG_MAX = 512
+# A tool result that reports a failure (CONTEXT_KEEP_ERRORS, and no ledger observation): a nonzero exit, a traceback,
+# an exception line, a missing command or file, a test or compiler failure line. Matched per line, as in the plugin.
+_ERROR_RE = re.compile(
+    r"^Exit code [1-9]|Traceback \(most recent call last\)|^[A-Za-z_.]*(?:Error|Exception): |command not found"
+    r"|No such file or directory|^(?:FAILED|FAIL|ERROR)(?![A-Za-z0-9_])|^error(?:\[E[0-9]+\])?: ")
 
 
 def recall_tool_names(tools):
@@ -368,14 +382,17 @@ def _dedup_found(items, decisions):
 
 
 def _deduped(adapter, items, found):
-    """items with each found decision's result shown as its dedup_placeholder; items itself when none changes."""
+    """items with each found decision's result shown as its dedup_placeholder, or a CONTEXT_LEDGER reuse decision's
+    recorded pointer; items itself when none changes."""
     out = None
     for j, decisions in found.items():
         x = items[j]
         for d in decisions:
             text = adapter.result_texts(x).get(d.get("id"))
             if text is not None and result_blob_id(text) == d.get("bid"):
-                x = adapter.replaced_result(x, d["id"], dedup_placeholder(text))
+                ptr = d.get("ptr") if d.get("kind") == "reuse" else dedup_placeholder(text)
+                if isinstance(ptr, str):
+                    x = adapter.replaced_result(x, d["id"], ptr)
         if x is not items[j]:
             out = out or list(items)
             out[j] = x
@@ -394,12 +411,185 @@ def _dedup_new(adapter, items, shown, found):
         whole = adapter.result_texts(items[j]) if j > last else {}
         for rid, text in adapter.result_texts(shown[j]).items():
             if j > last and rid not in decided and text in seen and len(text) >= DEDUP_MIN_CHARS \
-                    and whole.get(rid) == text and not text.startswith((DEDUP_PREFIX, MASK_PREFIX)):
+                    and whole.get(rid) == text and not text.startswith((DEDUP_PREFIX, MASK_PREFIX, REUSE_PREFIX)):
                 new.append(({"at": j, "fp": fingerprint(items[j]), "id": rid, "src": seen[text],
                              "bid": result_blob_id(text)}, text))
             else:
                 seen.setdefault(text, rid)
     return new
+
+
+def _last_assistant(adapter, items):
+    return max((j for j, x in enumerate(items) if adapter.is_assistant(x)), default=None)
+
+
+def _is_error(is_error, text):
+    """Whether a tool result reports a failure: the error flag, else an _ERROR_RE line."""
+    return bool(is_error) or any(_ERROR_RE.search(line) for line in (text or "").split("\n"))
+
+
+def _log_reduced(adapter, original, items, decisions, settings, store):
+    """(items with each recorded CONTEXT_LOG_REDUCE_OVER_CHARS decision's result, and each new one's, shown as its
+    reduce_log form, then compressed as usual; new decisions). A new decision is a text tool result after the last
+    assistant item, over the setting, that reduce_log takes; a recorded one renders whatever the setting now is."""
+    found = _dedup_found(original, decisions) if decisions else {}
+    last = _last_assistant(adapter, original)
+    new = []
+    for j in range(last + 1 if last is not None else len(original), len(original)):
+        if j in found:
+            continue
+        for rid, text in adapter.result_texts(original[j]).items():
+            if reduce_log(text, settings.log_reduce_over_chars):
+                d = {"at": j, "fp": fingerprint(original[j]), "id": rid, "bid": blob_id(text)}
+                new.append(d)
+                found.setdefault(j, []).append(d)
+    out = None
+    for j, ds in found.items():
+        x = original[j]
+        for d in ds:
+            text = adapter.result_texts(x).get(d.get("id"))
+            reduced = reduce_log(text, 1) if text is not None and blob_id(text) == d.get("bid") else None
+            if reduced:
+                store.write_blob(reduced[1], text)
+                x = adapter.replaced_result(x, d["id"], reduced[0])
+        if x is not original[j]:
+            if settings.compress_over_tokens > 0:
+                x = adapter.compress_item(x, settings.compress_over_tokens, store.write_blob)
+            out = out or list(items)
+            out[j] = x
+    return (items if out is None else out), new
+
+
+class _Exempt:
+    """The adapter, except no result or input of a call in keep is ever masked (CONTEXT_KEEP_ERRORS)."""
+
+    def __init__(self, adapter, keep):
+        self._adapter, self._keep = adapter, frozenset(keep)
+
+    def __getattr__(self, name):
+        return getattr(self._adapter, name)
+
+    def masked_results(self, item, ids):
+        return self._adapter.masked_results(item, set(ids) - self._keep)
+
+    def masked_inputs(self, item, ids, over):
+        return self._adapter.masked_inputs(item, set(ids) - self._keep, over)
+
+
+def _exempting(adapter, keep):
+    """adapter wrapped by _Exempt when keep names a call and the adapter masks results; adapter itself otherwise."""
+    return _Exempt(adapter, keep) if keep and hasattr(adapter, "masked_results") else adapter
+
+
+def _error_ids(adapter, items, k, shown):
+    """Call ids of the k newest error tool results (_is_error) the view (shown) still carries whole, newest first: a
+    result already cleared stays cleared, so the exempt set only moves forward."""
+    out = []
+    for j in range(len(items) - 1, -1, -1):
+        results = adapter.tool_results(items[j]) if j in shown and hasattr(adapter, "tool_results") else {}
+        now = adapter.tool_results(shown[j]) if results else {}
+        for rid, (is_error, text) in reversed(list(results.items())):
+            if _is_error(is_error, text) and rid in now and now[rid][1] == text:
+                out.append(rid)
+                if len(out) >= k:
+                    return out
+    return out
+
+
+def _reason_stripped(adapter, items, bound):
+    """items with signed reasoning stripped from every assistant item before bound (CONTEXT_STRIP_REASONING_EVERY),
+    never emptying a message and never dropping an item; items itself when none changes."""
+    out = None
+    for j in range(min(bound, len(items)) if bound is not None else 0):
+        x = items[j]
+        bare = _bare(adapter, x, True) if adapter.is_assistant(x) else x
+        if bare is not None and bare is not x:
+            out = out or list(items)
+            out[j] = bare
+    return items if out is None else out
+
+
+def _reason_state(thread):
+    """The thread entry's CONTEXT_STRIP_REASONING_EVERY keys."""
+    return {k: v for k, v in (thread or {}).items() if k in REASON_KEYS}
+
+
+def _ledger_steps(adapter, items):
+    """(j, result id, tool name, args, text, is_error) of each tool result whose call the items hold, in order."""
+    calls, steps = {}, []
+    for j, x in enumerate(items):
+        for cid, name, args in adapter.calls(x):
+            calls[cid] = (name, args)
+        for rid, (is_error, text) in adapter.tool_results(x).items():
+            if rid in calls:
+                name, args = calls.pop(rid)
+                steps.append((j, rid, name, args, text, _is_error(is_error, text)))
+    return steps
+
+
+def _visible(adapter, items, shown, j, rid):
+    """Whether the view (shown) carries result rid of items[j] in full."""
+    full = adapter.result_texts(items[j]).get(rid) if 0 <= j < len(items) else None
+    now = adapter.result_texts(shown[j]).get(rid) if j in shown else None
+    return full is not None and now is not None and now.startswith(full)
+
+
+def _ledger_new(adapter, items, shown, found, fresh):
+    """(ledger walk state or None, [(reuse decision, text)], nudge lines) for the new tool results (after the last
+    assistant item) under CONTEXT_LEDGER. A read repeating an earlier current read that covers it becomes a reuse
+    pointer when that copy is still shown in full, else a nudge line; a test rerun with no edit since, a nudge."""
+    last = _last_assistant(adapter, items)
+    if last is None:
+        return None, [], []
+    state, repeats = ledger_mod.walk(_ledger_steps(adapter, items), last + 1)
+    decided = {(j, d.get("id")) for j, ds in found.items() for d in ds} | {(d["at"], d["id"]) for d, _ in fresh}
+    gone = {(d["at"], d["src"]) for d, _ in fresh}
+    reuse, nudges = [], []
+    for r in repeats:
+        if (r["j"], r["rid"]) in decided:
+            continue
+        if "test" in r:
+            nudges.append(ledger_mod.nudge_line(r))
+            continue
+        src = next(((j, rid) for j, rid in r["covers"] if (j, rid) not in decided and (j, rid) not in gone
+                    and _visible(adapter, items, shown, j, rid)), None)
+        text = adapter.result_texts(items[r["j"]]).get(r["rid"])
+        if src is None:
+            nudges.append(ledger_mod.nudge_line(r))
+        elif text is not None and len(text) >= DEDUP_MIN_CHARS \
+                and not text.startswith((DEDUP_PREFIX, MASK_PREFIX, REUSE_PREFIX)):
+            bid = result_blob_id(text)
+            reuse.append(({"kind": "reuse", "at": r["j"], "fp": fingerprint(items[r["j"]]), "id": r["rid"],
+                           "src": src[1], "bid": bid, "ptr": ledger_mod.reuse_placeholder(r, bid)}, text))
+            decided.add((r["j"], r["rid"]))
+    return state, reuse, nudges
+
+
+def _ledgered(adapter, items, found, lo):
+    """items with each recorded ledger block at or after index lo appended to its item (CONTEXT_LEDGER)."""
+    for j in sorted(found):
+        if lo is None or j >= lo:
+            for d in found[j]:
+                items = _nudged(adapter, items, j, d.get("text") if isinstance(d.get("text"), str) else None)
+    return items
+
+
+def _ledger_block(adapter, items, sent, state, nudges, found):
+    """The ledger block decision for this request's newest item, or None: it must hold new tool results, carry no
+    block yet, and the block must differ from the newest recorded one or carry nudges."""
+    j = len(items) - 1
+    last = _last_assistant(adapter, items)
+    if state is None or last is None or j <= last or j in found or not adapter.tool_results(items[j]):
+        return None
+    tail = ("\nRepeats in this batch:\n" + "\n".join(nudges[:3])) if nudges else ""
+    core = ledger_mod.block(state, len(tail))
+    prev = found[max(found)][-1].get("core") if found else None
+    if not (core or tail) or (not tail and ledger_mod.core_id(core) == prev):
+        return None
+    text = (core or ledger_mod.LEDGER_HEAD) + tail
+    if _nudged(adapter, sent, j, text) is sent:
+        return None
+    return {"at": j, "fp": fingerprint(items[j]), "text": text, "core": ledger_mod.core_id(core)}
 
 
 def first_user_index(adapter, items):
@@ -945,24 +1135,48 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
         state = store.load_trim(sid)
         threads = state["threads"]
         thread = threads.get(root)
+        log_new = []
+        if settings.log_reduce_over_chars > 0:
+            # CONTEXT_LOG_REDUCE_OVER_CHARS: decided on a result's first request, recorded, rendered on every later one.
+            logs = state.get("logs") if isinstance(state.get("logs"), list) else []
+            items, log_new = _log_reduced(adapter, original, items, logs, settings, store)
+            if log_new:
+                state["logs"] = (logs + log_new)[-LOG_MAX:]
+                store.save_trim(sid, state)
         # CONTEXT_DEDUP_RESULTS: recorded pointers render on every request; fingerprints stay on the original items.
-        dedup = state.get("dedup") if settings.dedup_results and hasattr(adapter, "result_texts") else None
-        dedup = dedup if isinstance(dedup, list) else []
+        # CONTEXT_LEDGER reuse pointers share the list ("kind": "reuse").
+        raw = state.get("dedup") if (settings.dedup_results or settings.ledger) \
+            and hasattr(adapter, "result_texts") else None
+        raw = raw if isinstance(raw, list) else []
+        dedup = [d for d in raw if isinstance(d, dict)
+                 and (settings.ledger if d.get("kind") == "reuse" else settings.dedup_results)]
         found = _dedup_found(items, dedup) if dedup else {}
-        base = _deduped(adapter, items, found)
-        cut, gap, strip, note, clear = None, None, None, None, None
+        ledgers = state.get("ledger") if settings.ledger and isinstance(state.get("ledger"), list) else []
+        lfound = _dedup_found(items, ledgers) if ledgers else {}
+        every = settings.strip_reasoning_every
+        rbound = None
+        if every > 0 and thread and thread.get("reason_fp"):
+            rbound = _locate(items, thread.get("reason"), thread["reason_fp"])
+        reason_located = rbound is not None or not (thread or {}).get("reason_fp")
+
+        def make_base(decided):
+            return _reason_stripped(adapter, _deduped(adapter, items, decided), rbound)
+
+        base = make_base(found)
+        cut, gap, strip, note, clear, keep, llo = None, None, None, None, None, (), None
         evicting = settings.eviction and hasattr(adapter, "masked_results") and hasattr(adapter, "tool_calls")
         nudge_at = None
         if thread and thread.get("nudge_fp"):
             nudge_at = _locate(items, thread.get("nudge_at"), thread["nudge_fp"])
-        # A thread holding only a scratchpad nudge or eviction state has no cut to locate.
-        if thread and (thread.get("cut_fp") or not ({"nudge_fp", "evict_fp"} & thread.keys())):
+        # A thread holding only a scratchpad nudge, eviction or batched reasoning state has no cut to locate.
+        if thread and (thread.get("cut_fp") or not (SIDE_KEYS & thread.keys())):
             cut_fp = thread.get("cut_fp")
             cut = _locate_cut(adapter, items, thread)
             if cut is None:
                 threads.pop(root, None)
-                if evicting and _evict_state(thread):
-                    threads[root] = {"format": adapter.name, "updated": _utc_now(), **_evict_state(thread)}
+                carried = {**(_evict_state(thread) if evicting else {}), **_reason_state(thread)}
+                if carried:
+                    threads[root] = {"format": adapter.name, "updated": _utc_now(), **carried}
                     store.save_trim(sid, state)
             else:
                 if thread.get("cut_fp") != cut_fp:
@@ -975,6 +1189,12 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                     strip = _locate(items, thread.get("strip"), thread["strip_fp"])
                 if thread.get("clear_fp"):
                     clear = _locate(items, thread.get("clear"), thread["clear_fp"])
+                if settings.keep_errors > 0 and isinstance(thread.get("keep_errors"), list):
+                    keep = tuple(thread["keep_errors"])
+                if settings.ledger and thread.get("ledger_from_fp"):
+                    llo = _locate(items, thread.get("ledger_from"), thread["ledger_from_fp"])
+        # CONTEXT_KEEP_ERRORS: the error results the last trim exempted stay whole until the next trim.
+        radapter = _exempting(adapter, keep)
         shown = {}
         mode = region_mode(settings)
         evict, evicted, eviction = (_eviction(adapter, items, threads.get(root), settings, first) if evicting
@@ -988,18 +1208,54 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
             while len(threads) > MAX_THREADS:
                 threads.pop(next(iter(threads)))
             store.save_trim(sid, state)
-        # The items as sent: the recorded nudge stays on its item, byte-identical, until the next trim.
-        sent = _nudged(adapter, base, nudge_at, threads.get(root, {}).get("nudge"))
+        # The items as sent: the recorded nudge stays on its item, byte-identical, until the next trim, and so do the
+        # recorded ledger blocks from llo on (CONTEXT_LEDGER).
+        nudge_pos, nudge_text = nudge_at, threads.get(root, {}).get("nudge")
+
+        def dress(b):
+            return _ledgered(adapter, _nudged(adapter, b, nudge_pos, nudge_text), lfound, llo)
+
+        sent = dress(base)
         inputs = settings.clear_inputs_over_chars
         old = settings.strip_old_reasoning
-        view = render(adapter, sent, cut, note, first, gap, strip, mode, shown, clear, evict, inputs, old)
+        view = render(radapter, sent, cut, note, first, gap, strip, mode, shown, clear, evict, inputs, old)
         force = store.force_requested(sid)
         ratio = settings.chars_per_token if settings.chars_per_token > 0 else DEFAULT_CHARS_PER_TOKEN
         base_chars = request_chars(*context)
         tokens = estimate_prompt_tokens(base_chars + _size(old, view), state.get("usage"), root, ratio)
+        reason_event = None
+        if every > 0:
+            # CONTEXT_STRIP_REASONING_EVERY: at each new batch of `every` assistant steps the reasoning bound may move
+            # to the latest assistant message, when that strips at least strip_reasoning_min_tokens.
+            batch = evict_mod.step_count(adapter, items) // every
+            last_batch = (thread or {}).get("reason_batch") if reason_located else None
+            if batch > 0 and (not isinstance(last_batch, int) or batch > last_batch):
+                entry = threads.setdefault(root, {"format": adapter.name, "updated": _utc_now()})
+                if not reason_located:
+                    for k in REASON_KEYS:
+                        entry.pop(k, None)
+                entry["reason_batch"] = batch
+                top = latest_message_start(adapter, items)
+                if top < len(items) and (rbound is None or top > rbound):
+                    moved_base = _reason_stripped(adapter, base, top)
+                    moved_shown = {}
+                    rsent = _ledgered(adapter, _nudged(adapter, moved_base, nudge_pos, nudge_text), lfound, llo)
+                    rview = render(radapter, rsent, cut, note, first, gap, strip, mode, moved_shown, clear, evict,
+                                   inputs, old)
+                    freed = estimate_prompt_tokens(base_chars + _size(True, view), state.get("usage"), root, ratio) \
+                        - estimate_prompt_tokens(base_chars + _size(True, rview), state.get("usage"), root, ratio)
+                    if moved_base is not base and freed >= settings.strip_reasoning_min_tokens:
+                        entry.update(reason=top, reason_fp=fingerprint(items[top]))
+                        rbound, base, sent, view, shown = top, moved_base, rsent, rview, moved_shown
+                        after = estimate_prompt_tokens(base_chars + _size(old, view), state.get("usage"), root, ratio)
+                        reason_event = {"tokens_before": tokens, "tokens_after": after, "dropped": 0}
+                        tokens = after
+                while len(threads) > MAX_THREADS:
+                    threads.pop(next(iter(threads)))
+                store.save_trim(sid, state)
         evict_event = None
         if evicted:
-            before = render(adapter, sent, cut, note, first, gap, strip, mode, None, clear, evict - evicted, inputs,
+            before = render(radapter, sent, cut, note, first, gap, strip, mode, None, clear, evict - evicted, inputs,
                             old)
             evict_event = {"tokens_before": estimate_prompt_tokens(base_chars + _size(old, before),
                                                                    state.get("usage"), root, ratio),
@@ -1008,17 +1264,26 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
         # Eviction replaces the threshold trim; a forced trim (/compact) still runs.
         if force or (not evicting and tokens >= trim_at):
             new_clear = _next_clear(adapter, items, settings.clear_keep_results, clear)
+            # CONTEXT_KEEP_ERRORS: the trim exempts the newest error results the view still shows whole.
+            new_keep = tuple(_error_ids(adapter, items, settings.keep_errors, shown)) if settings.keep_errors > 0 \
+                else ()
+            tadapter = _exempting(adapter, new_keep)
+            # CONTEXT_LEDGER: a trim keeps only the newest recorded ledger block.
+            new_llo = max(lfound) if lfound else llo
+            tbase = _ledgered(adapter, base, lfound, new_llo)
+            # Reasoning the batched strip already took off counts as gone (CONTEXT_STRIP_REASONING_EVERY).
+            ritems = _reason_stripped(adapter, items, rbound)
             # A target at or above the threshold could not land a trim under it, so the threshold caps it.
             target = min(settings.trim_to_for(request["model"]), trim_at)
             new_cut, new_gap = None, None
             anchor, anchor_gap = (cut, gap) if cut is not None else (first, None)
             # With `old`, stripping earlier reasoning settles a trim like clearing; a forced trim still drops turns.
             strips = old and not force and first is not None and _strips_more(
-                adapter, items, kept_indices(adapter, items, anchor, anchor_gap, first), cut, strip,
+                adapter, ritems, kept_indices(adapter, items, anchor, anchor_gap, first), cut, strip,
                 strip_top(adapter, items, old))
             if (new_clear is not None or strips) and first is not None:
                 # Clearing (and stripping) first: the current cut, or the first user turn (dropping nothing).
-                sizes = _trim_sizes(adapter, base, anchor, mode, new_clear, first, inputs, old)
+                sizes = _trim_sizes(tadapter, base, anchor, mode, new_clear, first, inputs, old)
                 chars = base_chars + sum(sizes[j] for j in kept_indices(adapter, items, anchor, anchor_gap, first))
                 if estimate_prompt_tokens(chars, state.get("usage"), root, ratio) < target:
                     new_cut, new_gap = anchor, anchor_gap
@@ -1027,7 +1292,7 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                 if new_cut is None:
                     new_cut = cut if cut is not None else last_turn_index(adapter, items)
                 if new_cut is not None:
-                    sizes = _trim_sizes(adapter, base, new_cut, mode, new_clear, first, inputs, old)
+                    sizes = _trim_sizes(tadapter, base, new_cut, mode, new_clear, first, inputs, old)
 
                     def fits(g):
                         chars = base_chars + sum(sizes[j] for j in kept_indices(adapter, items, new_cut, g, first))
@@ -1043,13 +1308,13 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
             if new_cut is not None and not moved:
                 # A newer clear bound alone moves the trim when it masks a result the current bound left whole.
                 kept = kept_indices(adapter, items, new_cut, new_gap, first)
-                moved = _clears_more(adapter, base, kept, clear, new_clear, first, inputs)
+                moved = _clears_more(tadapter, base, kept, clear, new_clear, first, inputs)
                 if not moved and old:
                     # So does a strip bound that takes reasoning off a message the current view still sends.
-                    moved = _strips_more(adapter, items, kept, cut, strip, new_strip)
+                    moved = _strips_more(adapter, ritems, kept, cut, strip, new_strip)
             if moved:
                 new_shown = {}
-                bare = render(adapter, base, new_cut, "", first, new_gap, new_strip, mode, new_shown, new_clear,
+                bare = render(tadapter, tbase, new_cut, "", first, new_gap, new_strip, mode, new_shown, new_clear,
                               evict, inputs, old)
                 if not force and settings.trim_min_gain_tokens > 0:
                     # A cut freeing fewer estimated tokens (pointer note not counted) waits for a bigger one.
@@ -1060,7 +1325,7 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                 dropped = len(items) - len(new_shown)
                 names = recall_tool_names(request_tool_names(data))
                 masked = (mode == "mask" or new_clear is not None) and any(
-                    x is not base[j] and (MASK_PREFIX in str(x.get("content")) or INPUT_MASK_PREFIX in str(x))
+                    x is not tbase[j] and (MASK_PREFIX in str(x.get("content")) or INPUT_MASK_PREFIX in str(x))
                     for j, x in new_shown.items())
                 if old and not dropped and not masked:
                     # Stripping earlier reasoning alone drops and masks nothing.
@@ -1077,9 +1342,14 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                 pad = store.read_scratchpad(sid) if settings.scratchpad else ""
                 if pad:
                     note = f"{scratchpad_block(pad)}\n{note}"  # first, ahead of the recall instructions
-                carried = _evict_state(threads.pop(root, None))
+                previous = threads.pop(root, None)
+                carried = {**_evict_state(previous), **_reason_state(previous)}
                 threads[root] = {"cut": new_cut, "cut_fp": fingerprint(items[new_cut]), "note": note,
                                  "format": adapter.name, "updated": _utc_now(), **carried}
+                if new_keep:
+                    threads[root]["keep_errors"] = list(new_keep)
+                if new_llo is not None and settings.ledger:
+                    threads[root].update(ledger_from=new_llo, ledger_from_fp=fingerprint(items[new_llo]))
                 if 0 < new_cut == len(items) - 1:  # cut on the last message: how a side request trims
                     threads[root]["prev_fp"] = fingerprint(items[new_cut - 1])
                 if new_gap is not None:
@@ -1095,14 +1365,14 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                 if force:
                     store.clear_force(sid)
                 shown = {}
-                view = render(adapter, base, new_cut, note, first, new_gap, strip, mode, shown, new_clear, evict,
+                view = render(tadapter, tbase, new_cut, note, first, new_gap, strip, mode, shown, new_clear, evict,
                               inputs, old)
                 cut, gap, clear = new_cut, new_gap, new_clear
                 after = estimate_prompt_tokens(base_chars + _size(old, view), state.get("usage"), root, ratio)
                 trim = {"tokens_before": tokens, "tokens_after": after, "dropped": dropped}
                 if settings.scratchpad:
                     trim["scratchpad_chars"] = min(len(pad), SCRATCHPAD_MAX_CHARS)
-                sent = base
+                sent, radapter, nudge_pos, llo = tbase, tadapter, None, new_llo
             elif thread and cut is None and root not in threads:
                 store.save_trim(sid, state)
         elif thread and cut is None and root not in threads:
@@ -1120,21 +1390,41 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                 while len(threads) > MAX_THREADS:
                     threads.pop(next(iter(threads)))
                 store.save_trim(sid, state)
-                sent, shown = _nudged(adapter, base, len(items) - 1, text), {}
-                view = render(adapter, sent, cut, note, first, gap, strip, mode, shown, clear, evict, inputs, old)
+                nudge_pos, nudge_text = len(items) - 1, text
+                sent, shown = dress(base), {}
+                view = render(radapter, sent, cut, note, first, gap, strip, mode, shown, clear, evict, inputs, old)
                 nudge = {"tokens_before": tokens}
         new = _dedup_new(adapter, items, shown, found) if settings.dedup_results and hasattr(adapter, "result_texts") \
             else []
-        if new:
+        lstate, reuse, lnudges = _ledger_new(adapter, items, shown, found, new) if settings.ledger \
+            and hasattr(adapter, "result_texts") else (None, [], [])
+        if new or reuse:
             # Recorded before the request leaves, so every later request renders the same pointer.
-            for d, text in new:
+            for d, text in new + reuse:
                 if compressed_blob_id(text) is None:
                     store.write_blob(d["bid"], text)
-            state["dedup"] = (dedup + [d for d, _ in new])[-DEDUP_MAX:]
+            state["dedup"] = (raw + [d for d, _ in new + reuse])[-DEDUP_MAX:]
             store.save_trim(sid, state)
-            sent, shown = _deduped(adapter, sent, _dedup_found(items, [d for d, _ in new])), {}
-            view = render(adapter, sent, cut, note, first, gap, strip, mode, shown, clear, evict, inputs, old)
-            _record_event(store, sid, "dedup", dropped=len(new))
+            if settings.ledger:
+                # Rebuilt in the order every later request renders: pointers, then the nudge and ledger blocks.
+                found = _dedup_found(items, dedup + [d for d, _ in new + reuse])
+                base = make_base(found)
+                sent, shown = dress(base), {}
+            else:
+                sent, shown = _deduped(adapter, sent, _dedup_found(items, [d for d, _ in new])), {}
+            view = render(radapter, sent, cut, note, first, gap, strip, mode, shown, clear, evict, inputs, old)
+            if new:
+                _record_event(store, sid, "dedup", dropped=len(new))
+            if reuse:
+                _record_event(store, sid, "reuse", dropped=len(reuse))
+        entry = _ledger_block(adapter, items, sent, lstate, lnudges, lfound) if settings.ledger else None
+        if entry:
+            # Recorded on the newest item, so every later request re-renders the block unchanged.
+            state["ledger"] = (ledgers + [entry])[-ledger_mod.LEDGER_MAX:]
+            store.save_trim(sid, state)
+            lfound = {**lfound, entry["at"]: [entry]}
+            sent, shown = dress(base), {}
+            view = render(radapter, sent, cut, note, first, gap, strip, mode, shown, clear, evict, inputs, old)
         _write_masked_blobs(store, adapter, sent, shown)
         _store_messages(store, sid, adapter, original, sent, cut, shown, settings)
         if trim:
@@ -1143,6 +1433,10 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
             _record_event(store, sid, "nudge", **nudge)
         if evict_event:
             _record_event(store, sid, "evict", **evict_event)
+        if reason_event:
+            _record_event(store, sid, "strip_batch", **reason_event)
+        if log_new:
+            _record_event(store, sid, "log_reduce", dropped=len(log_new))
     request["trimmed"] = TRIM_NEW if trim else TRIM_KEPT if cut is not None else TRIM_NONE
 
     # Measured like the estimate, before the standing instruction, so calibration compares like with like.

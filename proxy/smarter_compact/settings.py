@@ -37,6 +37,9 @@ DEFAULT_SERVER_CLEAR_AT_LEAST_TOKENS = 5000
 # unreferenced one before it may go (K, picked by the offline replay).
 DEFAULT_EVICTION_BATCH = 3
 DEFAULT_EVICTION_KEEP = 12
+# Batched reasoning strip (CONTEXT_STRIP_REASONING_EVERY, off by default): the least reasoning, in estimated tokens,
+# a move of its bound must strip, so each cache rewrite pays off.
+DEFAULT_STRIP_REASONING_MIN_TOKENS = 8000
 
 
 def _int(env, name, default):
@@ -117,6 +120,17 @@ class Settings:
     reuse_rules: bool = True
     # A new tool result identical to one still shown in full becomes a pointer to it (CONTEXT_DEDUP_RESULTS=0 off).
     dedup_results: bool = True
+    # Execution ledger: files read and changed appended to new tool results, repeated reads pointed at or nudged
+    # (CONTEXT_LEDGER=1 turns it on).
+    ledger: bool = False
+    # Every N assistant steps, strip signed reasoning before the latest assistant message; 0 is off
+    # (CONTEXT_STRIP_REASONING_EVERY), gated by strip_reasoning_min_tokens (CONTEXT_STRIP_REASONING_MIN_TOKENS).
+    strip_reasoning_every: int = 0
+    strip_reasoning_min_tokens: int = DEFAULT_STRIP_REASONING_MIN_TOKENS
+    # A new test/build tool result over N chars keeps its failure lines and tail; 0 is off (CONTEXT_LOG_REDUCE_OVER_CHARS).
+    log_reduce_over_chars: int = 0
+    # The K newest error tool results stay whole through trim clearing and masking; 0 is off (CONTEXT_KEEP_ERRORS).
+    keep_errors: int = 0
     trim_at_tokens: int = DEFAULT_TRIM_AT_TOKENS
     # MODEL_TRIM_AT_TOKENS picks the threshold, trim_at_tokens being the fallback (CONTEXT_TRIM_AT_TOKENS unset).
     trim_at_by_model: bool = False
@@ -193,6 +207,12 @@ class Settings:
             standing_instruction=_flag(env, "CONTEXT_STANDING_INSTRUCTION"),
             reuse_rules=_flag(env, "CONTEXT_REUSE_RULES"),
             dedup_results=_flag(env, "CONTEXT_DEDUP_RESULTS"),
+            ledger=_flag(env, "CONTEXT_LEDGER", "0"),
+            strip_reasoning_every=max(_int(env, "CONTEXT_STRIP_REASONING_EVERY", 0), 0),
+            strip_reasoning_min_tokens=max(_int(env, "CONTEXT_STRIP_REASONING_MIN_TOKENS",
+                                                DEFAULT_STRIP_REASONING_MIN_TOKENS), 0),
+            log_reduce_over_chars=max(_int(env, "CONTEXT_LOG_REDUCE_OVER_CHARS", 0), 0),
+            keep_errors=max(_int(env, "CONTEXT_KEEP_ERRORS", 0), 0),
             trim_at_tokens=_int(env, "CONTEXT_TRIM_AT_TOKENS", DEFAULT_TRIM_AT_TOKENS),
             trim_at_by_model=_int(env, "CONTEXT_TRIM_AT_TOKENS", None) is None,
             trim_to_tokens=_positive_int(env, "CONTEXT_TRIM_TO_TOKENS", DEFAULT_TRIM_TO_TOKENS),
