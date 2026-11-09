@@ -425,7 +425,7 @@ class AnthropicAdapter:
     def user_text(self, item):
         return _plain_text(item.get("content", ""), ("text",))
 
-    def compress_item(self, item, over_tokens, on_blob):
+    def compress_item(self, item, over_tokens, on_blob, skip=()):
         if item.get("role") != "user":
             return item
         blocks = self._blocks(item)
@@ -433,7 +433,7 @@ class AnthropicAdapter:
             return item
         new_blocks = None
         for i, b in enumerate(blocks):
-            if not (isinstance(b, dict) and b.get("type") == "tool_result"):
+            if not (isinstance(b, dict) and b.get("type") == "tool_result") or b.get("tool_use_id") in skip:
                 continue
             res = _compress_content(b.get("content"), over_tokens, "text")
             if res is None:
@@ -605,8 +605,8 @@ class ChatAdapter:
     def user_text(self, item):
         return _plain_text(item.get("content", ""), ("text",))
 
-    def compress_item(self, item, over_tokens, on_blob):
-        if item.get("role") != "tool":
+    def compress_item(self, item, over_tokens, on_blob, skip=()):
+        if item.get("role") != "tool" or item.get("tool_call_id") in skip:
             return item
         res = _compress_content(item.get("content"), over_tokens, "text")
         if res is None:
@@ -778,8 +778,8 @@ class ResponsesAdapter:
     def user_text(self, item):
         return _plain_text(item.get("content", ""), self._TEXT_TYPES)
 
-    def compress_item(self, item, over_tokens, on_blob):
-        if item.get("type") not in _RESULT_TYPES:
+    def compress_item(self, item, over_tokens, on_blob, skip=()):
+        if item.get("type") not in _RESULT_TYPES or item.get("call_id") in skip:
             return item
         res = _compress_content(item.get("output"), over_tokens, "input_text")
         if res is None:

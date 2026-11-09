@@ -5,7 +5,7 @@
  */
 import os from "node:os";
 import { ensureProductEnv, PRODUCT_NAME } from "../brand.mjs";
-import { callContextStoreTool, contextStoreTools, startContextStore } from "./context-store.mjs";
+import { callContextStoreTool, contextStoreTools, startContextStore, toolResultText } from "./context-store.mjs";
 import { serveStdio } from "./stdio.mjs";
 
 ensureProductEnv();
@@ -31,7 +31,7 @@ async function handle(msg) {
     if (method === "tools/list") return ok(id, { tools: contextStoreTools(process.env) });
     if (method === "tools/call") {
       const data = await callContextStoreTool(params?.name, params?.arguments || {}, { home });
-      return ok(id, { content: [{ type: "text", text: JSON.stringify(data) }] });
+      return ok(id, { content: [{ type: "text", text: toolResultText(params?.name, data) }] });
     }
     return { jsonrpc: "2.0", id, error: { code: -32601, message: `method not found: ${method}` } };
   } catch (err) {

@@ -13,14 +13,14 @@ The scratchpad is a small notes file the agent keeps for its own task state. Eve
 
 ## Nudge
 
-When the estimated prompt passes `CONTEXT_SCRATCHPAD_NUDGE_AT` (default `0.75`) of the trim threshold, the proxy appends one `<compact-scratchpad-nudge>` block to the newest user or tool-result item. The text is fixed for a session and tool name and stays on that item, byte for byte, until the next trim, so the prompt cache misses once. It asks the agent to create a pad if it has none, listing what to write:
+When the estimated prompt passes `CONTEXT_SCRATCHPAD_NUDGE_AT` (default `0.75`) of the trim threshold, the proxy appends one `<compact-scratchpad-nudge>` block to the newest user or tool-result item. The text is fixed for a session and tool name and stays on that item, byte for byte, until the next trim, so the prompt cache misses once. It tells the agent to save its notes and keep working (the nudge is automatic, not a stopping point, and the user is not waiting for an update), and to create a pad if it has none, listing what to note for itself:
 
 - goal and how it is checked
-- status: what works, what fails
+- what works, what fails
 - decisions and why
 - facts it would otherwise re-discover (paths, commands, values)
 - files it wrote (paths) and what each holds
-- the exact next step
+- its next step
 
 and to leave out logs, code and command output. If a pad exists, it asks for an update only when the goal, plan or a key fact changed. The nudge re-arms after each trim. A request that trims sends no nudge, so a single step that jumps past the threshold skips it for that cycle. Nor does a request that cannot reach the tool: the nudge needs `smart_compact_scratchpad` in the request's tools, or, when Claude Code defers MCP tools behind ToolSearch, named in its deferred-tool list.
 

@@ -188,6 +188,13 @@ def request_tool_names(data):
     return names
 
 
+def recall_call_ids(adapter, items):
+    """Call ids of our own recall and scratchpad tools: their results reach the model whole on arrival (never
+    compressed, log-reduced or pointered); only a trim may clear them later."""
+    return {cid for cid, name in adapter.tool_names(items).items() if isinstance(name, str)
+            and (_RECALL_TOOL_RE.search(name) or _SCRATCHPAD_TOOL_RE.search(name))}
+
+
 def standing_instruction(names=None, reuse=True):
     names = names or recall_tool_names([])
     return (
@@ -277,9 +284,9 @@ _LEGACY_NAMES = recall_tool_names(["smart_compact_search", "smart_compact_sql"])
 def pointer_text(sid, dropped, names=None):
     names = names or _LEGACY_NAMES
     return (
-        f"[smarter-compact: continuing session {sid}; {dropped} earlier messages are NOT in your context. They were "
-        f"delivered to you and later removed to fit your context window, so a gap in what you see (missing "
-        f"batches, lines, keys) is in them. "
+        f"[smarter-compact: continuing session {sid}; {dropped} earlier messages are NOT in your context. Older "
+        f"turns were moved out to save space, so a gap in what you see (missing batches, lines, keys) is in them. "
+        f"Continue the task from where you were. "
         f"Nothing here is or was ever summarized: this trim wrote no summary of the dropped messages, so do not "
         f"treat a \"summary of earlier context\" you seem to remember as their record. The only complete record of "
         f"them is this session's store. "
@@ -298,8 +305,12 @@ def pointer_text(sid, dropped, names=None):
 
 def reasoning_text(sid):
     """The note of a trim that only stripped earlier reasoning (CONTEXT_STRIP_OLD_REASONING): no message is gone."""
-    return (f"[smarter-compact: session {sid}] Your thinking from earlier steps was removed to fit your context "
-            f"window; every message, tool call and tool result is still here.]")
+    return (f"[smarter-compact: session {sid}] Your thinking from earlier steps was moved out to save space; every "
+            f"message, tool call and tool result is still here. Continue the task from where you were.]")
+
+
+# Opens the note of a trim that only cleared tool outputs: no message is gone.
+CLEARED_LEAD = "Older tool outputs were moved out to save space. Continue the task from where you were."
 
 
 def mask_text(sid, names=None):
@@ -318,12 +329,14 @@ def scratchpad_nudge(sid, names):
     """The once-per-trim-cycle nudge to save task state; fixed for a session and tool name (CONTEXT_SCRATCHPAD)."""
     load = f" (load it first by calling {names['scratchpad_load']})" if names.get("scratchpad_load") else ""
     return (
-        f"<compact-scratchpad-nudge>Your context will be trimmed soon: older turns will be removed. If you have no "
-        f"scratchpad yet, create one with {names['scratchpad']}(session_id=\"{sid}\", command=\"create\", "
-        f"file_text=...){load}, at most {SCRATCHPAD_MAX_CHARS} characters. Write, tersely:\n"
-        f"- goal and how it is checked\n- status: what works, what fails\n- decisions and why\n"
+        f"<compact-scratchpad-nudge>Your context will be trimmed soon: older turns will be removed. Save your "
+        f"notes, then keep working: this is automatic, not a stopping point. The user is not waiting for an update. "
+        f"If you have no scratchpad yet, create one with {names['scratchpad']}(session_id=\"{sid}\", "
+        f"command=\"create\", file_text=...){load}, at most {SCRATCHPAD_MAX_CHARS} characters. Notes for yourself, "
+        f"tersely:\n"
+        f"- goal and how it is checked\n- what works, what fails\n- decisions and why\n"
         f"- facts you would otherwise re-discover (paths, commands, values)\n"
-        f"- files you wrote (paths) and what each holds\n- the exact next step\n"
+        f"- files you wrote (paths) and what each holds\n- your next step\n"
         f"No logs, code or command output. It is kept and shown after every trim; if you already have one, update it "
         f"(str_replace) only when the goal, plan or a key fact changed.</compact-scratchpad-nudge>"
     )
@@ -405,7 +418,7 @@ def _deduped(adapter, items, found):
     return items if out is None else out
 
 
-def _dedup_new(adapter, items, shown, found):
+def _dedup_new(adapter, items, shown, found, skip=()):
     """[(decision, text)] for each new tool result (after the last assistant item) of at least DEDUP_MIN_CHARS that
     is byte-identical to an earlier result the view (shown) carries in full; the newer copy alone is replaced."""
     last = max((j for j, x in enumerate(items) if adapter.is_assistant(x)), default=None)
@@ -420,7 +433,7 @@ def _dedup_new(adapter, items, shown, found):
             # An earlier result shown in full plus a ledger block appended to its text counts as its own text.
             full = orig.get(rid)
             text = full if j <= last and full is not None and now.startswith(full) else now
-            if j > last and rid not in decided and text in seen and len(text) >= DEDUP_MIN_CHARS \
+            if j > last and rid not in decided and rid not in skip and text in seen and len(text) >= DEDUP_MIN_CHARS \
                     and whole.get(rid) == text and not text.startswith((DEDUP_PREFIX, MASK_PREFIX, REUSE_PREFIX)):
                 new.append(({"at": j, "fp": fingerprint(items[j]), "id": rid, "src": seen[text],
                              "bid": result_blob_id(text)}, text))
@@ -443,7 +456,7 @@ def _is_error(is_error, text):
     return bool(is_error) or any(_ERROR_RE.search(line) for line in (text or "").split("\n"))
 
 
-def _log_reduced(adapter, original, items, decisions, settings, store):
+def _log_reduced(adapter, original, items, decisions, settings, store, skip=()):
     """(items with each recorded CONTEXT_LOG_REDUCE_OVER_CHARS decision's result, and each new one's, shown as its
     reduce_log form, then compressed as usual; new decisions). A new decision is a text tool result after the last
     assistant item, over the setting, that reduce_log takes; a recorded one renders whatever the setting now is."""
@@ -454,7 +467,7 @@ def _log_reduced(adapter, original, items, decisions, settings, store):
         if j in found:
             continue
         for rid, text in adapter.result_texts(original[j]).items():
-            if reduce_log(text, settings.log_reduce_over_chars):
+            if rid not in skip and reduce_log(text, settings.log_reduce_over_chars):
                 d = {"at": j, "fp": fingerprint(original[j]), "id": rid, "bid": blob_id(text)}
                 new.append(d)
                 found.setdefault(j, []).append(d)
@@ -469,7 +482,7 @@ def _log_reduced(adapter, original, items, decisions, settings, store):
                 x = adapter.replaced_result(x, d["id"], reduced[0])
         if x is not original[j]:
             if settings.compress_over_tokens > 0:
-                x = adapter.compress_item(x, settings.compress_over_tokens, store.write_blob)
+                x = adapter.compress_item(x, settings.compress_over_tokens, store.write_blob, skip)
             out = out or list(items)
             out[j] = x
     return (items if out is None else out), new
@@ -550,7 +563,7 @@ def _visible(adapter, items, shown, j, rid):
     return full is not None and now is not None and now.startswith(full)
 
 
-def _ledger_new(adapter, items, shown, found, fresh):
+def _ledger_new(adapter, items, shown, found, fresh, skip=()):
     """(ledger walk state or None, [(reuse decision, text)], nudge lines) for the new tool results (after the last
     assistant item) under CONTEXT_LEDGER. A read repeating an earlier current read that covers it becomes the
     dedup_placeholder pointer when its output is byte-identical to a covering copy still shown in full, stays as it is
@@ -563,7 +576,7 @@ def _ledger_new(adapter, items, shown, found, fresh):
     gone = {(d["at"], d["src"]) for d, _ in fresh}
     reuse, nudges = [], []
     for r in repeats:
-        if (r["j"], r["rid"]) in decided:
+        if (r["j"], r["rid"]) in decided or r["rid"] in skip:
             continue
         if "test" in r:
             nudges.append(ledger_mod.nudge_line(r))
@@ -1151,21 +1164,22 @@ def _rewrite(data, call_type, settings, route, call_id):
     store = Store(settings.context_dir)
 
     items = original
+    recall = recall_call_ids(adapter, original)
     if settings.compress_over_tokens > 0:
-        items = [adapter.compress_item(x, settings.compress_over_tokens, store.write_blob) for x in original]
+        items = [adapter.compress_item(x, settings.compress_over_tokens, store.write_blob, recall) for x in original]
 
     sid = resolve_session_id(data, adapter, original)
     if os.environ.get("CONTEXT_DEBUG_SHAPES") == "1":
         _log_shape(sid, call_type, data, original, adapter)
     try:
-        return _rewrite_session(data, adapter, original, items, sid, store, settings, call_id)
+        return _rewrite_session(data, adapter, original, items, sid, store, settings, call_id, recall)
     except Exception as exc:
         # The request goes on untrimmed (process_request logs and returns data); the session keeps the record.
         _record_event(store, sid, "fail_open", location=_where(exc), error=type(exc).__name__)
         raise
 
 
-def _rewrite_session(data, adapter, original, items, sid, store, settings, call_id):
+def _rewrite_session(data, adapter, original, items, sid, store, settings, call_id, recall=()):
     roots = [x for x in items if not adapter.is_pinned(x)]
     if not roots:
         if settings.standing_instruction:
@@ -1200,7 +1214,7 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
         if settings.log_reduce_over_chars > 0:
             # CONTEXT_LOG_REDUCE_OVER_CHARS: decided on a result's first request, recorded, rendered on every later one.
             logs = state.get("logs") if isinstance(state.get("logs"), list) else []
-            items, log_new = _log_reduced(adapter, original, items, logs, settings, store)
+            items, log_new = _log_reduced(adapter, original, items, logs, settings, store, recall)
             if log_new:
                 state["logs"] = (logs + log_new)[-LOG_MAX:]
                 store.save_trim(sid, state)
@@ -1405,7 +1419,7 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                         note = f"{note}\n{mask_text(sid, names)}"
                 else:
                     # Clearing alone drops no message: the note only says how to fetch a cleared result back.
-                    note = f"[smarter-compact: session {sid}] {mask_text(sid, names)}"
+                    note = f"[smarter-compact: session {sid}] {CLEARED_LEAD} {mask_text(sid, names)}"
                 pad = store.read_scratchpad(sid) if settings.scratchpad else ""
                 if pad:
                     note = f"{scratchpad_block(pad)}\n{note}"  # first, ahead of the recall instructions
@@ -1463,9 +1477,9 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                 sent, shown = dress(base), {}
                 view = render(radapter, sent, cut, note, first, gap, strip, mode, shown, clear, evict, inputs, old)
                 nudge = {"tokens_before": tokens}
-        new = _dedup_new(adapter, items, shown, found) if settings.dedup_results and hasattr(adapter, "result_texts") \
+        new = _dedup_new(adapter, items, shown, found, recall) if settings.dedup_results and hasattr(adapter, "result_texts") \
             else []
-        lstate, reuse, lnudges = _ledger_new(adapter, items, shown, found, new) if settings.ledger \
+        lstate, reuse, lnudges = _ledger_new(adapter, items, shown, found, new, recall) if settings.ledger \
             and hasattr(adapter, "result_texts") else (None, [], [])
         if new or reuse:
             # Recorded before the request leaves, so every later request renders the same pointer.

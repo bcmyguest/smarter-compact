@@ -66,7 +66,7 @@ Which agents trim on the wire, which trim in-process, and which get search tools
 | --- | --- |
 | `smart_compact_search` | FTS / hybrid search over trimmed session rows |
 | `smart_compact_sql` | Read-only SQL on one session database |
-| `smart_compact_get` | Text of a compressed tool result by blob id, `BLOB_PAGE_CHARS` (12,000) per call; `offset`/`next_offset` page, `max_chars` (≤100,000) asks for more at once |
+| `smart_compact_get` | Text of a compressed tool result by blob id, `BLOB_PAGE_CHARS` (12,000) per call; returned as one header line (`[smart_compact_get id=…: characters 0-12000 of N; next page: offset=12000]`) then the raw text, not JSON; `offset` pages, `max_chars` (≤100,000) asks for more at once |
 | `context_status` | Trims, fail-opens, writer versions, usage summary |
 | `smart_compact_scratchpad` | Unless `CONTEXT_SCRATCHPAD=0`: `view`, `create`, `str_replace`, `insert` on the session's pad, capped at 2,500 characters |
 

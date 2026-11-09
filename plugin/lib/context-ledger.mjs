@@ -46,7 +46,13 @@ const NUMBERED_RE = /^ *([0-9]+)(?:\t|→)/;
 const DIGITS_RE = /^[0-9]+$/;
 const SED_RANGE_RE = /^([0-9]+)(?:,([0-9]+))?p$/;
 const HEAD_N_RE = /^-n?([0-9]+)$/;
-const REDIRECT_RE = /(?:^|[^0-9&>])>>?[ \t]*([^ \t\n\r;&|<>()]+)/g;
+// Shell operators (shlex punctuation runs) whose next word is a file the command writes, or a word that is no file.
+const WRITE_OPS = new Set([">", ">>", ">|", "&>", "&>>"]);
+const SKIP_OPS = new Set([">&", "<", "<<", "<<<", "<&", "<>", "&>&"]);
+// A recorded written path: plain path characters only, so code, quoted text and globs never count as a file.
+const PATH_RE = /^[A-Za-z0-9_./~+@%-]+$/;
+const ALNUM_RE = /[A-Za-z0-9]/;
+const ASSIGN_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const SHELL_META = "|;&><`$\n";
 // evict.py read_only.
 const READ_ONLY_COMMANDS = new Set(["cat", "head", "tail", "less", "more", "wc", "ls", "find", "tree", "stat", "file",
@@ -281,15 +287,109 @@ function shellReads(command) {
 const patchFiles = (text) => text.split("\n").map((line) => PATCH_FILE_RE.exec(line)).filter(Boolean)
   .map((m) => normPath(m[1].replace(/^[ \t\r]+|[ \t\r]+$/g, "")));
 
-function shellWrites(command) {
-  const out = [...command.matchAll(REDIRECT_RE)].map((m) => m[1]).filter((p) => p !== "/dev/null").map(normPath);
-  const w = words(command) || [];
-  if (w[0] === "sed" && w.some((a) => a.startsWith("-i") || a.startsWith("--in-place"))) {
-    out.push(...w.slice(1).filter((a) => !a.startsWith("-")).slice(1).map(normPath));
+/** command with heredoc bodies, comments and line continuations removed and each unquoted newline a ";" (ledger._shell_text). */
+function shellText(command) {
+  const out = [];
+  let pending = [];
+  let i = 0;
+  let quote = null;
+  const n = command.length;
+  while (i < n) {
+    const c = command[i];
+    if (quote === "'") {
+      out.push(c);
+      if (c === "'") quote = null;
+      i += 1;
+    } else if (quote === '"') {
+      out.push(c === "\\" ? command.slice(i, i + 2) : c);
+      if (c === '"') quote = null;
+      i += c === "\\" ? 2 : 1;
+    } else if (c === "\\") {
+      out.push(command.slice(i + 1, i + 2) === "\n" ? "" : command.slice(i, i + 2));
+      i += 2;
+    } else if (c === "'" || c === '"') {
+      out.push(c);
+      quote = c;
+      i += 1;
+    } else if (c === "#" && (i === 0 || " \t\n;&|()".includes(command[i - 1]))) {
+      while (i < n && command[i] !== "\n") i += 1;
+    } else if (c === "\n") {
+      out.push(" ; ");
+      i += 1;
+      for (const [delim, dash] of pending) {
+        while (i < n) {
+          let end = command.indexOf("\n", i);
+          if (end < 0) end = n;
+          const line = command.slice(i, end);
+          i = end + 1;
+          if ((dash ? line.replace(/^\t+/, "") : line) === delim) break;
+        }
+      }
+      pending = [];
+    } else if (command.startsWith("<<", i) && !command.startsWith("<<<", i)) {
+      let j = i + 2;
+      const dash = command[j] === "-";
+      if (dash) j += 1;
+      while (j < n && " \t".includes(command[j])) j += 1;
+      let k = j;
+      while (k < n && !" \t\n;&|()<>".includes(command[k])) k += 1;
+      const delim = command.slice(j, k).replace(/["'\\]/g, "");
+      if (delim) pending.push([delim, dash]);
+      out.push(`<< ${delim} `);
+      i = k;
+    } else {
+      out.push(c);
+      i += 1;
+    }
   }
-  if (w[0] === "tee") out.push(...w.slice(1).filter((a) => !a.startsWith("-")).map(normPath));
-  out.push(...patchFiles(command));
-  return out;
+  return out.join("");
+}
+
+/** Files a simple command's words name as written: tee files, sed -i files, the cp/mv destination (ledger._argv_writes). */
+function argvWrites(words) {
+  let w = words;
+  while (w.length && ASSIGN_RE.test(w[0])) w = w.slice(1);
+  if (!w.length) return [];
+  const [name, ...args] = w;
+  const plain = args.filter((a) => !a.startsWith("-"));
+  if (name === "tee") return plain;
+  if (name === "sed" && args.some((a) => a.startsWith("-i") || a.startsWith("--in-place"))) return plain.slice(1);
+  if (name === "cp" || name === "mv") {
+    for (let k = 0; k < args.length; k++) {
+      if (args[k] === "-t" && k + 1 < args.length) return [args[k + 1]];
+      if (args[k].startsWith("--target-directory=")) return [args[k].slice(args[k].indexOf("=") + 1)];
+    }
+    return plain.length >= 2 ? plain.slice(-1) : [];
+  }
+  return [];
+}
+
+const plausible = (p) => PATH_RE.test(p) && !p.startsWith("-") && !p.startsWith("/dev/") && ALNUM_RE.test(p);
+const isOp = (token) => [...token].every((ch) => PUNCT.includes(ch));
+
+/** Paths a shell command visibly writes, after shell-quote parsing (ledger._shell_writes). */
+function shellWrites(command) {
+  let tokens;
+  try { tokens = shlexTokens(shellText(command), { punctuation: PUNCT }); } catch { tokens = []; }
+  const out = [];
+  let w = [];
+  for (let k = 0; k <= tokens.length;) {
+    const token = k < tokens.length ? tokens[k] : ";";
+    const op = isOp(token);
+    if (op && (WRITE_OPS.has(token) || SKIP_OPS.has(token))) {
+      if (w.length && DIGITS_RE.test(w.at(-1))) w.pop(); // the fd of 2> or 2>&1
+      const nxt = k + 1 < tokens.length ? tokens[k + 1] : "";
+      if (WRITE_OPS.has(token) && !isOp(nxt)) out.push(nxt);
+      k += 2;
+      continue;
+    }
+    if (op) {
+      out.push(...argvWrites(w));
+      w = [];
+    } else w.push(token);
+    k += 1;
+  }
+  return [...out.filter(plausible).map(normPath), ...patchFiles(command)];
 }
 
 /** What one tool call does (ledger.effects). */

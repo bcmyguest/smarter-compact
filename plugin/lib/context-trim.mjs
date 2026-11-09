@@ -93,6 +93,8 @@ const SCRATCHPAD_TOOL = "smart_compact_scratchpad";
 // Heads the pad in every trim note; same as SCRATCHPAD_LABEL in proxy core.py.
 export const SCRATCHPAD_LABEL = "Your scratchpad, kept across trims (possibly stale; update it if the goal, plan or a key fact changed):";
 const SCRATCHPAD_TOOL_RE = /(?:^|[^a-z0-9])smart_compact_scratchpad$/;
+// The recall tools under any namespace separator; same as _RECALL_TOOL_RE in proxy core.py.
+const RECALL_TOOL_RE = /(?:^|[^a-z0-9])(?:smart_compact_search|smart_compact_sql|smart_compact_get|context_status)$/;
 // Start of the message in which Claude Code names the MCP tools it defers; same as DEFERRED_TOOLS_HEAD in proxy core.py.
 const DEFERRED_TOOLS_HEAD = "deferred tools are now available via";
 /** The names the recall tools actually have in a given request.
@@ -121,7 +123,7 @@ export function recallToolNames(tools) {
   const offered = [];
   for (const t of entries) {
     const name = typeof t === "string" ? t : t?.name;
-    if (typeof name === "string" && /(?:^|[^a-z0-9])(?:smart_compact_search|smart_compact_sql|smart_compact_get|context_status)$/.test(name)) {
+    if (typeof name === "string" && RECALL_TOOL_RE.test(name)) {
       offered.push(name);
     }
   }
@@ -525,11 +527,11 @@ function resultText(result) {
 }
 
 /** Compressed copy of a message's tool results; calls onBlob(id, fullText) for each. Returns the input when unchanged. */
-export function compressMessage(message, overTokens, onBlob) {
+export function compressMessage(message, overTokens, onBlob, skip = new Set()) {
   const content = parts(message);
   let next = null;
   content.forEach((part, i) => {
-    if (part?.type !== "tool-result") return;
+    if (part?.type !== "tool-result" || skip.has(part.id)) return;
     const result = part.result;
     let text = null;
     if (result?.type === "text" && typeof result.value === "string") text = result.value;
@@ -580,6 +582,15 @@ function toolNames(items) {
   const names = new Map();
   for (const item of items) for (const p of parts(item)) if (p?.type === "tool-call") names.set(p.id, p.name);
   return names;
+}
+
+/** Call ids of our own recall and scratchpad tools: their results reach the model whole on arrival (never compressed, log-reduced or pointered); only a trim may clear them later. Proxy recall_call_ids. */
+export function recallCallIds(items) {
+  const out = new Set();
+  for (const [id, name] of toolNames(items)) {
+    if (typeof name === "string" && (RECALL_TOOL_RE.test(name) || SCRATCHPAD_TOOL_RE.test(name))) out.add(id);
+  }
+  return out;
 }
 
 /**
@@ -958,9 +969,9 @@ function locate(items, idx, want, lo = 0) {
 export const LEGACY_RECALL_NAMES = recallToolNames(["smart_compact_search", "smart_compact_sql"]);
 
 export function pointerText(sid, dropped, names = LEGACY_RECALL_NAMES) {
-  return `[smarter-compact: continuing session ${sid}; ${dropped} earlier messages are NOT in your context. They were `
-    + "delivered to you and later removed to fit your context window, so a gap in what you see (missing "
-    + "batches, lines, keys) is in them. "
+  return `[smarter-compact: continuing session ${sid}; ${dropped} earlier messages are NOT in your context. Older `
+    + "turns were moved out to save space, so a gap in what you see (missing batches, lines, keys) is in them. "
+    + "Continue the task from where you were. "
     + "Nothing here is or was ever summarized: this trim wrote no summary of the dropped messages, so do not "
     + "treat a \"summary of earlier context\" you seem to remember as their record. The only complete record of "
     + "them is this session's store. "
@@ -1072,7 +1083,7 @@ function deduped(items, found) {
 }
 
 /** [decision, text] pairs for each new tool result (after the last assistant message) of at least DEDUP_MIN_CHARS identical to an earlier one the view (shown) carries in full. Proxy _dedup_new. */
-function dedupNew(items, shown, found) {
+function dedupNew(items, shown, found, skip = new Set()) {
   const last = items.findLastIndex((x) => x?.role === "assistant");
   if (last < 0) return [];
   const seen = new Map();
@@ -1085,7 +1096,7 @@ function dedupNew(items, shown, found) {
       // An earlier result shown in full plus the ledger block the plugin appended to its text counts as its own text.
       const full = orig.get(id);
       const text = j <= last && full !== undefined && now.startsWith(full) ? full : now;
-      if (j > last && !decided.has(id) && seen.has(text) && cpLen(text) >= DEDUP_MIN_CHARS && whole.get(id) === text
+      if (j > last && !decided.has(id) && !skip.has(id) && seen.has(text) && cpLen(text) >= DEDUP_MIN_CHARS && whole.get(id) === text
           && !text.startsWith(DEDUP_PREFIX) && !text.startsWith(MASK_PREFIX) && !text.startsWith(REUSE_PREFIX)) {
         out.push([{ at: j, fp: fingerprint(items[j]), id, src: seen.get(text), bid: compressedBlobId(text) || blobId(text) }, text]);
       } else if (!seen.has(text)) seen.set(text, id);
@@ -1106,14 +1117,14 @@ export function isErrorResult(isError, text) {
  * its reduceLog form, then compressed as usual; fresh the new decisions (text results after the last assistant
  * message that reduceLog takes). Proxy _log_reduced.
  */
-function logReduced(original, items, decisions, settings, store) {
+function logReduced(original, items, decisions, settings, store, skip = new Set()) {
   const found = decisions.length ? dedupFound(original, decisions) : new Map();
   const last = lastAssistant(original);
   const fresh = [];
   for (let j = last >= 0 ? last + 1 : original.length; j < original.length; j++) {
     if (found.has(j)) continue;
     for (const [id, text] of resultTexts(original[j])) {
-      if (!reduceLog(text, settings.logReduceOverChars)) continue;
+      if (skip.has(id) || !reduceLog(text, settings.logReduceOverChars)) continue;
       const d = { at: j, fp: fingerprint(original[j]), id, bid: blobId(text) };
       fresh.push(d);
       found.set(j, [...(found.get(j) ?? []), d]);
@@ -1130,7 +1141,7 @@ function logReduced(original, items, decisions, settings, store) {
       x = replacedResult(x, d.id, r.reduced);
     }
     if (x === original[j]) continue;
-    if (settings.compressOverTokens > 0) x = compressMessage(x, settings.compressOverTokens, (id, t) => store.writeBlob(id, t));
+    if (settings.compressOverTokens > 0) x = compressMessage(x, settings.compressOverTokens, (id, t) => store.writeBlob(id, t), skip);
     out ??= [...items];
     out[j] = x;
   }
@@ -1197,7 +1208,7 @@ function visibleIn(items, shown, j, id) {
 }
 
 /** {state, reuse: [[decision, text]], nudges} for the new tool results under CONTEXT_LEDGER; proxy _ledger_new. */
-function ledgerNew(items, shown, found, fresh) {
+function ledgerNew(items, shown, found, fresh, skip = new Set()) {
   const last = lastAssistant(items);
   if (last < 0) return { state: null, reuse: [], nudges: [] };
   const { state, repeats } = walk(ledgerSteps(items), last + 1);
@@ -1207,7 +1218,7 @@ function ledgerNew(items, shown, found, fresh) {
   const reuse = [];
   const nudges = [];
   for (const r of repeats) {
-    if (decided.has(key(r.j, r.rid))) continue;
+    if (decided.has(key(r.j, r.rid)) || skip.has(r.rid)) continue;
     if ("test" in r) {
       nudges.push(nudgeLine(r));
       continue;
@@ -1301,6 +1312,9 @@ function clearedInputs(value, shown) {
 }
 
 /** How to get back a result shown as a maskPlaceholder; same text as mask_text in proxy/smarter_compact/core.py. */
+// Opens the note of a trim that only cleared tool outputs: no message is gone; proxy CLEARED_LEAD.
+const CLEARED_LEAD = "Older tool outputs were moved out to save space. Continue the task from where you were.";
+
 export function maskText(sid, names = LEGACY_RECALL_NAMES) {
   return `Older tool outputs in your context read "${MASK_PREFIX} smart_compact_get(id="<id>") returns it]". `
     + "Each names its own id: smart_compact_get with that id returns the full output. If that fails, find its call with "
@@ -1312,12 +1326,14 @@ export function maskText(sid, names = LEGACY_RECALL_NAMES) {
 /** The once-per-trim-cycle nudge to save task state; same text as scratchpad_nudge in proxy core.py. */
 export function scratchpadNudge(sid, names) {
   const load = names.scratchpadLoad ? ` (load it first by calling ${names.scratchpadLoad})` : "";
-  return "<compact-scratchpad-nudge>Your context will be trimmed soon: older turns will be removed. If you have no "
-    + `scratchpad yet, create one with ${names.scratchpad}(session_id="${sid}", command="create", `
-    + `file_text=...)${load}, at most ${SCRATCHPAD_MAX_CHARS} characters. Write, tersely:\n`
-    + "- goal and how it is checked\n- status: what works, what fails\n- decisions and why\n"
+  return "<compact-scratchpad-nudge>Your context will be trimmed soon: older turns will be removed. Save your "
+    + "notes, then keep working: this is automatic, not a stopping point. The user is not waiting for an update. "
+    + `If you have no scratchpad yet, create one with ${names.scratchpad}(session_id="${sid}", `
+    + `command="create", file_text=...)${load}, at most ${SCRATCHPAD_MAX_CHARS} characters. Notes for yourself, `
+    + "tersely:\n"
+    + "- goal and how it is checked\n- what works, what fails\n- decisions and why\n"
     + "- facts you would otherwise re-discover (paths, commands, values)\n"
-    + "- files you wrote (paths) and what each holds\n- the exact next step\n"
+    + "- files you wrote (paths) and what each holds\n- your next step\n"
     + "No logs, code or command output. It is kept and shown after every trim; if you already have one, update it "
     + "(str_replace) only when the goal, plan or a key fact changed.</compact-scratchpad-nudge>";
 }
@@ -1452,8 +1468,8 @@ function stripsMore(items, keep, cut, strip, newStrip) {
 
 /** The note of a trim that only stripped earlier reasoning: no message is gone; proxy reasoning_text. */
 export function reasoningText(sid) {
-  return `[smarter-compact: session ${sid}] Your thinking from earlier steps was removed to fit your context `
-    + "window; every message, tool call and tool result is still here.]";
+  return `[smarter-compact: session ${sid}] Your thinking from earlier steps was moved out to save space; every `
+    + "message, tool call and tool result is still here. Continue the task from where you were.]";
 }
 
 /** "exit N" from the result text, else failed/ok by its error type; "no result" when none was sent. */
@@ -1651,9 +1667,9 @@ function recordEvent(store, sid, kind, fields, ts) {
 }
 
 
-function compressAll(messages, settings, store) {
+function compressAll(messages, settings, store, skip = recallCallIds(messages)) {
   if (settings.compressOverTokens <= 0) return messages;
-  return messages.map((m) => compressMessage(m, settings.compressOverTokens, (id, text) => store.writeBlob(id, text)));
+  return messages.map((m) => compressMessage(m, settings.compressOverTokens, (id, text) => store.writeBlob(id, text), skip));
 }
 
 const validMessages = (messages) => Array.isArray(messages) && messages.length > 0
@@ -1728,7 +1744,7 @@ async function trimSession(request, settings, deps, { original, sid, store, item
     if (settings.logReduceOverChars > 0) {
       // CONTEXT_LOG_REDUCE_OVER_CHARS: decided on a result's first request, recorded, rendered on every later one.
       const logs = Array.isArray(state.logs) ? state.logs : [];
-      ({ items, fresh: logFresh } = logReduced(original, items, logs, settings, store));
+      ({ items, fresh: logFresh } = logReduced(original, items, logs, settings, store, recallCallIds(original)));
       if (logFresh.length) {
         state.logs = [...logs, ...logFresh].slice(-LOG_MAX);
         store.saveTrim(sid, state);
@@ -1899,7 +1915,7 @@ async function trimSession(request, settings, deps, { original, sid, store, item
           if (masked) note = `${note}\n${maskText(sid, toolNames)}`;
         } else {
           // Clearing alone drops no message: the note only says how to fetch a cleared result back.
-          note = `[smarter-compact: session ${sid}] ${maskText(sid, toolNames)}`;
+          note = `[smarter-compact: session ${sid}] ${CLEARED_LEAD} ${maskText(sid, toolNames)}`;
         }
         const pad = settings.scratchpad ? store.readScratchpad(sid) : "";
         if (pad) note = `${scratchpadBlock(pad)}\n${note}`; // first, ahead of the recall instructions
@@ -1948,8 +1964,9 @@ async function trimSession(request, settings, deps, { original, sid, store, item
       }
     }
     const ts = utcNow(deps.now?.());
-    const fresh = settings.dedupResults !== false ? dedupNew(items, shown, found) : [];
-    const { state: lstate, reuse, nudges: lnudges } = settings.ledger ? ledgerNew(items, shown, found, fresh)
+    const recall = recallCallIds(original);
+    const fresh = settings.dedupResults !== false ? dedupNew(items, shown, found, recall) : [];
+    const { state: lstate, reuse, nudges: lnudges } = settings.ledger ? ledgerNew(items, shown, found, fresh, recall)
       : { state: null, reuse: [], nudges: [] };
     if (fresh.length || reuse.length) {
       // Recorded before the request leaves, so every later request renders the same pointer.

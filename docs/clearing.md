@@ -64,7 +64,7 @@ The ledger is rebuilt on every request from the tool calls the request carries:
 | --- | --- |
 | `Read` / `read` / `read_file` / `view` with a path (`file_path`, `filePath`, `path`, `notebook_path`, `file`) | read; `offset`/`limit` give the range; numbered output (`  12→`, `  12\t`) gives the lines actually shown |
 | shell (`Bash`, `bash`, `shell`, `exec_command`, `local_shell`) running one plain `cat <path>`, `sed -n 'A,Bp' <path>`, `head [-n N] <path>` or `tail [-n N] <path>` | read (whole, `A`–`B`, `1`–`N`, last `N`) |
-| `Edit` / `Write` / `MultiEdit` / `NotebookEdit` / `write_file` / `create_file`; `apply_patch` headers (`*** Update File:`); shell `>`/`>>` targets, `sed -i` and `tee` files | edit: that file's counter goes up |
+| `Edit` / `Write` / `MultiEdit` / `NotebookEdit` / `write_file` / `create_file`; `apply_patch` headers (`*** Update File:`); shell redirection targets (`>`, `>>`, `2>`, `&>`), `tee` and `sed -i` files and the `cp`/`mv` destination of each simple command, after shell-quote parsing (never text inside quotes, `python -c` code or a heredoc body; only plain path characters) | edit: that file's counter goes up |
 | any other shell command that is not read-only (the [eviction](eviction.md) read-only rule) and not a test run | global counter up: every earlier read may be stale |
 | a test run (`pytest`, `go test`, `cargo test`, `npm test`, `jest`, `python -m unittest`, …) | test: a rerun with no edit since is nudged |
 
@@ -114,7 +114,7 @@ On by default (`3`); `0` turns it off. With `K` > 0, each trim records the call 
 
 ## Getting a result back
 
-One call returns a cleared result: `smart_compact_get(id="<id>")` with the id from its placeholder, in 12,000-character pages. Addressable Recall Compaction ([ARC](https://arxiv.org/abs/2607.25066)) motivates this: recalling compacted tool outputs by id beat similarity search on needle-in-a-haystack, 99.40% against 88.12%.
+One call returns a cleared result: `smart_compact_get(id="<id>")` with the id from its placeholder, in 12,000-character pages: one header line (`[smart_compact_get id=<id>: characters 0-12000 of N; next page: offset=12000]`), then the stored text as plain text. The results of the recall tools themselves (`smart_compact_get`, `smart_compact_search`, `smart_compact_sql`, `context_status`, `smart_compact_scratchpad`, under any MCP prefix) arrive whole: no head/tail compression, log reduction, repeated-result or ledger pointer; a later trim may clear them like any other result. Addressable Recall Compaction ([ARC](https://arxiv.org/abs/2607.25066)) motivates this: recalling compacted tool outputs by id beat similarity search on needle-in-a-haystack, 99.40% against 88.12%.
 
 The trim note says so, and keeps the older route as a fallback, since every result also stays in the session database: find the call with `smart_compact_search`, then read the next `tool_result` row of the same tool with `smart_compact_sql`:
 

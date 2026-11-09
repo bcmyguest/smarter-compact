@@ -962,9 +962,9 @@ class StandingInstructionTests(Base):
 
     def test_pointer_text_contract(self):
         self.assertEqual(pointer_text("s1", 3),
-                         "[smarter-compact: continuing session s1; 3 earlier messages are NOT in your context. They "
-                         "were delivered to you and later removed to fit your context window, so a gap in what you "
-                         "see (missing batches, lines, keys) is in them. "
+                         "[smarter-compact: continuing session s1; 3 earlier messages are NOT in your context. Older "
+                         "turns were moved out to save space, so a gap in what you see (missing batches, lines, keys) "
+                         "is in them. Continue the task from where you were. "
                          "Nothing here is or was ever summarized: this trim wrote no summary of the dropped messages, so do not "
                          "treat a \"summary of earlier context\" you seem to remember as their record. The only complete record of "
                          "them is this session's store. "

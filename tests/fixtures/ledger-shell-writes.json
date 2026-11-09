@@ -1,0 +1,163 @@
+[
+ {
+  "source": "trial path-tracing-reverse__jv99Lub Q2WSCT",
+  "command": "mkdir -p /tmp/run1 && cd /tmp/run1 && time /app/mystery > out.txt 2> err.txt; echo rc=$?; ls -la; head -c 20 image.ppm | od -c | head -3; cat err.txt | head -c 300; tail -c 200 out.txt",
+  "writes": [
+   "out.txt",
+   "err.txt"
+  ]
+ },
+ {
+  "source": "trial path-tracing-reverse__jv99Lub bqh5ah",
+  "command": "cd /tmp && objdump -d --no-show-raw-insn /app/mystery > /tmp/dis.txt; grep -nE '^[0-9a-f]+ <(main|sky_color|sphere_intersect|plane_intersect|is_in_shadow|write_image|allocate_image|ray_create|vector_[a-z]+|sqrt|trace[a-z_]*|render[a-z_]*)>:' /tmp/dis.txt; wc -l /tmp/dis.txt",
+  "writes": [
+   "/tmp/dis.txt"
+  ]
+ },
+ {
+  "source": "trial path-tracing-reverse__jv99Lub w7LDsm",
+  "command": "cd /tmp && objdump -d --no-show-raw-insn /app/mystery > /tmp/dis2.txt && cmp /tmp/dis.txt /tmp/dis2.txt && echo SAME; sed -n 1041,1175p /tmp/dis2.txt | cut -c1-110",
+  "writes": [
+   "/tmp/dis2.txt"
+  ]
+ },
+ {
+  "source": "trial path-tracing-reverse__jv99Lub vFKK7j",
+  "command": "cd /tmp/run1 && python3 -I -c \"\nimport zlib,struct\ndata=open('image.ppm').read().split()\nw,h=int(data[1]),int(data[2]); vals=list(map(int,data[4:]))\nraw=b''\nfor y in range(h):\n    raw+=b'\\x00'+bytes(vals[(y*w+x)*3+c] for x in range(w) for c in range(3))\ndef chunk(t,d): return struct.pack('>I',len(d))+t+d+struct.pack('>I',zlib.crc32(t+d)&0xffffffff)\nopen('img.png','wb').write(b'\\x89PNG\\r\\n\\x1a\\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',w,h,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(raw))+chunk(b'IEND',b''))\nprint(w,h,len(vals))\n\"; ls -la img.png",
+  "writes": []
+ },
+ {
+  "source": "trial path-tracing-reverse__jv99Lub R7nBkJ",
+  "command": "mkdir -p /tmp/fit && cat > /tmp/fit/fit.py <<'EOF'\nimport math,sys\nd=open('/tmp/run1/image.ppm').read().split()\nW,H=800,600; V=list(map(int,d[4:]))\ndef ref(x,y):\n    i=(y*W+x)*3; return V[i:i+3]\ndef norm(v):\n    l=math.sqrt(sum(c*c for c in v)); return [c/l for c in v]\ndef dot(a,b): return sum(p*q for p,q in zip(a,b))\ndef sphere_hit(o,dr,c=(0,-0.5,-5),r=1.0):\n    oc=[o[i]-c[i] for i in range(3)]\n    b=dot(oc,dr); cc=dot(oc,oc)-r*r; disc=b*b-cc\n    if disc<0: return None\n    s=math.sqrt(disc)\n    for t in (-b-s,-b+s):\n        if t>1e-3: return t\n    return None\ndef render_px(x,y,L):\n    u=(x+0.5)/W; v=(y+0.5)/H\n    dr=norm([(2*u-1)*1.33333333,(1-2*v)*1.0,-1.0])\n    o=(0.0,0.0,0.0)\n    ts=sphere_hit(o,dr)\n    tp=None\n    if dr[1]<-1e-9:\n        tp=(-1.0-o[1])/dr[1]\n    # sky\n    if ts is None and tp is None:\n        t=0.5*(dr[1]+1)\n        return [ (1-t)+t*0.5, (1-t)+t*0.7, (1-t)+t*1.0 ]\n    if ts is not None and (tp is None or ts<tp):\n        p=[o[i]+ts*dr[i] for i in range(3)]\n        n=norm([p[0]-0,p[1]+0.5,p[2]+5])\n        alb=[1.0,0.2,0.2]\n        dd=max(0.0,dot(n,L))\n        # sphere in shadow for sphere: not self-shadowed for front faces\n        s=0.2+0.8*dd\n        return [alb[i]*0.2*0+alb[i]*s for i in range(3)]\n    p=[o[i]+tp*dr[i] for i in range(3)]\n    fl=math.floor(p[0])+math.floor(p[2])\n    alb=0.4 if int(fl)%2 else 0.9\n    # shadow\n    sh=sphere_hit(p,L) is not None\n    dd=max(0.0,L[1])\n    s=0.2 if sh else 0.2+0.8*dd\n    return [alb*s]*3\ndef cmp(L,stride=20):\n    err=0; n=0\n    for y in range(0,H,stride):\n        for x in range(0,W,stride):\n            c=render_px(x,y,L); r=ref(x,y)\n            cv=[min(255,int(255.999*max(0,min(1,q)))) for q in c]\n            err+=sum(abs(cv[i]-r[i]) for i in range(3)); n+=1\n    return err/n\nif __name__=='__main__':\n    best=None\n    for az in range(0,360,10):\n        for el in range(5,90,5):\n            a=math.radians(az); e=math.radians(el)\n            L=[math.cos(e)*math.sin(a), math.sin(e), math.cos(e)*math.cos(a)]\n            L=norm(L)\n            s=cmp(L,stride=40)\n            if best is None or s<best[0]: best=(s,az,el)\n    print(best)\nEOF\ncd /tmp/fit && time python3 -I fit.py",
+  "writes": [
+   "/tmp/fit/fit.py"
+  ]
+ },
+ {
+  "source": "trial path-tracing-reverse__jv99Lub 2KaEDZ",
+  "command": "cd /tmp/fit && python3 -c \"\nimport math\nfrom fit import *\ndef hitfloor(x,y):\n    u=(x+0.5)/W; v=(y+0.5)/H\n    dr=norm([(2*u-1)*1.33333333,(1-2*v),-1.0])\n    tp=(-1.0)/dr[1]; return [tp*dr[i] for i in range(3)]\nsh=[(200,460),(400,420),(300,440)]\nfor el in [35]:\n  for az in range(0,360,5):\n    a=math.radians(az); e=math.radians(el)\n    L=[math.cos(e)*math.sin(a), math.sin(e), math.cos(e)*math.cos(a)]\n    n=sum(sphere_hit(hitfloor(x,y),L) is not None for (x,y) in sh)\n    if n>=2: print(az,el,n)\nprint('done')\n\"",
+  "writes": []
+ },
+ {
+  "source": "trial path-tracing-reverse__jv99Lub YVvRzf",
+  "command": "cd /tmp/run1 && python3 -I -c \"\nimport struct\nd=open('/app/mystery','rb').read()\n# find file offset for vaddr: parse program headers\nimport sys\ne_phoff=struct.unpack_from('<Q',d,0x20)[0]; e_phnum=struct.unpack_from('<H',d,0x38)[0]\nsegs=[]\nfor i in range(e_phnum):\n    p_type,p_flags,p_offset,p_vaddr,p_paddr,p_filesz,p_memsz=struct.unpack_from('<IIQQQQQ',d,e_phoff+i*56)\n    if p_type==1: segs.append((p_vaddr,p_offset,p_filesz))\ndef rd(va,n):\n    for v,o,s in segs:\n        if v<=va<v+s: return d[o+va-v:o+va-v+n]\nfor a in [0x480008,0x48000c,0x480010,0x480014,0x480018,0x48001c,0x480020,0x480024,0x48002c,0x480030,0x480034,0x480038,0x48003c,0x480040,0x480044]:\n    print(hex(a), struct.unpack('<f',rd(a,4))[0])\nfor a in [0x485a58,0x485a60,0x485ac0,0x485ad0,0x485adc]:\n    print(hex(a), [struct.unpack('<f',rd(a+4*k,4))[0] for k in range(4)], rd(a,8).hex())\n\"; cat -A err.txt | head -c 600; echo; cat -A err.txt | tail -c 200",
+  "writes": []
+ },
+ {
+  "command": "echo x > b.py",
+  "writes": [
+   "b.py"
+  ]
+ },
+ {
+  "command": "echo x >> ./logs//run.log",
+  "writes": [
+   "logs/run.log"
+  ]
+ },
+ {
+  "command": "sed -i 's/a/b/' c.py d.py",
+  "writes": [
+   "c.py",
+   "d.py"
+  ]
+ },
+ {
+  "command": "sed -i.bak -e 's/a/b/' c.py",
+  "writes": [
+   "c.py"
+  ]
+ },
+ {
+  "command": "pytest -q 2>&1 | tee -a out/test.log",
+  "writes": [
+   "out/test.log"
+  ]
+ },
+ {
+  "command": "cp src/a.py build/a.py 2>/dev/null",
+  "writes": [
+   "build/a.py"
+  ]
+ },
+ {
+  "command": "mv -t /tmp/dst a b",
+  "writes": [
+   "/tmp/dst"
+  ]
+ },
+ {
+  "command": "cp a",
+  "writes": []
+ },
+ {
+  "command": "make >build.log 2>err.log",
+  "writes": [
+   "build.log",
+   "err.log"
+  ]
+ },
+ {
+  "command": "cat > gen.py <<'EOF'\nif a > b: print(a >> 2)\nEOF\necho ok > done.txt",
+  "writes": [
+   "gen.py",
+   "done.txt"
+  ]
+ },
+ {
+  "command": "cat <<-EOF > notes.md\n\tx > y.txt\n\tEOF",
+  "writes": [
+   "notes.md"
+  ]
+ },
+ {
+  "command": "python3 -c \"print('a>b', 1 >= 2)\" > out.txt",
+  "writes": [
+   "out.txt"
+  ]
+ },
+ {
+  "command": "echo hi > \"$OUT\"",
+  "writes": []
+ },
+ {
+  "command": "echo '> quoted.txt'",
+  "writes": []
+ },
+ {
+  "command": "FOO=1 tee x.txt < in.txt",
+  "writes": [
+   "x.txt"
+  ]
+ },
+ {
+  "command": "echo a \\\n  > cont.txt",
+  "writes": [
+   "cont.txt"
+  ]
+ },
+ {
+  "command": "# echo > c.txt\necho > d.txt",
+  "writes": [
+   "d.txt"
+  ]
+ },
+ {
+  "command": "ls *.py > /dev/stdout",
+  "writes": []
+ },
+ {
+  "command": "grep -n 'a > b' f.c > hits.txt",
+  "writes": [
+   "hits.txt"
+  ]
+ },
+ {
+  "command": "awk '{print > \"x.txt\"}' in",
+  "writes": []
+ },
+ {
+  "command": "echo 'unclosed > a.txt",
+  "writes": []
+ }
+]

@@ -40,10 +40,16 @@ TRUNCATED_RE = re.compile(r"truncated|output too large|<persisted-output>|exceed
 # A Read result's numbered line (cat -n style: "   12\t..." or "12→...").
 _NUMBERED_RE = re.compile(r"^ *([0-9]+)(?:\t|→)")
 _DIGITS_RE = re.compile(r"[0-9]+")
+_ALNUM_RE = re.compile(r"[A-Za-z0-9]")
 _SED_RANGE_RE = re.compile(r"^([0-9]+)(?:,([0-9]+))?p$")
 _HEAD_N_RE = re.compile(r"^-n?([0-9]+)$")
-_REDIRECT_RE = re.compile(r"(?:^|[^0-9&>])>>?[ \t]*([^ \t\n\r;&|<>()]+)")
 _SHELL_META = "|;&><`$\n"
+# Shell operators (shlex punctuation runs) whose next word is a file the command writes, or a word that is no file.
+_WRITE_OPS = frozenset((">", ">>", ">|", "&>", "&>>"))
+_SKIP_OPS = frozenset((">&", "<", "<<", "<<<", "<&", "<>", "&>&"))
+# A recorded written path: plain path characters only, so code, quoted text and globs never count as a file.
+_PATH_RE = re.compile(r"^[A-Za-z0-9_./~+@%-]+$")
+_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 
 def norm_path(path):
@@ -117,17 +123,118 @@ def _shell_reads(command):
     return []
 
 
+def _shell_text(command):
+    """command with heredoc bodies, comments and line continuations removed and each unquoted newline a ";": what
+    shlex can split into simple commands. Quotes are tracked, so text inside a quoted string never changes."""
+    out, pending, i, n, quote = [], [], 0, len(command), None
+    while i < n:
+        c = command[i]
+        if quote == "'":
+            out.append(c)
+            quote = None if c == "'" else quote
+            i += 1
+        elif quote == '"':
+            out.append(command[i:i + 2] if c == "\\" else c)
+            quote = None if c == '"' else quote
+            i += 2 if c == "\\" else 1
+        elif c == "\\":
+            out.append("" if command[i + 1:i + 2] == "\n" else command[i:i + 2])
+            i += 2
+        elif c in "'\"":
+            out.append(c)
+            quote = c
+            i += 1
+        elif c == "#" and (i == 0 or command[i - 1] in " \t\n;&|()"):
+            while i < n and command[i] != "\n":
+                i += 1
+        elif c == "\n":
+            out.append(" ; ")
+            i += 1
+            for delim, dash in pending:
+                while i < n:
+                    end = command.find("\n", i)
+                    end = n if end < 0 else end
+                    line, i = command[i:end], end + 1
+                    if (line.lstrip("\t") if dash else line) == delim:
+                        break
+            pending = []
+        elif command.startswith("<<", i) and not command.startswith("<<<", i):
+            j = i + 2
+            dash = command[j:j + 1] == "-"
+            j += dash
+            while j < n and command[j] in " \t":
+                j += 1
+            k = j
+            while k < n and command[k] not in " \t\n;&|()<>":
+                k += 1
+            delim = re.sub(r"[\"'\\]", "", command[j:k])
+            if delim:
+                pending.append((delim, dash))
+            out.append(f"<< {delim} ")
+            i = k
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
+def _argv_writes(words):
+    """Files a simple command's words name as written: `tee` files, `sed -i` files, the `cp`/`mv` destination."""
+    while words and _ASSIGN_RE.match(words[0]):
+        words = words[1:]
+    if not words:
+        return []
+    name, args = words[0], words[1:]
+    plain = [w for w in args if not w.startswith("-")]
+    if name == "tee":
+        return plain
+    if name == "sed" and any(w.startswith("-i") or w.startswith("--in-place") for w in args):
+        return plain[1:]
+    if name in ("cp", "mv"):
+        for k, w in enumerate(args):
+            if w == "-t" and k + 1 < len(args):
+                return [args[k + 1]]
+            if w.startswith("--target-directory="):
+                return [w.split("=", 1)[1]]
+        return plain[-1:] if len(plain) >= 2 else []
+    return []
+
+
+def _plausible(path):
+    """Whether a written-file candidate looks like a path: plain path characters, not an option or a device."""
+    return bool(_PATH_RE.match(path)) and not path.startswith(("-", "/dev/")) and bool(_ALNUM_RE.search(path))
+
+
 def _shell_writes(command):
-    """Paths a shell command visibly writes: redirection targets, `sed -i` and `tee` files, apply_patch headers."""
-    out = [norm_path(m.group(1)) for m in _REDIRECT_RE.finditer(command) if m.group(1) != "/dev/null"]
-    words = _words(command) or []
-    if words and words[0] == "sed" and any(w.startswith("-i") or w.startswith("--in-place") for w in words):
-        files = [w for w in words[1:] if not w.startswith("-")]
-        out += [norm_path(w) for w in files[1:]]
-    if words and words[0] == "tee":
-        out += [norm_path(w) for w in words[1:] if not w.startswith("-")]
-    out += _patch_files(command)
-    return out
+    """Paths a shell command visibly writes: redirection targets, `tee`, `sed -i` and `cp`/`mv` destinations of each
+    simple command after shell-quote parsing (never from inside a quoted string or a heredoc body), plus apply_patch
+    headers."""
+    try:
+        lex = shlex.shlex(_shell_text(command), posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        lex.commenters = ""
+        tokens = list(lex)
+    except ValueError:
+        tokens = []
+    out, words, k = [], [], 0
+    while k <= len(tokens):
+        token = tokens[k] if k < len(tokens) else ";"
+        op = set(token) <= set("();<>|&")
+        if op and token in _WRITE_OPS | _SKIP_OPS:
+            if words and _DIGITS_RE.fullmatch(words[-1]):
+                words.pop()  # the fd of 2> or 2>&1
+            nxt = tokens[k + 1] if k + 1 < len(tokens) else ""
+            if token in _WRITE_OPS and not set(nxt) <= set("();<>|&"):
+                out.append(nxt)
+            k += 2
+            continue
+        if op:
+            out += _argv_writes(words)
+            words = []
+        else:
+            words.append(token)
+        k += 1
+    return [norm_path(p) for p in out if _plausible(p)] + _patch_files(command)
 
 
 def _patch_files(text):

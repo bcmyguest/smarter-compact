@@ -111,7 +111,7 @@ export const CONTEXT_STORE_MCP_TOOLS = [
       + '[smarter-compact: tool output cleared to save context; smart_compact_get(id="<id>") returns it] '
       + 'or a smart_compact_search blob_ids entry. '
       + `Returns at most ${BLOB_PAGE_CHARS} characters per call so one recall cannot re-inflate the window the trim `
-      + `just freed: page with offset (next_offset), or pass max_chars (up to ${BLOB_MAX_CHARS}) when the whole `
+      + `just freed: page on with the offset its first line names, or pass max_chars (up to ${BLOB_MAX_CHARS}) when the whole `
       + "result really is needed at once.",
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
@@ -177,8 +177,8 @@ export const SCRATCHPAD_MCP_TOOL = {
   name: "smart_compact_scratchpad",
   title: "Task scratchpad that survives context trims",
   description:
-    "A small per-session notes file for task state (goal and how it is checked, status, decisions and why, facts "
-    + "you would otherwise re-discover, the exact next step); no logs, code or command output. "
+    "A small per-session notes file for your own task state (goal and how it is checked, what works and fails, "
+    + "decisions and why, facts you would otherwise re-discover, your next step); no logs, code or command output. "
     + "It persists across context trims and every trim note shows it: write it once, then update it when the goal, "
     + "plan or a key fact changes. "
     + `view returns numbered lines; create replaces the whole pad; str_replace needs old_str to occur exactly once; `
@@ -797,6 +797,18 @@ function getBlob(args, env) {
     truncated: end < text.length,
     ...(end < text.length ? { next_offset: end } : {}),
   };
+}
+
+/**
+ * The MCP text of a tool result: a smart_compact_get page as one header line then the stored text verbatim, so the
+ * agent reads real newlines instead of a JSON-escaped string; every other tool as JSON.
+ */
+export function toolResultText(name, data) {
+  if (name !== "smart_compact_get" || !data || typeof data.text !== "string") return JSON.stringify(data);
+  if (!data.found) return `[smart_compact_get id=${data.id}: not found]`;
+  const end = data.offset + data.text.length;
+  const more = data.truncated ? `; next page: offset=${data.next_offset}` : ", complete";
+  return `[smart_compact_get id=${data.id}: characters ${data.offset}-${end} of ${data.total_chars}${more}]\n${data.text}`;
 }
 
 function contextStatusTool(args, env) {

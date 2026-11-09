@@ -74,6 +74,15 @@ test("shlexTokens and readOnly follow Python shlex and evict.read_only", () => {
   assert.ok(!readOnly("cat x > y"));
 });
 
+test("shell writes are parsed paths only, as in the proxy (shared fixture)", () => {
+  // Trial path-tracing-reverse__jv99Lub once recorded `Modified: out.txt, /tmp/dis.txt, :', I',len, IIBBBBB',w,h,8,2,0,0,0`.
+  const cases = JSON.parse(fs.readFileSync(new URL("./fixtures/ledger-shell-writes.json", import.meta.url), "utf8"));
+  for (const c of cases) {
+    const edits = effects("Bash", { command: c.command }).filter((e) => e[0] === "edit").map((e) => e[1]);
+    assert.deepEqual(edits, c.writes, c.source ?? c.command.slice(0, 60));
+  }
+});
+
 test("ledger effects and walk match the proxy rules", () => {
   assert.deepEqual(effects("Read", { file_path: "./a.py" }), [["read", "a.py", 1, null, "read"]]);
   assert.deepEqual(effects("Bash", { command: "sed -n '10,20p' a.py" }), [["read", "a.py", 10, 20, "sed"]]);

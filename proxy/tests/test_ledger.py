@@ -77,6 +77,15 @@ class WalkTests(unittest.TestCase):
                          [("read", "e.py", 1, None, "cat")])
         self.assertEqual(ledger.effects("Bash", {"command": "cat a.py | grep x"}), [])
 
+    def test_shell_writes_are_parsed_paths_only(self):
+        # Shared with tests/context-ledger.test.mjs; trial path-tracing-reverse__jv99Lub once recorded
+        # `Modified: out.txt, /tmp/dis.txt, :', I',len, IIBBBBB',w,h,8,2,0,0,0` from quoted regexes and python -c code.
+        fixture = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "ledger-shell-writes.json"
+        for case in json.loads(fixture.read_text()):
+            with self.subTest(case.get("source", case["command"][:60])):
+                edits = [e[1] for e in ledger.effects("Bash", {"command": case["command"]}) if e[0] == "edit"]
+                self.assertEqual(edits, case["writes"])
+
     def test_range_covered_only_when_current(self):
         _, repeats = ledger.walk(self.steps([CAT, READ_RANGE]), 1)
         self.assertEqual([(r["rid"], r["covers"]) for r in repeats], [("c1", [(0, "c0")])])
