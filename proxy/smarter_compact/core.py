@@ -427,6 +427,11 @@ def _last_assistant(adapter, items):
     return max((j for j, x in enumerate(items) if adapter.is_assistant(x)), default=None)
 
 
+def _newest_unpinned(adapter, items):
+    """Index of the newest item that is not pinned: Claude Code ends each request with a system message."""
+    return next((j for j in range(len(items) - 1, -1, -1) if not adapter.is_pinned(items[j])), len(items) - 1)
+
+
 def _is_error(is_error, text):
     """Whether a tool result reports a failure: the error flag, else an _ERROR_RE line."""
     return bool(is_error) or any(_ERROR_RE.search(line) for line in (text or "").split("\n"))
@@ -579,9 +584,9 @@ def _ledgered(adapter, items, found, lo):
 
 
 def _ledger_block(adapter, items, sent, state, nudges, found):
-    """The ledger block decision for this request's newest item, or None: it must hold new tool results, carry no
-    block yet, and the block must differ from the newest recorded one or carry nudges."""
-    j = len(items) - 1
+    """The ledger block decision for this request's newest unpinned item, or None: it must hold new tool results,
+    carry no block yet, and the block must differ from the newest recorded one or carry nudges."""
+    j = _newest_unpinned(adapter, items)
     last = _last_assistant(adapter, items)
     if state is None or last is None or j <= last or j in found or not adapter.tool_results(items[j]):
         return None
@@ -613,9 +618,9 @@ def clock_text(budget, elapsed):
 
 
 def _clock_entry(adapter, items, sent, found, cut, text):
-    """The clock decision for this request's newest item, or None: it must hold new tool results (after the last
-    assistant item), carry no clock line yet and not be the trim's cut turn."""
-    j = len(items) - 1
+    """The clock decision for this request's newest unpinned item, or None: it must hold new tool results (after the
+    last assistant item), carry no clock line yet and not be the trim's cut turn."""
+    j = _newest_unpinned(adapter, items)
     last = _last_assistant(adapter, items)
     if last is None or j <= last or j == cut or j in found or not adapter.tool_results(items[j]):
         return None

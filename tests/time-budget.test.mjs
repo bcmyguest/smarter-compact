@@ -108,3 +108,16 @@ test("the line survives a trim, stays out of its note, and the trimmed view re-r
   const again = await run(home, turns(steps), 90, { CONTEXT_CLEAR_KEEP_RESULTS: "1" });
   assert.equal(JSON.stringify(again), JSON.stringify(trimmed));
 }));
+
+test("a trailing system message leaves the line and the ledger block on the newest result", withHome(async (home) => {
+  const sys = (n) => ({ role: "system", content: `<total_tokens>${n} tokens left</total_tokens>` });
+  const first = [...turns([CAT]), sys(1000)];
+  const v1 = await run(home, first, 0, { CONTEXT_LEDGER: "1" });
+  assert.deepEqual(v1.at(-1), first.at(-1));
+  assert.match(v1.at(-2).content.at(-1).result.value, /\[smarter-compact ledger[\s\S]*\n\n\[TIME REMAINING: 30m00s of 30m budget\]$/);
+  const second = [...first, ...turns([CAT, LS]).slice(-2), sys(999)];
+  const v2 = await run(home, second, 61, { CONTEXT_LEDGER: "1" });
+  assert.equal(JSON.stringify(v2.slice(0, 4)), JSON.stringify(v1));
+  assert.equal(lastResult(v2.slice(0, -1)), "a.py\nb.py\n\n[TIME REMAINING: 28m59s of 30m budget]");
+  assert.deepEqual(stateOf(home).clock.map((d) => d.at), [2, 5]);
+}));

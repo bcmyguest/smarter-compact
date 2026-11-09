@@ -1218,9 +1218,15 @@ function ledgered(items, found, lo) {
   return items;
 }
 
-/** The ledger block decision for this request's newest message, or null; proxy _ledger_block. */
+/** Index of the newest message that is not pinned (a trailing system message); proxy _newest_unpinned. */
+function newestUnpinned(items) {
+  const j = items.findLastIndex((x) => !isPinned(x));
+  return j < 0 ? items.length - 1 : j;
+}
+
+/** The ledger block decision for this request's newest unpinned message, or null; proxy _ledger_block. */
 function newLedgerBlock(items, sent, state, nudges, found) {
-  const j = items.length - 1;
+  const j = newestUnpinned(items);
   const last = lastAssistant(items);
   if (state === null || last < 0 || j <= last || found.has(j) || !parts(items[j]).some((p) => p?.type === "tool-result")) return null;
   const tail = nudges.length ? `\nRepeats in this batch:\n${nudges.slice(0, 3).join("\n")}` : "";
@@ -1245,9 +1251,9 @@ export function clockText(budget, elapsed) {
   return `[TIME REMAINING: ${Math.floor(left / 60)}m${String(left % 60).padStart(2, "0")}s of ${duration(budget)} budget]`;
 }
 
-/** The clock decision for this request's newest message, or null; proxy _clock_entry. */
+/** The clock decision for this request's newest unpinned message, or null; proxy _clock_entry. */
 function newClockEntry(items, sent, found, cut, text) {
-  const j = items.length - 1;
+  const j = newestUnpinned(items);
   const last = lastAssistant(items);
   if (last < 0 || j <= last || j === cut || found.has(j) || !parts(items[j]).some((p) => p?.type === "tool-result")) return null;
   if (nudged(sent, j, text) === sent) return null;
