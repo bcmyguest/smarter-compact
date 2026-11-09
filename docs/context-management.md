@@ -28,7 +28,7 @@ Each request goes through these steps ([context proxy](context-proxy.md) has imp
 | [Tool-result clearing and masking](clearing.md) (on by default) | Part of each trim | Every tool result but the 10 newest, and the results in the kept turns before the latest run, become a short placeholder; the calls stay, and each result stays in the store |
 | [Lifecycle eviction](eviction.md) (off by default; `CONTEXT_EVICTION=1`, proxy) | Every 3 assistant steps, instead of the trim | Old tool results the rules mark unneeded (a file read or written again later, a command re-run, a result nothing later refers to) become the same placeholder; the threshold trim does not run, the agent's own compaction stays the overflow guard |
 | [Scratchpad](scratchpad.md) (on by default; `CONTEXT_SCRATCHPAD=0` turns it off) | The prompt passes `CONTEXT_SCRATCHPAD_NUDGE_AT` of the threshold, then the next trim | One nudge, appended to the newest user or tool message, asks the agent to create the pad once (goal, status, decisions, facts, next step) with `smart_compact_scratchpad` and to update it only on a big change; every trim note opens with the current pad (≤2,500 chars) in a `<compact-scratchpad>` block labelled possibly stale, and snapshots it |
-| Standing instruction | Every request | A constant system-prompt note tells the agent to call `smart_compact_search` before answering from content it cannot see |
+| Standing instruction | Every request | A constant system-prompt note tells the agent to call `smart_compact_search` before relying on content it cannot see |
 
 The cut is **sticky**: later requests with the same history get the same rewrite byte for byte, so the prompt cache keeps hitting. A trim invalidates the cache once.
 

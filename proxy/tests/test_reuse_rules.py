@@ -16,10 +16,9 @@ from smarter_compact.core import REUSE_RULES, STANDING_INSTRUCTION, standing_ins
 
 # The standing instruction before CONTEXT_REUSE_RULES, byte for byte (docs/context-store.md).
 OLD = ("Context management: to fit your context window, older turns may be removed and replaced by an "
-       "[smarter-compact: …] pointer. Removed content is saved, not forgotten. Before answering anything that depends "
-       "on earlier content you cannot see in your context — values, ids, keys, counts, decisions — call "
+       "[smarter-compact: …] pointer. Removed content is saved, not forgotten. When you need earlier content you cannot see in your context — values, ids, keys, counts, decisions — call "
        "smart_compact_search (use `pattern` for exact ids/keys, `context` for neighbouring rows; `line_matches` gives "
-       "exact counts) or smart_compact_sql for counts and aggregates over the session store; never guess or answer "
+       "exact counts) or smart_compact_sql for counts and aggregates over the session store; never guess "
        "from memory you cannot see. This trim never summarizes removed content — a remembered \"summary of earlier "
        "context\" is not its record; cite a search result instead.")
 

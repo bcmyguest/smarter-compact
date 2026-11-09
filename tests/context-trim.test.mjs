@@ -53,7 +53,7 @@ test("the pointer states what was removed, denies a summary, and names both tool
   assert.match(note, /do not treat a "summary of earlier context" you seem to remember as their record/);
   assert.match(note, /The tools smart_compact_search and smart_compact_sql are available to you in this request/);
   assert.match(note, /You MUST call smart_compact_search\(session_id="sess-1", query=\.\.\. or pattern=\.\.\.\)/);
-  assert.match(note, /never answer "not found", "never received" or "no search tool" without calling it/);
+  assert.match(note, /never claim "not found", "never received" or "no search tool" without calling it/);
   assert.match(note, /Dropped user turns may hold instructions or corrections that still apply: search them \(smart_compact_search with role="user"\) before changing course\./);
   assert.match(note, /To recover a file you read earlier, search for the text you need instead of reading it again/);
   assert.match(note, /re-read only the lines you still lack \(offset\/limit\)/);
@@ -725,10 +725,9 @@ test("unsigned, OpenAI and Gemini reasoning parts stay where the provider needs 
 // CONTEXT_REUSE_RULES: static don't-repeat-work rules end the standing instruction (Hu et al., arXiv 2609.30725).
 // Same contract as proxy/tests/test_reuse_rules.py.
 const OLD_STANDING = "Context management: to fit your context window, older turns may be removed and replaced by an "
-  + "[smarter-compact: …] pointer. Removed content is saved, not forgotten. Before answering anything that depends "
-  + "on earlier content you cannot see in your context — values, ids, keys, counts, decisions — call "
+  + "[smarter-compact: …] pointer. Removed content is saved, not forgotten. When you need earlier content you cannot see in your context — values, ids, keys, counts, decisions — call "
   + "smart_compact_search (use `pattern` for exact ids/keys, `context` for neighbouring rows; `line_matches` gives "
-  + "exact counts) or smart_compact_sql for counts and aggregates over the session store; never guess or answer "
+  + "exact counts) or smart_compact_sql for counts and aggregates over the session store; never guess "
   + "from memory you cannot see. This trim never summarizes removed content — a remembered \"summary of earlier "
   + "context\" is not its record; cite a search result instead.";
 

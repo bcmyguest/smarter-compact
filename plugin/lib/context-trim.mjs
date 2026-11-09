@@ -82,8 +82,8 @@ export const REUSE_RULES = "Don't repeat work: before reading a file or running 
   + "context and reuse it; re-read only when it may have changed, and say why.\n"
   + "Rerun tests or builds only after the code changed or to get new evidence; save long output to a file and "
   + "filter that instead of rerunning.\n"
-  + "Revise an existing script instead of writing a near-copy; when repeated actions bring no new evidence, stop "
-  + "and take a different approach.";
+  + "Revise an existing script instead of writing a near-copy; when repeated actions bring no new evidence, switch"
+  + " to a different approach.";
 // Same as TOOL_SEARCH / CLAUDE_CODE_PREFIX in proxy/smarter_compact/core.py.
 const TOOL_SEARCH = "ToolSearch";
 const CLAUDE_CODE_PREFIX = "mcp__smarter-compact__";
@@ -157,10 +157,9 @@ function availability(names) {
 
 export function standingInstruction(names = recallToolNames([]), reuse = true) {
   return STANDING_MARKER + ", older turns may be removed and replaced by an "
-  + "[smarter-compact: …] pointer. Removed content is saved, not forgotten. Before answering anything that depends on "
-  + "earlier content you cannot see in your context — values, ids, keys, counts, decisions — call "
+  + "[smarter-compact: …] pointer. Removed content is saved, not forgotten. When you need earlier content you cannot see in your context — values, ids, keys, counts, decisions — call "
   + `${names.search} (use \`pattern\` for exact ids/keys, \`context\` for neighbouring rows; \`line_matches\` gives `
-  + `exact counts) or ${names.sql} for counts and aggregates over the session store; never guess or answer `
+  + `exact counts) or ${names.sql} for counts and aggregates over the session store; never guess `
   + "from memory you cannot see. This trim never summarizes removed content — a remembered \"summary of earlier "
   + "context\" is not its record; cite a search result instead."
   + (names.load ? ` The recall tools are deferred: load them first by calling ${names.load}.` : "")
@@ -976,8 +975,8 @@ export function pointerText(sid, dropped, names = LEGACY_RECALL_NAMES) {
     + "treat a \"summary of earlier context\" you seem to remember as their record. The only complete record of "
     + "them is this session's store. "
     + availability(names)
-    + `You MUST call ${names.search}(session_id="${sid}", query=... or pattern=...) before answering `
-    + 'anything that depends on them, and never answer "not found", "never received" or "no search tool" '
+    + `You MUST call ${names.search}(session_id="${sid}", query=... or pattern=...) before relying on `
+    + 'anything in them, and never claim "not found", "never received" or "no search tool" '
     + "without calling it. "
     + "Dropped user turns may hold instructions or corrections that still apply: search them "
     + `(${names.search} with role="user") before changing course. `

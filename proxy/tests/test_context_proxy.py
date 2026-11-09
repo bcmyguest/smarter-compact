@@ -971,7 +971,7 @@ class StandingInstructionTests(Base):
                          "The tools smart_compact_search and smart_compact_sql are available to you in this "
                          "request. "
                          'You MUST call smart_compact_search(session_id="s1", query=... or pattern=...) before '
-                         'answering anything that depends on them, and never answer "not found", "never '
+                         'relying on anything in them, and never claim "not found", "never '
                          'received" or "no search tool" without calling it. '
                          'Dropped user turns may hold instructions or corrections that still apply: search them '
                          '(smart_compact_search with role="user") before changing course. '

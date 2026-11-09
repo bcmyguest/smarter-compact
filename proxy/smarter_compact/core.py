@@ -76,8 +76,8 @@ REUSE_RULES = (
     "context and reuse it; re-read only when it may have changed, and say why.\n"
     "Rerun tests or builds only after the code changed or to get new evidence; save long output to a file and "
     "filter that instead of rerunning.\n"
-    "Revise an existing script instead of writing a near-copy; when repeated actions bring no new evidence, stop "
-    "and take a different approach."
+    "Revise an existing script instead of writing a near-copy; when repeated actions bring no new evidence, switch"
+    " to a different approach."
 )
 # CONTEXT_DEDUP_RESULTS: dedup decisions kept per session (trim state "dedup"), oldest dropped first.
 DEDUP_MAX = 512
@@ -199,10 +199,9 @@ def standing_instruction(names=None, reuse=True):
     names = names or recall_tool_names([])
     return (
         STANDING_MARKER + ", older turns may be removed and replaced by an "
-        "[smarter-compact: …] pointer. Removed content is saved, not forgotten. Before answering anything that depends on "
-        "earlier content you cannot see in your context — values, ids, keys, counts, decisions — call "
+        "[smarter-compact: …] pointer. Removed content is saved, not forgotten. When you need earlier content you cannot see in your context — values, ids, keys, counts, decisions — call "
         f"{names['search']} (use `pattern` for exact ids/keys, `context` for neighbouring rows; `line_matches` gives "
-        f"exact counts) or {names['sql']} for counts and aggregates over the session store; never guess or answer "
+        f"exact counts) or {names['sql']} for counts and aggregates over the session store; never guess "
         'from memory you cannot see. This trim never summarizes removed content — a remembered "summary of earlier '
         "context\" is not its record; cite a search result instead."
         + (f" The recall tools are deferred: load them first by calling {names['load']}." if names.get("load") else "")
@@ -291,8 +290,8 @@ def pointer_text(sid, dropped, names=None):
         f"treat a \"summary of earlier context\" you seem to remember as their record. The only complete record of "
         f"them is this session's store. "
         + _availability(names) +
-        f'You MUST call {names["search"]}(session_id="{sid}", query=... or pattern=...) before answering '
-        f'anything that depends on them, and never answer "not found", "never received" or "no search tool" '
+        f'You MUST call {names["search"]}(session_id="{sid}", query=... or pattern=...) before relying on '
+        f'anything in them, and never claim "not found", "never received" or "no search tool" '
         f"without calling it. "
         f"Dropped user turns may hold instructions or corrections that still apply: search them "
         f'({names["search"]} with role="user") before changing course. '
