@@ -12,7 +12,7 @@ const sha16 = (text) => crypto.createHash("sha256").update(text, "utf8").digest(
 
 // Same as compress.MARKER_PREFIX in the proxy and MARKER_PREFIX in context-trim.mjs.
 const MARKER_PREFIX = "[smarter-compact: tool result compressed,";
-/** Start of a repeated read's pointer (CONTEXT_LEDGER); never masked. Same as compress.REUSE_PREFIX. */
+/** Start of a repeated read's pointer recorded before ledger reuse became the dedup pointer; never masked. Same as compress.REUSE_PREFIX. */
 export const REUSE_PREFIX = "[smarter-compact: this read repeats an earlier one still shown above";
 // compress.py LOG_*: LogDx-CI's grep reducer (arXiv 2605.28876, Table 2): failure pattern, 3 before / 8 after.
 const LOG_FAILURE_RE = /error|failed|failure|traceback|exception|assert|panic|exit code|##\[error\]/i;
@@ -420,9 +420,4 @@ export const coreId = sha16;
 export function nudgeLine(repeat) {
   if ("test" in repeat) return `- \`${cpSlice(repeat.test, 0, 200)}\` already ran with no file change since; rerun tests only for new evidence.`;
   return `- ${repeat.path} (${repeat.label}) was read before and is unchanged since; that earlier output is no longer shown in full.`;
-}
-
-/** A repeated read's text, naming the blob of its own output (ledger.reuse_placeholder). */
-export function reusePlaceholder(repeat, bid) {
-  return `${REUSE_PREFIX} (${repeat.path}, ${repeat.label}; the file is unchanged since); smart_compact_get(id="${bid}") returns this output]`;
 }

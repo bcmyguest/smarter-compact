@@ -13,9 +13,15 @@ from test_context_proxy import SID, Base, anth_request, headers  # noqa: E402
 
 from smarter_compact import Settings, ttl  # noqa: E402
 from smarter_compact.compress import DEDUP_MIN_CHARS, DEDUP_PREFIX, MASK_PREFIX, blob_id, dedup_placeholder  # noqa: E402
+from smarter_compact.ledger import LEDGER_HEAD  # noqa: E402
 
 OUT = "line of output\n" * 40  # 600 chars
 POINTER = dedup_placeholder(OUT)
+PROXY_POINTER = ('[smarter-compact: output identical to an earlier tool result still shown above; '
+                 'smart_compact_get(id="646c9063dd68a784") returns it]')
+# The CONTEXT_LEDGER block (on by default) on a new batch: every call reads one file, whole, unchanged since.
+LEDGER = f"{LEDGER_HEAD}\nRead (latest last):\n- log.txt: whole current"
+LEDGER_X = f"{LEDGER_HEAD}\nRead (latest last):\n- x: whole current"
 
 
 def anth_turns(outs):
@@ -26,6 +32,11 @@ def anth_turns(outs):
             {"type": "tool_use", "id": f"t{k}", "name": "Bash", "input": {"command": "cat log.txt"}}]})
         msgs.append({"role": "user", "content": [{"type": "tool_result", "tool_use_id": f"t{k}", "content": out}]})
     return msgs
+
+
+def ledgered(msg, text=LEDGER):
+    """msg with the ledger block appended as a text block (Anthropic)."""
+    return {**msg, "content": [*msg["content"], {"type": "text", "text": text}]}
 
 
 def anth_results(view):
@@ -78,19 +89,20 @@ class SettingTests(DedupBase):
 class AnthropicTests(DedupBase):
     def test_only_the_newer_copy_becomes_the_pointer(self):
         msgs = anth_turns([OUT])
-        self.assertEqual(self.anth(msgs), msgs)
+        self.assertEqual(self.anth(msgs), [*msgs[:2], ledgered(msgs[2])])
         msgs = anth_turns([OUT, OUT])
         view = self.anth(msgs)
-        self.assertEqual(view[:4], msgs[:4])
+        self.assertEqual(view[:4], [*msgs[:2], ledgered(msgs[2]), msgs[3]])
         self.assertEqual(anth_results(view), {"t0": OUT, "t1": POINTER})
         self.assertEqual(self.blob(OUT), OUT)
 
     def test_off_gives_the_old_bytes(self):
         msgs = anth_turns([OUT, OUT])
-        self.assertEqual(json.dumps(self.anth(msgs, dedup_results=False)), json.dumps(msgs))
+        # ledger=False too: on by default, it would turn the repeated cat into its own reuse pointer.
+        self.assertEqual(json.dumps(self.anth(msgs, dedup_results=False, ledger=False)), json.dumps(msgs))
         # A recorded decision is ignored when the setting is off.
         self.anth(msgs)
-        self.assertEqual(json.dumps(self.anth(msgs, dedup_results=False)), json.dumps(msgs))
+        self.assertEqual(json.dumps(self.anth(msgs, dedup_results=False, ledger=False)), json.dumps(msgs))
 
     def test_byte_identical_on_every_later_request(self):
         msgs = anth_turns([OUT, OUT])
@@ -102,9 +114,12 @@ class AnthropicTests(DedupBase):
 
     def test_short_different_and_already_sent_results_stay(self):
         short = "x" * (DEDUP_MIN_CHARS - 1)
-        self.assertEqual(self.anth(anth_turns([short, short])), anth_turns([short, short]))
+        shorts = anth_turns([short, short])
+        self.assertEqual(self.anth(shorts), [*shorts[:-1], ledgered(shorts[-1])])
         self.ctx = self.ctx.with_name("ctx-2")
-        self.assertEqual(self.anth(anth_turns([OUT, OUT + "!"])), anth_turns([OUT, OUT + "!"]))
+        # A changed re-read stays whole: the ledger points only at a byte-identical copy.
+        changed = anth_turns([OUT, OUT + "!"])
+        self.assertEqual(self.anth(changed), [*changed[:-1], ledgered(changed[-1])])
         # Duplicates that are no longer the newest result were sent whole already: never edited.
         self.ctx = self.ctx.with_name("ctx-3")
         msgs = anth_turns([OUT, OUT]) + [{"role": "assistant", "content": [{"type": "text", "text": "done"}]}]
@@ -153,6 +168,15 @@ class AnthropicTests(DedupBase):
         self.assertEqual(view[2]["content"][1], {"type": "tool_result", "tool_use_id": "b", "is_error": False, "content": [
             {"type": "text", "text": POINTER, "cache_control": {"type": "ephemeral"}}]})
 
+    def test_ledger_on_gives_the_plugin_pointer_and_dedup_decision(self):
+        # Same literal as the plugin's test (tests/context-trim.test.mjs): both sides render these bytes.
+        self.anth(anth_turns([OUT]), ledger=True)
+        view = self.anth(anth_turns([OUT, OUT]), ledger=True)
+        self.assertEqual(anth_results(view)["t1"], PROXY_POINTER)
+        state = json.loads((self.ctx / "sessions" / f"{SID}.trim.json").read_text())
+        self.assertEqual([(d.get("kind"), d["at"], d["id"], d["src"], d["bid"]) for d in state["dedup"]],
+                         [(None, 4, "t1", "t0", blob_id(OUT))])
+
     def test_state_records_the_decision_by_fingerprint(self):
         self.anth(anth_turns([OUT, OUT]))
         state = json.loads((self.ctx / "sessions" / f"{SID}.trim.json").read_text())
@@ -166,23 +190,25 @@ class OtherFormatTests(DedupBase):
         msgs = chat_turns([OUT, OUT])
         out = self.run_req({"messages": copy.deepcopy(msgs), **headers()}, "acompletion")["messages"]
         self.assertEqual(out[:-1], msgs[:-1])
-        self.assertEqual(out[-1], {**msgs[-1], "content": POINTER})
+        self.assertEqual(out[-1], {**msgs[-1], "content": f"{POINTER}\n\n{LEDGER_X}"})
         again = self.run_req({"messages": copy.deepcopy(msgs) + [{"role": "user", "content": "go"}], **headers()},
                              "acompletion")["messages"]
         self.assertEqual(again[:len(out)], out)
-        off = self.run_req({"messages": copy.deepcopy(msgs), **headers()}, "acompletion", dedup_results=False)
+        off = self.run_req({"messages": copy.deepcopy(msgs), **headers()}, "acompletion", dedup_results=False,
+                           ledger=False)
         self.assertEqual(off["messages"], msgs)
 
     def test_responses_function_call_output(self):
         items = responses_turns([OUT, OUT])
         out = self.run_req({"input": copy.deepcopy(items), **headers()}, "aresponses")["input"]
         self.assertEqual(out[:-1], items[:-1])
-        self.assertEqual(out[-1], {**items[-1], "output": POINTER})
+        self.assertEqual(out[-1], {**items[-1], "output": f"{POINTER}\n\n{LEDGER_X}"})
         again = self.run_req({"input": copy.deepcopy(items) + [
             {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "go"}]}], **headers()},
             "aresponses")["input"]
         self.assertEqual(again[:len(out)], out)
-        off = self.run_req({"input": copy.deepcopy(items), **headers()}, "aresponses", dedup_results=False)
+        off = self.run_req({"input": copy.deepcopy(items), **headers()}, "aresponses", dedup_results=False,
+                           ledger=False)
         self.assertEqual(off["input"], items)
         self.assertEqual(self.blob(OUT), OUT)
 

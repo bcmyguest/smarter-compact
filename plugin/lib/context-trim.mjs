@@ -12,7 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { withProxyEnvSecrets } from "./brand.mjs";
 import {
-  LEDGER_HEAD, LEDGER_MAX, REUSE_PREFIX, coreId, ledgerBlock, nudgeLine, reduceLog, reusePlaceholder, walk,
+  LEDGER_HEAD, LEDGER_MAX, REUSE_PREFIX, coreId, ledgerBlock, nudgeLine, reduceLog, walk,
 } from "./context-ledger.mjs";
 import { contextRoot, sanitizeSessionId } from "./context-store.mjs";
 import { blobRef, chain, dropSession, openSession, scheduleEmbedding, storeSettings } from "./session-db.mjs";
@@ -195,6 +195,8 @@ const LAST_REQUEST_KEY = "last_request";
 // Thread keys of CONTEXT_STRIP_REASONING_EVERY, and keys a thread entry holds without a cut (core.py).
 const REASON_KEYS = ["reason", "reason_fp", "reason_batch"];
 const SIDE_KEYS = ["nudge_fp", "reason_batch"];
+// CONTEXT_KEEP_ERRORS keeps an error result whole only up to this many characters; same as core.KEEP_ERRORS_MAX_CHARS.
+export const KEEP_ERRORS_MAX_CHARS = 2000;
 // A tool result reporting a failure (CONTEXT_KEEP_ERRORS; no ledger observation); same as core._ERROR_RE, per line.
 const ERROR_RE = new RegExp("^Exit code [1-9]|Traceback \\(most recent call last\\)|^[A-Za-z_.]*(?:Error|Exception): "
   + "|command not found|No such file or directory|^(?:FAILED|FAIL|ERROR)(?![A-Za-z0-9_])|^error(?:\\[E[0-9]+\\])?: ");
@@ -241,15 +243,15 @@ export function trimSettings(env = process.env, home = env.HOME) {
     reuseRules: flag("CONTEXT_REUSE_RULES"),
     // A new tool result identical to one still shown in full becomes a pointer to it (CONTEXT_DEDUP_RESULTS=0 off).
     dedupResults: flag("CONTEXT_DEDUP_RESULTS"),
-    // Execution ledger on new tool results, repeated reads pointed at or nudged (CONTEXT_LEDGER=1, default off).
-    ledger: flag("CONTEXT_LEDGER", "0"),
+    // Execution ledger on new tool results, repeated reads pointed at or nudged (CONTEXT_LEDGER=0 turns it off).
+    ledger: flag("CONTEXT_LEDGER", "1"),
     // Every N assistant steps, strip signed reasoning before the latest assistant message; 0 is off.
     stripReasoningEvery: Math.max(int("CONTEXT_STRIP_REASONING_EVERY", 0), 0),
     stripReasoningMinTokens: Math.max(int("CONTEXT_STRIP_REASONING_MIN_TOKENS", DEFAULT_STRIP_REASONING_MIN_TOKENS), 0),
     // A new test/build tool result over N chars keeps its failure lines and tail; 0 is off.
-    logReduceOverChars: Math.max(int("CONTEXT_LOG_REDUCE_OVER_CHARS", 0), 0),
+    logReduceOverChars: Math.max(int("CONTEXT_LOG_REDUCE_OVER_CHARS", 6000), 0),
     // The K newest error tool results stay whole through trim clearing and masking; 0 is off.
-    keepErrors: Math.max(int("CONTEXT_KEEP_ERRORS", 0), 0),
+    keepErrors: Math.max(int("CONTEXT_KEEP_ERRORS", 3), 0),
     trimAtTokens: int("CONTEXT_TRIM_AT_TOKENS", DEFAULT_TRIM_AT_TOKENS),
     trimAtByModel: int("CONTEXT_TRIM_AT_TOKENS", null) === null,
     trimDefault: overrides.default ?? DEFAULT_TRIM_AT_TOKENS,
@@ -1057,8 +1059,8 @@ function deduped(items, found) {
     for (const d of decisions) {
       const text = resultTexts(x).get(d.id);
       if (text === undefined || (compressedBlobId(text) || blobId(text)) !== d.bid) continue;
-      // CONTEXT_LEDGER reuse decisions carry their recorded pointer.
-      const ptr = d.kind === "reuse" ? d.ptr : dedupPlaceholder(text);
+      // A reuse decision recorded before reuse became byte-identical-only keeps its recorded pointer.
+      const ptr = d.kind === "reuse" && "ptr" in d ? d.ptr : dedupPlaceholder(text);
       if (typeof ptr === "string") x = replacedResult(x, d.id, ptr);
     }
     if (x !== items[j]) {
@@ -1078,7 +1080,11 @@ function dedupNew(items, shown, found) {
   for (const j of [...shown.keys()].sort((a, b) => a - b)) {
     const decided = new Set((found.get(j) ?? []).map((d) => d.id));
     const whole = j > last ? resultTexts(items[j]) : new Map();
-    for (const [id, text] of resultTexts(shown.get(j))) {
+    const orig = resultTexts(items[j]);
+    for (const [id, now] of resultTexts(shown.get(j))) {
+      // An earlier result shown in full plus the ledger block the plugin appended to its text counts as its own text.
+      const full = orig.get(id);
+      const text = j <= last && full !== undefined && now.startsWith(full) ? full : now;
       if (j > last && !decided.has(id) && seen.has(text) && cpLen(text) >= DEDUP_MIN_CHARS && whole.get(id) === text
           && !text.startsWith(DEDUP_PREFIX) && !text.startsWith(MASK_PREFIX) && !text.startsWith(REUSE_PREFIX)) {
         out.push([{ at: j, fp: fingerprint(items[j]), id, src: seen.get(text), bid: compressedBlobId(text) || blobId(text) }, text]);
@@ -1131,7 +1137,7 @@ function logReduced(original, items, decisions, settings, store) {
   return { items: out ?? items, fresh };
 }
 
-/** Call ids of the k newest error tool results the view (shown) still carries whole, newest first; proxy _error_ids. */
+/** Call ids of the k newest error tool results of at most KEEP_ERRORS_MAX_CHARS the view (shown) still carries whole, newest first; proxy _error_ids. */
 function errorIds(items, k, shown) {
   const out = [];
   for (let j = items.length - 1; j >= 0; j--) {
@@ -1140,7 +1146,7 @@ function errorIds(items, k, shown) {
     const now = new Map(parts(shown.get(j)).filter((p) => p?.type === "tool-result").map((p) => [p.id, resultText(p.result)]));
     for (const [id, result] of [...results].reverse()) {
       const text = resultText(result);
-      if (isErrorResult(result?.type === "error", text) && now.has(id) && now.get(id) === text) {
+      if (cpLen(text) <= KEEP_ERRORS_MAX_CHARS && isErrorResult(result?.type === "error", text) && now.has(id) && now.get(id) === text) {
         out.push(id);
         if (out.length >= k) return out;
       }
@@ -1206,13 +1212,15 @@ function ledgerNew(items, shown, found, fresh) {
       nudges.push(nudgeLine(r));
       continue;
     }
-    const src = r.covers.find(([j, id]) => !decided.has(key(j, id)) && !gone.has(key(j, id)) && visibleIn(items, shown, j, id)) ?? null;
+    const shownCopies = r.covers.filter(([j, id]) => !decided.has(key(j, id)) && !gone.has(key(j, id)) && visibleIn(items, shown, j, id));
     const text = resultTexts(items[r.j]).get(r.rid);
-    if (src === null) nudges.push(nudgeLine(r));
-    else if (text !== undefined && cpLen(text) >= DEDUP_MIN_CHARS
+    const src = shownCopies.find(([j, id]) => resultTexts(items[j]).get(id) === text) ?? null;
+    if (!shownCopies.length) nudges.push(nudgeLine(r));
+    else if (src !== null && text !== undefined && cpLen(text) >= DEDUP_MIN_CHARS
         && ![DEDUP_PREFIX, MASK_PREFIX, REUSE_PREFIX].some((prefix) => text.startsWith(prefix))) {
+      // "kind": "reuse" ties the decision to CONTEXT_LEDGER; it renders as the dedup pointer.
       const bid = compressedBlobId(text) || blobId(text);
-      reuse.push([{ kind: "reuse", at: r.j, fp: fingerprint(items[r.j]), id: r.rid, src: src[1], bid, ptr: reusePlaceholder(r, bid) }, text]);
+      reuse.push([{ kind: "reuse", at: r.j, fp: fingerprint(items[r.j]), id: r.rid, src: src[1], bid }, text]);
       decided.add(key(r.j, r.rid));
     }
   }

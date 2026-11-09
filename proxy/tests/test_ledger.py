@@ -13,7 +13,7 @@ from test_context_proxy import SID, Base, anth_request, headers  # noqa: E402
 
 from smarter_compact import Settings, ttl  # noqa: E402
 from smarter_compact import ledger  # noqa: E402
-from smarter_compact.compress import MASK_PREFIX, REUSE_PREFIX, blob_id  # noqa: E402
+from smarter_compact.compress import DEDUP_PREFIX, MASK_PREFIX, blob_id, dedup_placeholder  # noqa: E402
 
 FILE = "\n".join(f"line {k} of a.py with some text" for k in range(1, 41))  # cat output, 1,200+ chars
 NUMBERED = "\n".join(f"{k:>6}\t" + f"line {k} of a.py with some text" for k in range(5, 16))
@@ -117,9 +117,9 @@ class WalkTests(unittest.TestCase):
 
 
 class SettingTests(unittest.TestCase):
-    def test_default_off(self):
-        self.assertFalse(Settings.from_env({}).ledger)
-        self.assertTrue(Settings.from_env({"CONTEXT_LEDGER": "1"}).ledger)
+    def test_default_on(self):
+        self.assertTrue(Settings.from_env({}).ledger)
+        self.assertFalse(Settings.from_env({"CONTEXT_LEDGER": "0"}).ledger)
 
 
 class AnthropicTests(LedgerBase):
@@ -148,18 +148,37 @@ class AnthropicTests(LedgerBase):
         views = self.grow([CAT, ("Bash", {"command": "ls"}, "a.py")])
         self.assertEqual(len(ledger_texts(views[-1])), 1)
 
-    def test_covered_read_becomes_a_reuse_pointer(self):
+    def test_covered_read_with_different_output_stays(self):
+        # The range read is covered by the whole cat, but its output differs: no pointer, no nudge.
         views = self.grow([CAT, READ_RANGE])
-        ptr = results(views[-1])["t1"]
-        self.assertTrue(ptr.startswith(REUSE_PREFIX))
-        self.assertIn("a.py, lines 5-15", ptr)
-        self.assertIn(f'smart_compact_get(id="{blob_id(NUMBERED)}")', ptr)
+        self.assertEqual(results(views[-1])["t1"], NUMBERED)
         self.assertEqual(results(views[-1])["t0"], FILE)
-        self.assertEqual((self.ctx / "blobs" / f"{blob_id(NUMBERED)}.txt").read_text(), NUMBERED)
-        ttl.sweep_orphan_blobs(self.ctx)
-        self.assertTrue((self.ctx / "blobs" / f"{blob_id(NUMBERED)}.txt").exists())
+        self.assertNotIn("Repeats in this batch", ledger_texts(views[-1])[-1])
         later = self.anth(anth_steps([CAT, READ_RANGE, TEST]))
         self.assertEqual(json.dumps(later[:len(views[-1])]), json.dumps(views[-1]))
+
+    def test_changed_reread_stays_whole(self):
+        # Same command, no edit since, different output: the ledger never claims it unchanged.
+        views = self.grow([CAT, ("Bash", {"command": "cat a.py"}, FILE + "\nline 41 appended")], dedup_results=False)
+        self.assertEqual(results(views[-1])["t1"], FILE + "\nline 41 appended")
+        self.assertNotIn("Repeats in this batch", ledger_texts(views[-1])[-1])
+
+    def test_identical_reread_becomes_the_dedup_pointer(self):
+        # With CONTEXT_DEDUP_RESULTS off the ledger makes the pointer; on, dedup does: the same bytes either way.
+        views = self.grow([CAT, CAT], dedup_results=False)
+        self.assertEqual(results(views[-1])["t1"], dedup_placeholder(FILE))
+        self.assertTrue(dedup_placeholder(FILE).startswith(DEDUP_PREFIX))
+        state = json.loads((self.ctx / "sessions" / f"{SID}.trim.json").read_text())
+        self.assertEqual([(d["kind"], d["at"], d["id"], d["src"], d["bid"]) for d in state["dedup"]],
+                         [("reuse", 4, "t1", "t0", blob_id(FILE))])
+        self.assertEqual((self.ctx / "blobs" / f"{blob_id(FILE)}.txt").read_text(), FILE)
+        ttl.sweep_orphan_blobs(self.ctx)
+        self.assertTrue((self.ctx / "blobs" / f"{blob_id(FILE)}.txt").exists())
+        later = self.anth(anth_steps([CAT, CAT, TEST]), dedup_results=False)
+        self.assertEqual(json.dumps(later[:len(views[-1])]), json.dumps(views[-1]))
+        self.ctx = self.ctx.with_name("ctx-dedup")
+        on = self.grow([CAT, CAT])
+        self.assertEqual(json.dumps(on), json.dumps(views))
 
     def test_stale_read_stays(self):
         views = self.grow([CAT, EDIT, READ_RANGE])
@@ -210,7 +229,7 @@ class OtherFormatTests(LedgerBase):
                 for n in (1, 2)]
         self.assertTrue(outs[0][-1]["content"].startswith(FILE + "\n\n" + ledger.LEDGER_HEAD))
         self.assertEqual(json.dumps(outs[1][:len(outs[0])]), json.dumps(outs[0]))
-        self.assertTrue(outs[1][-1]["content"].startswith(REUSE_PREFIX))
+        self.assertTrue(outs[1][-1]["content"].startswith(NUMBERED + "\n\n" + ledger.LEDGER_HEAD))
         off = self.run_req({"messages": self.chat([CAT, READ_RANGE]), **headers()}, "acompletion", ledger=False)
         self.assertEqual(off["messages"], self.chat([CAT, READ_RANGE]))
 
@@ -219,7 +238,7 @@ class OtherFormatTests(LedgerBase):
                 for n in (1, 2)]
         self.assertTrue(outs[0][-1]["output"].startswith(FILE + "\n\n" + ledger.LEDGER_HEAD))
         self.assertEqual(json.dumps(outs[1][:len(outs[0])]), json.dumps(outs[0]))
-        self.assertTrue(outs[1][-1]["output"].startswith(REUSE_PREFIX))
+        self.assertTrue(outs[1][-1]["output"].startswith(NUMBERED + "\n\n" + ledger.LEDGER_HEAD))
         off = self.run_req({"input": self.responses([CAT, READ_RANGE]), **headers()}, "aresponses", ledger=False)
         self.assertEqual(off["input"], self.responses([CAT, READ_RANGE]))
 

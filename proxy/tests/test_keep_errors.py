@@ -14,7 +14,7 @@ from test_context_proxy import SID, Base, anth_request, headers  # noqa: E402
 
 from smarter_compact import Settings, process_request  # noqa: E402
 from smarter_compact.compress import INPUT_MASK_PREFIX, MASK_PREFIX  # noqa: E402
-from smarter_compact.core import _is_error  # noqa: E402
+from smarter_compact.core import KEEP_ERRORS_MAX_CHARS, _is_error  # noqa: E402
 from smarter_compact.tokens import request_chars  # noqa: E402
 
 LONG = "y" * 3000
@@ -73,9 +73,9 @@ class UnitTests(unittest.TestCase):
         self.assertTrue(_is_error(False, "bash: foo: command not found"))
         self.assertFalse(_is_error(False, "all good\nexit code 0"))
 
-    def test_default_off(self):
-        self.assertEqual(Settings.from_env({}).keep_errors, 0)
-        self.assertEqual(Settings.from_env({"CONTEXT_KEEP_ERRORS": "3"}).keep_errors, 3)
+    def test_default_on(self):
+        self.assertEqual(Settings.from_env({}).keep_errors, 3)
+        self.assertEqual(Settings.from_env({"CONTEXT_KEEP_ERRORS": "0"}).keep_errors, 0)
 
 
 class TrimTests(KeepBase):
@@ -83,12 +83,12 @@ class TrimTests(KeepBase):
         outs = [ERR, OK, OK, OK]
         off = self.anth(outs, keep_errors=0)
         self.assertTrue(results(off)["t0"].startswith(MASK_PREFIX))
-        # Same bytes as the settings without the field at all (its default).
+        # Same bytes as the plain settings with keep_errors=0 (the default is now 3).
         self.ctx = self.ctx.with_name("ctx-2")
         data = anth_request(copy.deepcopy(anth_steps(outs)))
         full = math.ceil(request_chars(data["system"], data["tools"], data["messages"]) / 2.5)
         plain = Base.settings(self, clear_keep_results=1, strip_old_reasoning=False, dedup_results=False,
-                              trim_at_tokens=full, trim_to_tokens=full)
+                              keep_errors=0, trim_at_tokens=full, trim_to_tokens=full)
         self.assertEqual(json.dumps(off), json.dumps(process_request(data, "anthropic_messages", plain)["messages"]))
 
     def test_errors_exempt_from_clearing_and_input_clearing(self):
@@ -102,6 +102,18 @@ class TrimTests(KeepBase):
         self.assertIn(INPUT_MASK_PREFIX, inputs(view)["t1"])
         state = json.loads((self.ctx / "sessions" / f"{SID}.trim.json").read_text())
         self.assertEqual(next(iter(state["threads"].values()))["keep_errors"], ["t2", "t0"])
+
+    def test_only_errors_up_to_the_cap_stay_whole(self):
+        at_cap = "Exit code 1\n" + "b" * (KEEP_ERRORS_MAX_CHARS - 12)
+        self.assertEqual(len(at_cap), KEEP_ERRORS_MAX_CHARS)
+        view = self.anth([(at_cap, True), (at_cap + "b", True), OK, OK])
+        r = results(view)
+        self.assertEqual(r["t0"], at_cap)
+        self.assertTrue(r["t1"].startswith(MASK_PREFIX))
+        self.assertNotIn(INPUT_MASK_PREFIX, inputs(view)["t0"])
+        self.assertIn(INPUT_MASK_PREFIX, inputs(view)["t1"])
+        state = json.loads((self.ctx / "sessions" / f"{SID}.trim.json").read_text())
+        self.assertEqual(next(iter(state["threads"].values()))["keep_errors"], ["t0"])
 
     def test_only_the_k_newest_and_byte_identical_between_trims(self):
         outs = [ERR, ERR, ERR, OK, OK]

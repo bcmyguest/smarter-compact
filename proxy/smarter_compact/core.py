@@ -124,6 +124,8 @@ LOG_MAX = 512
 # CONTEXT_COLD_TRIM / CONTEXT_CACHE_TTL_SPLIT: per thread root, the last request's arrival (epoch seconds) and the idle
 # gaps over 5 minutes so far (trim state "last_request").
 LAST_REQUEST_KEY = "last_request"
+# CONTEXT_KEEP_ERRORS keeps an error result whole only up to this many characters; a longer one clears as usual.
+KEEP_ERRORS_MAX_CHARS = 2000
 # A tool result that reports a failure (CONTEXT_KEEP_ERRORS, and no ledger observation): a nonzero exit, a traceback,
 # an exception line, a missing command or file, a test or compiler failure line. Matched per line, as in the plugin.
 _ERROR_RE = re.compile(
@@ -393,7 +395,8 @@ def _deduped(adapter, items, found):
         for d in decisions:
             text = adapter.result_texts(x).get(d.get("id"))
             if text is not None and result_blob_id(text) == d.get("bid"):
-                ptr = d.get("ptr") if d.get("kind") == "reuse" else dedup_placeholder(text)
+                # A reuse decision recorded before reuse became byte-identical-only keeps its recorded pointer.
+                ptr = d["ptr"] if d.get("kind") == "reuse" and "ptr" in d else dedup_placeholder(text)
                 if isinstance(ptr, str):
                     x = adapter.replaced_result(x, d["id"], ptr)
         if x is not items[j]:
@@ -412,7 +415,11 @@ def _dedup_new(adapter, items, shown, found):
     for j in sorted(shown):
         decided = {d.get("id") for d in found.get(j, ())}
         whole = adapter.result_texts(items[j]) if j > last else {}
-        for rid, text in adapter.result_texts(shown[j]).items():
+        orig = adapter.result_texts(items[j])
+        for rid, now in adapter.result_texts(shown[j]).items():
+            # An earlier result shown in full plus a ledger block appended to its text counts as its own text.
+            full = orig.get(rid)
+            text = full if j <= last and full is not None and now.startswith(full) else now
             if j > last and rid not in decided and text in seen and len(text) >= DEDUP_MIN_CHARS \
                     and whole.get(rid) == text and not text.startswith((DEDUP_PREFIX, MASK_PREFIX, REUSE_PREFIX)):
                 new.append(({"at": j, "fp": fingerprint(items[j]), "id": rid, "src": seen[text],
@@ -490,14 +497,15 @@ def _exempting(adapter, keep):
 
 
 def _error_ids(adapter, items, k, shown):
-    """Call ids of the k newest error tool results (_is_error) the view (shown) still carries whole, newest first: a
-    result already cleared stays cleared, so the exempt set only moves forward."""
+    """Call ids of the k newest error tool results (_is_error) of at most KEEP_ERRORS_MAX_CHARS the view (shown) still
+    carries whole, newest first: a result already cleared stays cleared, so the exempt set only moves forward."""
     out = []
     for j in range(len(items) - 1, -1, -1):
         results = adapter.tool_results(items[j]) if j in shown and hasattr(adapter, "tool_results") else {}
         now = adapter.tool_results(shown[j]) if results else {}
         for rid, (is_error, text) in reversed(list(results.items())):
-            if _is_error(is_error, text) and rid in now and now[rid][1] == text:
+            if len(text or "") <= KEEP_ERRORS_MAX_CHARS and _is_error(is_error, text) and rid in now \
+                    and now[rid][1] == text:
                 out.append(rid)
                 if len(out) >= k:
                     return out
@@ -544,8 +552,9 @@ def _visible(adapter, items, shown, j, rid):
 
 def _ledger_new(adapter, items, shown, found, fresh):
     """(ledger walk state or None, [(reuse decision, text)], nudge lines) for the new tool results (after the last
-    assistant item) under CONTEXT_LEDGER. A read repeating an earlier current read that covers it becomes a reuse
-    pointer when that copy is still shown in full, else a nudge line; a test rerun with no edit since, a nudge."""
+    assistant item) under CONTEXT_LEDGER. A read repeating an earlier current read that covers it becomes the
+    dedup_placeholder pointer when its output is byte-identical to a covering copy still shown in full, stays as it is
+    when every such copy differs, else gets a nudge line; a test rerun with no edit since, a nudge."""
     last = _last_assistant(adapter, items)
     if last is None:
         return None, [], []
@@ -559,16 +568,17 @@ def _ledger_new(adapter, items, shown, found, fresh):
         if "test" in r:
             nudges.append(ledger_mod.nudge_line(r))
             continue
-        src = next(((j, rid) for j, rid in r["covers"] if (j, rid) not in decided and (j, rid) not in gone
-                    and _visible(adapter, items, shown, j, rid)), None)
+        shown_copies = [(j, rid) for j, rid in r["covers"] if (j, rid) not in decided and (j, rid) not in gone
+                        and _visible(adapter, items, shown, j, rid)]
         text = adapter.result_texts(items[r["j"]]).get(r["rid"])
-        if src is None:
+        src = next(((j, rid) for j, rid in shown_copies if adapter.result_texts(items[j]).get(rid) == text), None)
+        if not shown_copies:
             nudges.append(ledger_mod.nudge_line(r))
-        elif text is not None and len(text) >= DEDUP_MIN_CHARS \
+        elif src is not None and text is not None and len(text) >= DEDUP_MIN_CHARS \
                 and not text.startswith((DEDUP_PREFIX, MASK_PREFIX, REUSE_PREFIX)):
-            bid = result_blob_id(text)
+            # "kind": "reuse" ties the decision to CONTEXT_LEDGER; it renders as the dedup pointer.
             reuse.append(({"kind": "reuse", "at": r["j"], "fp": fingerprint(items[r["j"]]), "id": r["rid"],
-                           "src": src[1], "bid": bid, "ptr": ledger_mod.reuse_placeholder(r, bid)}, text))
+                           "src": src[1], "bid": result_blob_id(text)}, text))
             decided.add((r["j"], r["rid"]))
     return state, reuse, nudges
 

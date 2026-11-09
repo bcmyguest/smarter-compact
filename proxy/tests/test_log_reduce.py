@@ -97,9 +97,9 @@ class ReducerTests(unittest.TestCase):
 
 
 class SettingTests(unittest.TestCase):
-    def test_default_off(self):
-        self.assertEqual(Settings.from_env({}).log_reduce_over_chars, 0)
-        self.assertEqual(Settings.from_env({"CONTEXT_LOG_REDUCE_OVER_CHARS": "6000"}).log_reduce_over_chars, 6000)
+    def test_default_on(self):
+        self.assertEqual(Settings.from_env({}).log_reduce_over_chars, 6000)
+        self.assertEqual(Settings.from_env({"CONTEXT_LOG_REDUCE_OVER_CHARS": "0"}).log_reduce_over_chars, 0)
         self.assertEqual(Settings.from_env({"CONTEXT_LOG_REDUCE_OVER_CHARS": "-1"}).log_reduce_over_chars, 0)
 
 

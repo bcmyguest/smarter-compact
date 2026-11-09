@@ -10,7 +10,7 @@ import hashlib
 import re
 import shlex
 
-from .compress import REUSE_PREFIX, is_compressed
+from .compress import is_compressed
 from .evict import PATH_KEYS, WRITE_TOOLS, read_only
 
 # The ledger block's cap, and the paths and ranges it lists at most.
@@ -278,8 +278,3 @@ def nudge_line(repeat):
     return (f"- {repeat['path']} ({repeat['label']}) was read before and is unchanged since; that earlier output is "
             f"no longer shown in full.")
 
-
-def reuse_placeholder(repeat, bid):
-    """A repeated read's text, naming the blob of its own output; recorded, so cache-stable."""
-    return (f"{REUSE_PREFIX} ({repeat['path']}, {repeat['label']}; the file is unchanged since); "
-            f'smart_compact_get(id="{bid}") returns this output]')

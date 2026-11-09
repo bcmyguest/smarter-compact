@@ -26,6 +26,7 @@ import {
   trimSettings,
   trimToFor,
 } from "../plugin/lib/context-trim.mjs";
+import { LEDGER_HEAD } from "../plugin/lib/context-ledger.mjs";
 import { callContextStoreTool } from "../plugin/lib/mcp/context-store.mjs";
 import { sweepOrphanBlobs } from "../plugin/lib/session-db.mjs";
 
@@ -329,6 +330,11 @@ const STEPS = [
   ["Read", { file_path: "/src/f4.py" }, "contents", false],
 ];
 const LONG = `\n${"x".repeat(300)}`;
+// The CONTEXT_LEDGER block (on by default) the latest run's result carries: STEPS' edit, write and read.
+const LEDGER = `${LEDGER_HEAD}\nModified (latest last): /src/f0.py, /src/f2.py\nRead (latest last):\n- /src/f4.py: whole current`;
+/** A tool message with the ledger block appended to its last result's text, as the plugin renders it. */
+const ledgered = (m, text = LEDGER) => ({ ...m, content: m.content.map((p, i) => (i === m.content.length - 1
+  ? { ...p, result: { ...p.result, value: `${p.result.value}\n\n${text}` } } : p)) });
 
 /** Two answered turns, then a running turn: "now this", the steps as text + tool-call / tool-result, and a latest run. */
 function inFlightTurn(pad = "", steps = STEPS) {
@@ -376,7 +382,7 @@ test("a dropping trim keeps the signed reasoning of the latest run", withHome(as
   for (const env of [{}, OFF, STRIP]) {
     const view = await expRun(home, messages, env, `sid-${Object.keys(env).length}-${env.CONTEXT_STRIP_PROSE}`);
     assert.ok(view.length < messages.length);
-    assert.deepEqual(view.slice(-2), messages.slice(-2));
+    assert.deepEqual(view.slice(-2), [messages.at(-2), ledgered(messages.at(-1))]);
   }
 }));
 
@@ -387,7 +393,7 @@ test("prose strip removes tool pairs before the latest run, merging same-role ne
   assert.ok(!idsIn(view, "tool-result").has("s3"));
   assert.ok(idsIn(view, "tool-call").has("s4") && idsIn(view, "tool-result").has("s4"));
   assert.deepEqual(idsIn(view, "tool-call"), idsIn(view, "tool-result"));
-  assert.deepEqual(view.slice(-2), messages.slice(-2));
+  assert.deepEqual(view.slice(-2), [messages.at(-2), ledgered(messages.at(-1))]);
   // Step 3's text merged into step 4's message, so roles still alternate.
   const roles = view.map((m) => m.role);
   assert.ok(roles.every((r, i) => i === 0 || r !== roles[i - 1]), roles.join());
@@ -409,7 +415,7 @@ test("masking runs under default settings: results masked, calls kept", withHome
   assert.equal(results.s4, `contents${LONG}`);
   assert.equal(resultsOf(off).s3, `built${LONG}`);
   assert.deepEqual(view.map((m) => m.role), off.map((m) => m.role));
-  assert.deepEqual(view.slice(-2), messages.slice(-2));
+  assert.deepEqual(view.slice(-2), [messages.at(-2), ledgered(messages.at(-1))]);
   // The masked result's text is stored out of context; its call stays in.
   const out = dbRows(home, "in_context = 0 AND kind = 'tool_result'").map((r) => r.text);
   assert.ok(out.includes(`built${LONG}`));
@@ -487,11 +493,12 @@ test("a trim target over the threshold trims as deep as one equal to it", withHo
   assert.deepEqual([...idsIn(over, "tool-call")], [...idsIn(at, "tool-call")]);
 }));
 
-test("a masked error result stays an error", withHome(async (home) => {
+test("an error result under KEEP_ERRORS_MAX_CHARS stays whole through masking, still an error", withHome(async (home) => {
   const steps = STEPS.map((s, k) => (k === 3 ? ["Bash", { command: "make build" }, "Exit code 2", true] : s));
   const view = await expRun(home, inFlightTurn(LONG, steps), MASK);
   const part = view.flatMap((m) => parts(m)).find((p) => p.type === "tool-result" && p.id === "s3");
-  assert.deepEqual(part.result, { type: "error", value: maskPlaceholder(`Exit code 2${LONG}`) });
+  // CONTEXT_KEEP_ERRORS (3 by default) keeps the error result whole through masking.
+  assert.deepEqual(part.result, { type: "error", value: `Exit code 2${LONG}` });
 }));
 
 // CONTEXT_CLEAR_INPUTS_OVER_CHARS: same contract as proxy/tests/test_clear_inputs.py.
@@ -742,6 +749,9 @@ test("reuse rules end the standing instruction; CONTEXT_REUSE_RULES=0 gives the 
 
 // CONTEXT_DEDUP_RESULTS: same contract as proxy/tests/test_dedup_results.py.
 const DUP = "line of output\n".repeat(40);
+// The CONTEXT_LEDGER block (on by default) on a new batch of these turns: every call is `cat log.txt`.
+const LEDGER_LOG = `${LEDGER_HEAD}\nRead (latest last):\n- log.txt: whole current`;
+const NUDGE_LOG = "\nRepeats in this batch:\n- log.txt (whole) was read before and is unchanged since; that earlier output is no longer shown in full.";
 
 function dupTurns(outs) {
   const messages = [{ role: "user", content: [{ type: "text", text: "the task" }] }];
@@ -763,11 +773,13 @@ test("a new result identical to one still shown becomes a pointer; only the newe
   const pointer = dedupPlaceholder(DUP);
   assert.ok(pointer.startsWith(DEDUP_PREFIX) && pointer.length < DEDUP_MIN_CHARS);
   assert.equal(trimSettings({}, os.tmpdir()).dedupResults, true);
-  assert.deepEqual(await dupRun(home, dupTurns([DUP])), dupTurns([DUP]));
+  const one = dupTurns([DUP]);
+  assert.deepEqual(await dupRun(home, one), [...one.slice(0, 2), ledgered(one[2], LEDGER_LOG)]);
   const messages = dupTurns([DUP, DUP]);
   const view = await dupRun(home, messages);
-  assert.deepEqual(view.slice(0, 4), messages.slice(0, 4));
-  assert.deepEqual(resultsOf(view), { p0: DUP, p1: pointer });
+  // p0 keeps the ledger block it got as the newest result; p1 still becomes the dedup pointer, as in the proxy.
+  assert.deepEqual(view.slice(0, 4), [...messages.slice(0, 2), ledgered(messages[2], LEDGER_LOG), messages[3]]);
+  assert.deepEqual(resultsOf(view), { p0: `${DUP}\n\n${LEDGER_LOG}`, p1: pointer });
   // Every later request renders the same bytes.
   const later = [...messages, { role: "assistant", content: [{ type: "text", text: "done" }] }, { role: "user", content: [{ type: "text", text: "next" }] }];
   assert.equal(JSON.stringify((await dupRun(home, later)).slice(0, view.length)), JSON.stringify(view));
@@ -781,13 +793,26 @@ test("a new result identical to one still shown becomes a pointer; only the newe
   assert.deepEqual(state.dedup.map((d) => [d.at, d.id, d.src, d.bid]), [[4, "p1", "p0", blobId(DUP)]]);
 }));
 
+test("with the ledger on, [DUP] then [DUP, DUP] gives the proxy's pointer and dedup decision", withHome(async (home) => {
+  // Same literal as proxy/tests/test_dedup_results.py PROXY_POINTER: both sides render these bytes.
+  const literal = '[smarter-compact: output identical to an earlier tool result still shown above; smart_compact_get(id="646c9063dd68a784") returns it]';
+  await dupRun(home, dupTurns([DUP]), { CONTEXT_LEDGER: "1" });
+  const view = await dupRun(home, dupTurns([DUP, DUP]), { CONTEXT_LEDGER: "1" });
+  assert.equal(resultsOf(view).p1, literal);
+  const state = JSON.parse(fs.readFileSync(path.join(home, "context", "sessions", `${SID}.trim.json`), "utf8"));
+  assert.deepEqual(state.dedup.map((d) => [d.kind ?? null, d.at, d.id, d.src, d.bid]), [[null, 4, "p1", "p0", blobId(DUP)]]);
+}));
+
 test("CONTEXT_DEDUP_RESULTS=0 gives the old bytes, and short or already-sent duplicates stay", withHome(async (home) => {
   const messages = dupTurns([DUP, DUP]);
-  assert.equal(JSON.stringify(await dupRun(home, messages, { CONTEXT_DEDUP_RESULTS: "0" })), JSON.stringify(messages));
+  // CONTEXT_LEDGER=0 too: on by default, it would turn the repeated cat into its own reuse pointer.
+  const off = { CONTEXT_DEDUP_RESULTS: "0", CONTEXT_LEDGER: "0" };
+  assert.equal(JSON.stringify(await dupRun(home, messages, off)), JSON.stringify(messages));
   await dupRun(home, messages);
-  assert.equal(JSON.stringify(await dupRun(home, messages, { CONTEXT_DEDUP_RESULTS: "0" })), JSON.stringify(messages));
+  assert.equal(JSON.stringify(await dupRun(home, messages, off)), JSON.stringify(messages));
   const short = "x".repeat(DEDUP_MIN_CHARS - 1);
-  assert.deepEqual(await dupRun(home, dupTurns([short, short])), dupTurns([short, short]));
+  const shorts = dupTurns([short, short]);
+  assert.deepEqual(await dupRun(home, shorts), [...shorts.slice(0, -1), ledgered(shorts.at(-1), LEDGER_LOG)]);
   const sent = [...dupTurns([DUP, DUP]), { role: "assistant", content: [{ type: "text", text: "done" }] }];
   sent[2].content[0].id = sent[1].content[0].id = "q0";
   sent[4].content[0].id = sent[3].content[0].id = "q1";
@@ -801,7 +826,8 @@ test("the pointer stays when the earlier copy is later cleared or dropped", with
   const cleared = await dupRun(home, messages, env);
   const results = resultsOf(cleared);
   assert.ok(results.p0.startsWith(MASK_PREFIX));
-  assert.equal(results.p1, dedupPlaceholder(DUP));
+  // p1 keeps the ledger block it carried as the newest result of the first request.
+  assert.equal(results.p1, `${dedupPlaceholder(DUP)}\n\n${LEDGER_LOG}`);
   assert.equal(JSON.stringify(await dupRun(home, messages, env)), JSON.stringify(cleared));
   // A trim that drops the earlier copy's turn (a fresh session, so no earlier cut) still renders the same pointer.
   const other = fs.mkdtempSync(path.join(os.tmpdir(), "sc-dedup-"));
@@ -811,7 +837,7 @@ test("the pointer stays when the earlier copy is later cleared or dropped", with
     dropped = await dupRun(other, messages, { ...env, CONTEXT_TRIM_AT_TOKENS: "1000", CONTEXT_TRIM_TO_TOKENS: "900" });
   } finally { fs.rmSync(other, { recursive: true, force: true }); }
   assert.ok(!("p0" in resultsOf(dropped)));
-  assert.equal(resultsOf(dropped).p1, dedupPlaceholder(DUP));
+  assert.equal(resultsOf(dropped).p1, `${dedupPlaceholder(DUP)}\n\n${LEDGER_LOG}`);
 }));
 
 test("an earlier copy not shown in full gets no pointer", withHome(async (home) => {
@@ -819,5 +845,6 @@ test("an earlier copy not shown in full gets no pointer", withHome(async (home) 
   const view = await dupRun(home, messages, { CONTEXT_CLEAR_KEEP_RESULTS: "1", CONTEXT_TRIM_AT_TOKENS: "1" });
   const results = resultsOf(view);
   assert.ok(!("p0" in results) || results.p0.startsWith(MASK_PREFIX));
-  assert.equal(results.p1, DUP);
+  // No pointer: the ledger block names the repeat in a nudge line instead.
+  assert.equal(results.p1, `${DUP}\n\n${LEDGER_LOG}${NUDGE_LOG}`);
 }));

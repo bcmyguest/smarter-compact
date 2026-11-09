@@ -5,9 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
-  LEDGER_HEAD, LEDGER_MAX_CHARS, LOG_TAIL_LINES, REUSE_PREFIX, effects, isLog, ledgerBlock, readOnly, reduceLog, shlexTokens, walk,
+  LEDGER_HEAD, LEDGER_MAX_CHARS, LOG_TAIL_LINES, effects, isLog, ledgerBlock, readOnly, reduceLog, shlexTokens, walk,
 } from "../plugin/lib/context-ledger.mjs";
-import { MASK_PREFIX, blobId, isErrorResult, trimContext, trimSettings } from "../plugin/lib/context-trim.mjs";
+import {
+  DEDUP_PREFIX, KEEP_ERRORS_MAX_CHARS, MASK_PREFIX, blobId, dedupPlaceholder, isErrorResult, trimContext, trimSettings,
+} from "../plugin/lib/context-trim.mjs";
 import { sweepOrphanBlobs } from "../plugin/lib/session-db.mjs";
 
 // Same contracts as proxy/tests/test_ledger.py, test_log_reduce.py, test_strip_batch.py and test_keep_errors.py.
@@ -93,18 +95,19 @@ test("ledger effects and walk match the proxy rules", () => {
 });
 
 test("CONTEXT_LEDGER: blocks on new results, reuse pointers, nudges, byte-identical re-renders", withHome(async (home) => {
-  assert.equal(trimSettings({}, os.tmpdir()).ledger, false);
+  assert.equal(trimSettings({}, os.tmpdir()).ledger, true);
   const on = { CONTEXT_LEDGER: "1" };
+  const offEnv = { CONTEXT_LEDGER: "0" };
   // Off: old bytes, also with recorded state.
   const steps = [CAT, READ_RANGE];
-  for (const [n, view] of (await grow(home, steps)).entries()) assert.equal(JSON.stringify(view), JSON.stringify(turns(steps.slice(0, n + 1))));
+  for (const [n, view] of (await grow(home, steps, offEnv)).entries()) assert.equal(JSON.stringify(view), JSON.stringify(turns(steps.slice(0, n + 1))));
   const views = await grow(home, steps, on);
-  assert.equal(JSON.stringify(await run(home, turns(steps))), JSON.stringify(turns(steps)));
+  assert.equal(JSON.stringify(await run(home, turns(steps), offEnv)), JSON.stringify(turns(steps)));
   assert.ok(views[0][2].content[0].result.value.startsWith(`${FILE}\n\n${LEDGER_HEAD}`));
   assert.equal(JSON.stringify(views[1].slice(0, views[0].length)), JSON.stringify(views[0]));
-  const ptr = resultsOf(views[1]).p1;
-  assert.ok(ptr.startsWith(REUSE_PREFIX) && ptr.includes("a.py, lines 5-15") && ptr.includes(`smart_compact_get(id="${blobId(NUMBERED)}")`));
-  assert.equal(fs.readFileSync(path.join(home, "context", "blobs", `${blobId(NUMBERED)}.txt`), "utf8"), NUMBERED);
+  // The range read is covered by the whole cat, but its output differs: it stays whole, with no nudge.
+  const p1 = resultsOf(views[1]).p1;
+  assert.ok(p1.startsWith(`${NUMBERED}\n\n${LEDGER_HEAD}`) && !p1.includes("Repeats in this batch"));
   assert.deepEqual(sweepOrphanBlobs(path.join(home, "context")), []);
   const later = await run(home, turns([...steps, TEST]), on);
   assert.equal(JSON.stringify(later.slice(0, views[1].length)), JSON.stringify(views[1]));
@@ -117,6 +120,31 @@ test("CONTEXT_LEDGER: blocks on new results, reuse pointers, nudges, byte-identi
     const rerun = await grow(other, [CAT, EDIT, READ_RANGE, TEST, TEST], on);
     assert.match(ledgerTexts(rerun.at(-1)).at(-1), /`pytest -q tests` already ran with no file change since/);
   } finally { fs.rmSync(other, { recursive: true, force: true }); }
+}));
+
+test("CONTEXT_LEDGER: only a byte-identical re-read becomes the dedup pointer; a changed one stays whole", withHome(async (home) => {
+  const noDedup = { CONTEXT_LEDGER: "1", CONTEXT_DEDUP_RESULTS: "0" };
+  const changed = `${FILE}\nline 41 appended`;
+  const kept = await grow(home, [CAT, ["bash", { command: "cat a.py" }, changed]], noDedup);
+  assert.equal(resultsOf(kept.at(-1)).p1, changed);
+  assert.ok(!ledgerTexts(kept.at(-1)).some((t) => t.includes("Repeats in this batch")));
+  const other = fs.mkdtempSync(path.join(os.tmpdir(), "sc-ledger-"));
+  const third = fs.mkdtempSync(path.join(os.tmpdir(), "sc-ledger-"));
+  try {
+    // With CONTEXT_DEDUP_RESULTS off the ledger makes the pointer; on, dedup does: the same bytes either way.
+    const views = await grow(other, [CAT, CAT], noDedup);
+    assert.equal(resultsOf(views.at(-1)).p1, dedupPlaceholder(FILE));
+    assert.ok(dedupPlaceholder(FILE).startsWith(DEDUP_PREFIX));
+    assert.deepEqual(stateOf(other).dedup.map((d) => [d.kind, d.at, d.id, d.src, d.bid]), [["reuse", 4, "p1", "p0", blobId(FILE)]]);
+    assert.equal(fs.readFileSync(path.join(other, "context", "blobs", `${blobId(FILE)}.txt`), "utf8"), FILE);
+    assert.deepEqual(sweepOrphanBlobs(path.join(other, "context")), []);
+    const later = await run(other, turns([CAT, CAT, TEST]), noDedup);
+    assert.equal(JSON.stringify(later.slice(0, views.at(-1).length)), JSON.stringify(views.at(-1)));
+    assert.equal(JSON.stringify(await grow(third, [CAT, CAT])), JSON.stringify(views));
+  } finally {
+    fs.rmSync(other, { recursive: true, force: true });
+    fs.rmSync(third, { recursive: true, force: true });
+  }
 }));
 
 test("CONTEXT_LEDGER: a read whose earlier copy was cleared is nudged; a trim keeps only the newest block", withHome(async (home) => {
@@ -132,7 +160,7 @@ test("CONTEXT_LEDGER: a read whose earlier copy was cleared is nudged; a trim ke
 }));
 
 test("CONTEXT_LOG_REDUCE_OVER_CHARS: a new test log keeps failure windows and its tail, recorded", withHome(async (home) => {
-  assert.equal(trimSettings({}, os.tmpdir()).logReduceOverChars, 0);
+  assert.equal(trimSettings({}, os.tmpdir()).logReduceOverChars, 6000);
   const { reduced, id } = reduceLog(LOG, 6000);
   assert.equal(id, blobId(LOG));
   const body = reduced.split("\n");
@@ -142,7 +170,7 @@ test("CONTEXT_LOG_REDUCE_OVER_CHARS: a new test log keeps failure windows and it
   assert.deepEqual(body.slice(-LOG_TAIL_LINES), LOG.split("\n").slice(-LOG_TAIL_LINES));
   assert.ok(!isLog("plain text\n".repeat(400)) && reduceLog("plain text\n".repeat(400), 1) === null);
   const steps = [["bash", { command: "pytest" }, LOG]];
-  assert.equal(JSON.stringify(await run(path.join(home, "off"), turns(steps))), JSON.stringify(turns(steps)));
+  assert.equal(JSON.stringify(await run(path.join(home, "off"), turns(steps), { CONTEXT_LOG_REDUCE_OVER_CHARS: "0" })), JSON.stringify(turns(steps)));
   const view = await run(home, turns(steps), { CONTEXT_LOG_REDUCE_OVER_CHARS: "6000" });
   assert.equal(resultsOf(view).p0, reduced);
   assert.equal(fs.readFileSync(path.join(home, "context", "blobs", `${id}.txt`), "utf8"), LOG);
@@ -206,7 +234,7 @@ function errTurns(outs) {
 }
 
 test("CONTEXT_KEEP_ERRORS: the newest error results stay whole through clearing until the next trim", withHome(async (home) => {
-  assert.equal(trimSettings({}, os.tmpdir()).keepErrors, 0);
+  assert.equal(trimSettings({}, os.tmpdir()).keepErrors, 3);
   assert.ok(isErrorResult(false, "Traceback (most recent call last):\n  x") && !isErrorResult(false, "exit code 0"));
   const full = (outs) => String(Math.ceil(JSON.stringify(errTurns(outs)).length / 1.2));
   const env = (outs) => ({ CONTEXT_KEEP_ERRORS: "2", CONTEXT_CLEAR_KEEP_RESULTS: "1", CONTEXT_CHARS_PER_TOKEN: "2.5",
@@ -225,6 +253,18 @@ test("CONTEXT_KEEP_ERRORS: the newest error results stay whole through clearing 
     const plain = resultsOf(await run(off, errTurns(outs), { ...env(outs), CONTEXT_KEEP_ERRORS: "0" }));
     assert.ok(plain.p1.startsWith(MASK_PREFIX) && plain.p2.startsWith(MASK_PREFIX));
   } finally { fs.rmSync(off, { recursive: true, force: true }); }
+}));
+
+test("CONTEXT_KEEP_ERRORS: only an error result up to KEEP_ERRORS_MAX_CHARS stays whole", withHome(async (home) => {
+  const atCap = `Exit code 1\n${"b".repeat(KEEP_ERRORS_MAX_CHARS - 12)}`;
+  assert.equal(atCap.length, KEEP_ERRORS_MAX_CHARS);
+  const outs = [[atCap, true], [`${atCap}b`, true], OK, OK];
+  const full = String(Math.ceil(JSON.stringify(errTurns(outs)).length / 1.2));
+  const r = resultsOf(await run(home, errTurns(outs), { CONTEXT_KEEP_ERRORS: "2", CONTEXT_CLEAR_KEEP_RESULTS: "1",
+    CONTEXT_CHARS_PER_TOKEN: "2.5", CONTEXT_TRIM_AT_TOKENS: String(Math.floor(Number(full) / 2.5 * 0.9)), CONTEXT_TRIM_TO_TOKENS: full }));
+  assert.equal(r.p0, atCap);
+  assert.ok(r.p1.startsWith(MASK_PREFIX));
+  assert.deepEqual(Object.values(stateOf(home).threads)[0].keep_errors, ["p0"]);
 }));
 
 test("a trailing system message leaves the ledger block on the newest result", withHome(async (home) => {

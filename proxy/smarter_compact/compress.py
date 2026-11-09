@@ -15,7 +15,7 @@ _ID_RE = re.compile(r'smart_compact_get\(id="([0-9a-f]{16})"\)')
 MASK_PREFIX = "[smarter-compact: tool output cleared to save context;"
 # Start of a repeated tool result's pointer (CONTEXT_DEDUP_RESULTS); never masked, so its bytes never change.
 DEDUP_PREFIX = "[smarter-compact: output identical to an earlier tool result still shown above;"
-# Start of a repeated read's pointer (CONTEXT_LEDGER); never masked either.
+# Start of a repeated read's pointer recorded by CONTEXT_LEDGER before its reuse became the dedup pointer; never masked.
 REUSE_PREFIX = "[smarter-compact: this read repeats an earlier one still shown above"
 # Only a result at least this long becomes a dedup pointer (the pointer is about 120 characters).
 DEDUP_MIN_CHARS = 200
