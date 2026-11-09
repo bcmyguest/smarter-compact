@@ -131,6 +131,9 @@ class Settings:
     log_reduce_over_chars: int = 0
     # The K newest error tool results stay whole through trim clearing and masking; 0 is off (CONTEXT_KEEP_ERRORS).
     keep_errors: int = 0
+    # Session time budget in seconds: new tool results get a "[TIME REMAINING: ...]" line; 0 is off
+    # (CONTEXT_TIME_BUDGET_SECONDS).
+    time_budget_seconds: int = 0
     trim_at_tokens: int = DEFAULT_TRIM_AT_TOKENS
     # MODEL_TRIM_AT_TOKENS picks the threshold, trim_at_tokens being the fallback (CONTEXT_TRIM_AT_TOKENS unset).
     trim_at_by_model: bool = False
@@ -213,6 +216,7 @@ class Settings:
                                                 DEFAULT_STRIP_REASONING_MIN_TOKENS), 0),
             log_reduce_over_chars=max(_int(env, "CONTEXT_LOG_REDUCE_OVER_CHARS", 0), 0),
             keep_errors=max(_int(env, "CONTEXT_KEEP_ERRORS", 0), 0),
+            time_budget_seconds=max(_int(env, "CONTEXT_TIME_BUDGET_SECONDS", 0), 0),
             trim_at_tokens=_int(env, "CONTEXT_TRIM_AT_TOKENS", DEFAULT_TRIM_AT_TOKENS),
             trim_at_by_model=_int(env, "CONTEXT_TRIM_AT_TOKENS", None) is None,
             trim_to_tokens=_positive_int(env, "CONTEXT_TRIM_TO_TOKENS", DEFAULT_TRIM_TO_TOKENS),

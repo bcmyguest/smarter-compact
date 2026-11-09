@@ -319,3 +319,17 @@ Compressed tool result:
 The compressed form is a pure function of the original content and the configured thresholds, so the same tool result renders to the same bytes on every request and the prompt-cache prefix stays valid.
 
 `scripts/tests/test_context_parity.mjs` runs the fixture requests in `scripts/tests/fixtures/context-parity.json` through both implementations and requires identical views, session database contents (every `messages` and `lines` column, `sqlite_master`, `user_version`) and blobs. The fixture also holds the golden standing instruction and pointer text, which `STANDING_INSTRUCTION` and `pointer_text` / `pointerText` must reproduce byte for byte.
+
+### Time remaining (`CONTEXT_TIME_BUDGET_SECONDS`)
+
+Off by default (`0`). With a budget of `B` seconds, each request whose newest item holds new tool results (after the last assistant message) gets one line appended to that item:
+
+```
+[TIME REMAINING: 12m34s of 15m budget]
+```
+
+Remaining time is `B − (now − start)`, floored to whole seconds and at 0; `B` reads `15m`, or `15m30s` off a whole minute. `start` is the whole second of the first request the proxy or plugin sees for the session, kept in the trim state (`clock_start`), so a proxy restart keeps it. Each line is recorded (trim state `clock`: the item's index and fingerprint, and the text), so later requests re-render the same bytes and an item already sent never changes. Placement is the ledger's: an Anthropic text block after the user message's tool results, after a blank line in a Chat `tool` message or a Responses string `output`, after the last text result of an OpenCode 2 `tool` message. A request with no new tool result gets no line; the line never goes into the system prompt or a trim's note. It states the time only, with no advice.
+
+Source: Wang et al., [On the Clock: Towards Punctual and Productive Time-Budgeted AI Agents](https://arxiv.org/html/2610.10833v1) (arXiv 2610.10833). Its MLE-Bench harness appends `[TIME REMAINING: 12m34s of 15m budget]` to the tool result "after every tool call" (§4.2, Table 3 "Per-tool clock", and the appendix's "Lines appended to a tool result"), alongside a periodic reminder and a generation-time line this proxy does not add. With Qwen3.6-27B at a 15-minute budget, the clock hooks cut time used from 161.4% to 99.7% of the budget, "with no measurable change in quality (47.5 to 47.0 percentile, within error)", and raised valid submissions from 78% to 88% (§4.2); Table 2 lists quality 49.4 → 42.1 for the same rows, which the text does not reconcile. The paper's prompt also tells the agent to re-read the clock and guard long commands with timeouts; this proxy adds no such instruction. No run of this proxy has measured it.
+
+In the Terminal-Bench Harbor arms (`bench/termbench/harbor/sc_agent_claude.py`), `CONTEXT_TIME_BUDGET_SECONDS=auto` in a job's agent `env` becomes the trial's effective agent timeout: task.toml `[agent] timeout_sec` or the job's `override_timeout_sec`, capped by `max_timeout_sec`, times `agent_timeout_multiplier` (else `timeout_multiplier`), as Harbor's `Trial._compute_agent_timeout_sec` resolves it. Harbor's timeout covers the agent run only, not setup, and the clock starts at the first proxied request, a few seconds into the run.

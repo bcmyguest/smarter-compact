@@ -34,6 +34,7 @@ from pathlib import Path
 
 from harbor.agents.installed.claude_code import ClaudeCode
 from harbor.agents.installed.node_install import nvm_node_install_snippet
+from harbor.trial.trial import Trial
 
 import lhtb_continue
 
@@ -50,9 +51,15 @@ ARM_ENV_KEYS = ("CONTEXT_TRIM_AT_TOKENS", "CONTEXT_TRIM_TO_TOKENS", "CONTEXT_STR
                 "CONTEXT_CLEAR_INPUTS_OVER_CHARS", "CONTEXT_STRIP_OLD_REASONING",
                 "CONTEXT_SCRATCHPAD", "CONTEXT_SCRATCHPAD_NUDGE_AT", "CONTEXT_EVICTION", "CONTEXT_EVICTION_BATCH", "CONTEXT_EVICTION_KEEP",
                 "CONTEXT_REUSE_RULES", "CONTEXT_DEDUP_RESULTS", "CONTEXT_LEDGER", "CONTEXT_STRIP_REASONING_EVERY",
-                "CONTEXT_STRIP_REASONING_MIN_TOKENS", "CONTEXT_LOG_REDUCE_OVER_CHARS", "CONTEXT_KEEP_ERRORS")
+                "CONTEXT_STRIP_REASONING_MIN_TOKENS", "CONTEXT_LOG_REDUCE_OVER_CHARS", "CONTEXT_KEEP_ERRORS",
+                "CONTEXT_TIME_BUDGET_SECONDS")
 # A trim threshold no Terminal-Bench session reaches: the proxy runs, our trim never fires.
 TRIM_OFF = "10000000"
+# A job's agent env setting this to "auto" gets the trial's effective agent timeout in whole seconds: task.toml
+# [agent] timeout_sec or the job's override_timeout_sec, capped by max_timeout_sec, times the agent (else global)
+# timeout multiplier. Harbor computes it (Trial._compute_agent_timeout_sec) but hands it only to its oracle agent.
+TIME_BUDGET_KEY = "CONTEXT_TIME_BUDGET_SECONDS"
+_STOCK_INIT_AGENT = Trial._init_agent
 # Job-level bind mount of the host ~/.claude/.credentials.json (read-only in practice; the
 # trial container never refreshes it).
 CREDS_MOUNT = "/opt/claude-creds/.credentials.json"
@@ -140,7 +147,23 @@ class ScClaudeBase(ClaudeCode):
         )
 
 
+def time_budget_env(env, agent_timeout_sec):
+    """env with CONTEXT_TIME_BUDGET_SECONDS=auto replaced by agent_timeout_sec in whole seconds; "0" (off) without one."""
+    if str(env.get(TIME_BUDGET_KEY, "")).strip().lower() != "auto":
+        return env
+    return {**env, TIME_BUDGET_KEY: str(int(agent_timeout_sec)) if agent_timeout_sec else "0"}
+
+
+def _init_agent(self):
+    """Harbor's agent init, then an ScClaudeBase agent's CONTEXT_TIME_BUDGET_SECONDS=auto resolved against the trial's
+    effective agent timeout, for install (the proxy) and the run env alike."""
+    _STOCK_INIT_AGENT(self)
+    if isinstance(self.agent, ScClaudeBase):
+        self.agent._extra_env = time_budget_env(self.agent._extra_env, self._agent_timeout_sec)
+
+
 lhtb_continue.install()
+Trial._init_agent = _init_agent
 
 
 class ScClaudeBaseline(ScClaudeBase):

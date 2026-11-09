@@ -48,6 +48,7 @@ OpenCode plugin options override the environment ([which reach what](#opencode-p
 | `CONTEXT_STRIP_REASONING_MIN_TOKENS` | `8000` | proxy, OpenCode 2 | Estimated tokens a batched reasoning strip must free, else it waits for the next batch; `0` moves at every batch with reasoning to strip |
 | `CONTEXT_LOG_REDUCE_OVER_CHARS` | `0` | proxy, OpenCode 2 | `N` > 0: a new tool result over N characters that looks like test or build output keeps its failure-pattern lines with context and its last 40 lines, naming the full text's blob, before head/tail compression; `0` off ([clearing](clearing.md#test-and-build-logs-context_log_reduce_over_chars)) |
 | `CONTEXT_KEEP_ERRORS` | `0` | proxy, OpenCode 2 | `K` > 0: each trim leaves the K newest error tool results (and their calls' inputs) whole while clearing and masking the rest; `0` off ([clearing](clearing.md#error-results-context_keep_errors)) |
+| `CONTEXT_TIME_BUDGET_SECONDS` | `0` | proxy, OpenCode 2 | `B` > 0: each request's new tool results get `[TIME REMAINING: <m>m<ss>s of <B> budget]`, counted from the session's first request, after [Wang et al., arXiv 2610.10833 §4.2](https://arxiv.org/html/2610.10833v1); `0` off ([time remaining](context-store.md#time-remaining-context_time_budget_seconds)) |
 
 ## Server-side tool-result clearing
 
