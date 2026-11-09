@@ -277,4 +277,3 @@ def nudge_line(repeat):
                 f"evidence.")
     return (f"- {repeat['path']} ({repeat['label']}) was read before and is unchanged since; that earlier output is "
             f"no longer shown in full.")
-
