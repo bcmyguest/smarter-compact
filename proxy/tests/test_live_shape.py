@@ -1,5 +1,5 @@
-"""CONTEXT_LEDGER and CONTEXT_TIME_BUDGET_SECONDS through the LiteLLM pre-call hook on the request shape Claude Code
-2.1.319 sends: every request ends with a role "system" message (<total_tokens>), after the new tool results.
+"""CONTEXT_LEDGER through the LiteLLM pre-call hook on the request shape Claude Code 2.1.319 sends: every
+request ends with a role "system" message (<total_tokens>), after the new tool results.
 Run: python3 -m unittest discover -s proxy/tests"""
 
 import asyncio
@@ -16,10 +16,9 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from smarter_compact import core, ledger  # noqa: E402
+from smarter_compact import ledger  # noqa: E402
 
 SID = "live-sess"
-T0 = 1_000_000.0
 CC = {"type": "ephemeral", "ttl": "1h"}
 REMINDER = "<system-reminder>\nThe date is 2026-11-09.\n</system-reminder>"
 A_PY = "\n".join(f"{k:>6}\t" + f"line {k} of a.py with some text" for k in range(1, 41))
@@ -87,43 +86,38 @@ class HookLiveShapeTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.hook = _hook_module(self.tmp.name)
         env = {"SMARTER_COMPACT_STATE_DIR": self.tmp.name, "CONTEXT_LEDGER": "1",
-               "CONTEXT_TIME_BUDGET_SECONDS": "1800", "CONTEXT_TRIM_AT_TOKENS": "10000000",
-               "CONTEXT_STANDING_INSTRUCTION": "0"}
+               "CONTEXT_TRIM_AT_TOKENS": "10000000", "CONTEXT_STANDING_INSTRUCTION": "0"}
         patch = mock.patch.dict(os.environ, env)
         patch.start()
         self.addCleanup(patch.stop)
 
-    def call(self, n, t):
+    def call(self, n):
         key = types.SimpleNamespace(request_route="/v1/messages")
-        with mock.patch.object(core, "_clock", return_value=t):
-            out = asyncio.run(self.hook.handler.async_pre_call_hook(key, None, body(n, f"c{n}"), "anthropic_messages"))
+        out = asyncio.run(self.hook.handler.async_pre_call_hook(key, None, body(n, f"c{n}"), "anthropic_messages"))
         return out["messages"]
 
-    def test_ledger_and_clock_on_the_tool_results_before_the_trailing_system_message(self):
-        first = self.call(1, T0)
+    def test_ledger_on_the_tool_results_before_the_trailing_system_message(self):
+        first = self.call(1)
         sent = messages(1)
-        # The block and clock line go on the new tool_result message, after its blocks; the system message stays as is.
+        # The block goes on the new tool_result message, after its blocks; the system message stays as is.
         self.assertEqual(first[3]["content"][:2], sent[3]["content"])
         added = texts(first[3])[1:]
-        self.assertEqual(len(added), 2)
+        self.assertEqual(len(added), 1)
         self.assertTrue(added[0].startswith(ledger.LEDGER_HEAD))
         self.assertIn("/app/a.py", added[0])
-        self.assertEqual(added[1], "[TIME REMAINING: 30m00s of 30m budget]")
         self.assertEqual(first[4], sent[4])
         self.assertEqual(json.dumps(first[:3]), json.dumps(sent[:3]))
 
-        second = self.call(2, T0 + 61)
-        # The recorded block and line re-render byte-identically; the new result gets its own.
+        second = self.call(2)
+        # The recorded block re-renders byte-identically; the new result gets its own.
         self.assertEqual(json.dumps(second[3]), json.dumps(first[3]))
         new = texts(second[6])
         self.assertTrue(new[0].startswith(ledger.LEDGER_HEAD))
         self.assertIn("/app/b.py", new[0])
-        self.assertEqual(new[1], "[TIME REMAINING: 28m59s of 30m budget]")
         self.assertEqual(second[7], messages(2)[7])
 
         state = json.loads((Path(self.tmp.name) / "context" / "sessions" / f"{SID}.trim.json").read_text())
         self.assertEqual([d["at"] for d in state["ledger"]], [3, 6])
-        self.assertEqual([d["at"] for d in state["clock"]], [3, 6])
 
     def test_a_request_ending_in_assistant_and_system_gets_nothing(self):
         msgs = messages(1)[:3] + [total_tokens(999, True)]

@@ -184,8 +184,6 @@ export const DEFAULT_CLEAR_INPUTS_OVER_CHARS = 2000;
 export const DEFAULT_STRIP_REASONING_MIN_TOKENS = 8000;
 // CONTEXT_LOG_REDUCE_OVER_CHARS decisions kept per session (trim state "logs"); same as core.LOG_MAX.
 const LOG_MAX = 512;
-// CONTEXT_TIME_BUDGET_SECONDS: clock lines kept per session (trim state "clock"), oldest dropped first; core.CLOCK_MAX.
-const CLOCK_MAX = 512;
 // Thread keys of CONTEXT_STRIP_REASONING_EVERY, and keys a thread entry holds without a cut (core.py).
 const REASON_KEYS = ["reason", "reason_fp", "reason_batch"];
 const SIDE_KEYS = ["nudge_fp", "reason_batch"];
@@ -244,8 +242,6 @@ export function trimSettings(env = process.env, home = env.HOME) {
     logReduceOverChars: Math.max(int("CONTEXT_LOG_REDUCE_OVER_CHARS", 0), 0),
     // The K newest error tool results stay whole through trim clearing and masking; 0 is off.
     keepErrors: Math.max(int("CONTEXT_KEEP_ERRORS", 0), 0),
-    // Session time budget in seconds: new tool results get a "[TIME REMAINING: ...]" line; 0 is off.
-    timeBudgetSeconds: Math.max(int("CONTEXT_TIME_BUDGET_SECONDS", 0), 0),
     trimAtTokens: int("CONTEXT_TRIM_AT_TOKENS", DEFAULT_TRIM_AT_TOKENS),
     trimAtByModel: int("CONTEXT_TRIM_AT_TOKENS", null) === null,
     trimDefault: overrides.default ?? DEFAULT_TRIM_AT_TOKENS,
@@ -1238,28 +1234,6 @@ function newLedgerBlock(items, sent, state, nudges, found) {
   return { at: j, fp: fingerprint(items[j]), text, core: coreId(core) };
 }
 
-/** seconds as 12m34s, or 15m on a whole minute; core._duration. */
-function duration(seconds) {
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return s === 0 ? `${m}m` : `${m}m${String(s).padStart(2, "0")}s`;
-}
-
-/** The CONTEXT_TIME_BUDGET_SECONDS line (Wang et al., arXiv 2610.10833 §4.2, Table 3), floored at 0; core.clock_text. */
-export function clockText(budget, elapsed) {
-  const left = Math.max(0, Math.floor(budget - elapsed));
-  return `[TIME REMAINING: ${Math.floor(left / 60)}m${String(left % 60).padStart(2, "0")}s of ${duration(budget)} budget]`;
-}
-
-/** The clock decision for this request's newest unpinned message, or null; proxy _clock_entry. */
-function newClockEntry(items, sent, found, cut, text) {
-  const j = newestUnpinned(items);
-  const last = lastAssistant(items);
-  if (last < 0 || j <= last || j === cut || found.has(j) || !parts(items[j]).some((p) => p?.type === "tool-result")) return null;
-  if (nudged(sent, j, text) === sent) return null;
-  return { at: j, fp: fingerprint(items[j]), text };
-}
-
 /** Start of every cleared tool-input string's placeholder; never re-masked. Same as compress.INPUT_MASK_PREFIX. */
 export const INPUT_MASK_PREFIX = "[smarter-compact: tool input cleared to save context;";
 // Characters of an input placeholder besides its count digits; same as compress._INPUT_PLACEHOLDER_FIXED.
@@ -1702,15 +1676,6 @@ async function trimSession(request, settings, deps, { original, sid, store, item
     const state = store.loadTrim(sid);
     const { threads } = state;
     const thread = threads.get(root);
-    const budget = settings.timeBudgetSeconds ?? 0;
-    const nowSec = () => (deps.now ? deps.now() : new Date()).getTime() / 1000;
-    if (budget > 0 && !Number.isInteger(state.clock_start)) {
-      // CONTEXT_TIME_BUDGET_SECONDS: the session's clock starts at the first request seen for it.
-      state.clock_start = Math.floor(nowSec());
-      store.saveTrim(sid, state);
-    }
-    const clocks = budget > 0 && Array.isArray(state.clock) ? state.clock : [];
-    let cfound = clocks.length ? dedupFound(items, clocks) : new Map();
     let logFresh = [];
     if (settings.logReduceOverChars > 0) {
       // CONTEXT_LOG_REDUCE_OVER_CHARS: decided on a result's first request, recorded, rendered on every later one.
@@ -1765,10 +1730,10 @@ async function trimSession(request, settings, deps, { original, sid, store, item
     let shown = new Map();
     const mode = regionMode(settings);
     // The items as sent: the recorded nudge stays on its item, byte-identical, until the next trim, and so do the
-    // recorded ledger blocks from llo on (CONTEXT_LEDGER), then every recorded clock line (CONTEXT_TIME_BUDGET_SECONDS).
+    // recorded ledger blocks from llo on (CONTEXT_LEDGER).
     let nudgePos = nudgeAt;
     let nudgeText = threads.has(root) ? threads.get(root).nudge : null;
-    const dress = (b) => ledgered(ledgered(nudged(b, nudgePos, nudgeText), lfound, llo), cfound, null);
+    const dress = (b) => ledgered(nudged(b, nudgePos, nudgeText), lfound, llo);
     let sent = dress(base);
     const inputs = settings.clearInputsOverChars ?? 0;
     const old = Boolean(settings.stripOldReasoning);
@@ -1793,7 +1758,7 @@ async function trimSession(request, settings, deps, { original, sid, store, item
         if (top < items.length && (rbound === null || top > rbound)) {
           const movedBase = reasonStripped(base, top);
           const movedShown = new Map();
-          const rsent = dress(movedBase);
+          const rsent = ledgered(nudged(movedBase, nudgePos, nudgeText), lfound, llo);
           const rview = render(rsent, cut, note, first, gap, decorate, strip, clear, mode, movedShown, inputs, old, exempt);
           const freed = estimatePromptTokens(baseChars + sizeChars(true, rendered), state.usage, root, ratio)
             - estimatePromptTokens(baseChars + sizeChars(true, rview), state.usage, root, ratio);
@@ -1817,7 +1782,7 @@ async function trimSession(request, settings, deps, { original, sid, store, item
       const tExempt = nextExempt.length ? new Set(nextExempt) : null;
       // CONTEXT_LEDGER: a trim keeps only the newest recorded ledger block.
       const nextLlo = lfound.size ? Math.max(...lfound.keys()) : llo;
-      const tbase = ledgered(ledgered(base, lfound, nextLlo), cfound, null);
+      const tbase = ledgered(base, lfound, nextLlo);
       // Reasoning the batched strip already took off counts as gone (CONTEXT_STRIP_REASONING_EVERY).
       const ritems = reasonStripped(items, rbound);
       // A target at or above the threshold could not land a trim under it, so the threshold caps it.
@@ -1951,16 +1916,6 @@ async function trimSession(request, settings, deps, { original, sid, store, item
       state.ledger = [...ledgers, block].slice(-LEDGER_MAX);
       store.saveTrim(sid, state);
       lfound = new Map([...lfound, [block.at, [block]]]);
-      sent = dress(base);
-      shown = new Map();
-      rendered = render(sent, cut, note, first, gap, decorate, strip, clear, mode, shown, inputs, old, exempt);
-    }
-    const centry = budget > 0 ? newClockEntry(items, sent, cfound, cut, clockText(budget, nowSec() - state.clock_start)) : null;
-    if (centry) {
-      // Recorded on the newest message, so every later request re-renders the line unchanged.
-      state.clock = [...clocks, centry].slice(-CLOCK_MAX);
-      store.saveTrim(sid, state);
-      cfound = new Map([...cfound, [centry.at, [centry]]]);
       sent = dress(base);
       shown = new Map();
       rendered = render(sent, cut, note, first, gap, decorate, strip, clear, mode, shown, inputs, old, exempt);

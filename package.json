@@ -74,7 +74,7 @@
     ]
   },
   "scripts": {
-    "test": "node --test tests/plugin.test.mjs tests/opencode-export.test.mjs tests/proxy-daemon.test.mjs tests/litellm.test.mjs tests/context-config.test.mjs tests/recall-mcp.test.mjs tests/context-trim.test.mjs tests/context-ledger.test.mjs tests/session-db.test.mjs tests/config-wiring.test.mjs tests/scratchpad.test.mjs tests/time-budget.test.mjs",
+    "test": "node --test tests/plugin.test.mjs tests/opencode-export.test.mjs tests/proxy-daemon.test.mjs tests/litellm.test.mjs tests/context-config.test.mjs tests/recall-mcp.test.mjs tests/context-trim.test.mjs tests/context-ledger.test.mjs tests/session-db.test.mjs tests/config-wiring.test.mjs tests/scratchpad.test.mjs",
     "pack:check": "node scripts/check-pack.mjs",
     "version": "node scripts/sync-versions.mjs"
   },

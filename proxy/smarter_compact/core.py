@@ -6,7 +6,6 @@ process_usage(kwargs, response) after each success; tests call them directly.
 
 import hashlib
 import json
-import math
 import os
 import re
 import sys
@@ -127,9 +126,6 @@ LOG_MAX = 512
 _ERROR_RE = re.compile(
     r"^Exit code [1-9]|Traceback \(most recent call last\)|^[A-Za-z_.]*(?:Error|Exception): |command not found"
     r"|No such file or directory|^(?:FAILED|FAIL|ERROR)(?![A-Za-z0-9_])|^error(?:\[E[0-9]+\])?: ")
-# CONTEXT_TIME_BUDGET_SECONDS: clock lines kept per session (trim state "clock"), oldest dropped first. The line is the
-# per-tool clock of Wang et al., arXiv 2610.10833 §4.2 / Table 3; same text as clockText() in plugin/lib/context-trim.mjs.
-CLOCK_MAX = 512
 
 
 def recall_tool_names(tools):
@@ -599,34 +595,6 @@ def _ledger_block(adapter, items, sent, state, nudges, found):
     if _nudged(adapter, sent, j, text) is sent:
         return None
     return {"at": j, "fp": fingerprint(items[j]), "text": text, "core": ledger_mod.core_id(core)}
-
-
-def _clock():
-    """Wall-clock seconds; tests replace it."""
-    return time.time()
-
-
-def _duration(seconds):
-    """seconds as 12m34s, or 15m on a whole minute."""
-    return f"{seconds // 60}m" if seconds % 60 == 0 else f"{seconds // 60}m{seconds % 60:02d}s"
-
-
-def clock_text(budget, elapsed):
-    """The CONTEXT_TIME_BUDGET_SECONDS line: time left of budget after elapsed seconds, floored at 0, no advice."""
-    left = max(0, math.floor(budget - elapsed))
-    return f"[TIME REMAINING: {left // 60}m{left % 60:02d}s of {_duration(budget)} budget]"
-
-
-def _clock_entry(adapter, items, sent, found, cut, text):
-    """The clock decision for this request's newest unpinned item, or None: it must hold new tool results (after the
-    last assistant item), carry no clock line yet and not be the trim's cut turn."""
-    j = _newest_unpinned(adapter, items)
-    last = _last_assistant(adapter, items)
-    if last is None or j <= last or j == cut or j in found or not adapter.tool_results(items[j]):
-        return None
-    if _nudged(adapter, sent, j, text) is sent:
-        return None
-    return {"at": j, "fp": fingerprint(items[j]), "text": text}
 
 
 def first_user_index(adapter, items):
@@ -1172,13 +1140,6 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
         state = store.load_trim(sid)
         threads = state["threads"]
         thread = threads.get(root)
-        budget = settings.time_budget_seconds
-        if budget > 0 and not isinstance(state.get("clock_start"), int):
-            # CONTEXT_TIME_BUDGET_SECONDS: the session's clock starts at the first request seen for it.
-            state["clock_start"] = int(_clock())
-            store.save_trim(sid, state)
-        clocks = state.get("clock") if budget > 0 and isinstance(state.get("clock"), list) else []
-        cfound = _dedup_found(items, clocks) if clocks else {}
         log_new = []
         if settings.log_reduce_over_chars > 0:
             # CONTEXT_LOG_REDUCE_OVER_CHARS: decided on a result's first request, recorded, rendered on every later one.
@@ -1253,12 +1214,11 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                 threads.pop(next(iter(threads)))
             store.save_trim(sid, state)
         # The items as sent: the recorded nudge stays on its item, byte-identical, until the next trim, and so do the
-        # recorded ledger blocks from llo on (CONTEXT_LEDGER), then every recorded clock line (CONTEXT_TIME_BUDGET_SECONDS).
+        # recorded ledger blocks from llo on (CONTEXT_LEDGER).
         nudge_pos, nudge_text = nudge_at, threads.get(root, {}).get("nudge")
 
         def dress(b):
-            return _ledgered(adapter, _ledgered(adapter, _nudged(adapter, b, nudge_pos, nudge_text), lfound, llo),
-                             cfound, None)
+            return _ledgered(adapter, _nudged(adapter, b, nudge_pos, nudge_text), lfound, llo)
 
         sent = dress(base)
         inputs = settings.clear_inputs_over_chars
@@ -1284,7 +1244,7 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                 if top < len(items) and (rbound is None or top > rbound):
                     moved_base = _reason_stripped(adapter, base, top)
                     moved_shown = {}
-                    rsent = dress(moved_base)
+                    rsent = _ledgered(adapter, _nudged(adapter, moved_base, nudge_pos, nudge_text), lfound, llo)
                     rview = render(radapter, rsent, cut, note, first, gap, strip, mode, moved_shown, clear, evict,
                                    inputs, old)
                     freed = estimate_prompt_tokens(base_chars + _size(True, view), state.get("usage"), root, ratio) \
@@ -1315,7 +1275,7 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
             tadapter = _exempting(adapter, new_keep)
             # CONTEXT_LEDGER: a trim keeps only the newest recorded ledger block.
             new_llo = max(lfound) if lfound else llo
-            tbase = _ledgered(adapter, _ledgered(adapter, base, lfound, new_llo), cfound, None)
+            tbase = _ledgered(adapter, base, lfound, new_llo)
             # Reasoning the batched strip already took off counts as gone (CONTEXT_STRIP_REASONING_EVERY).
             ritems = _reason_stripped(adapter, items, rbound)
             # A target at or above the threshold could not land a trim under it, so the threshold caps it.
@@ -1468,15 +1428,6 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
             state["ledger"] = (ledgers + [entry])[-ledger_mod.LEDGER_MAX:]
             store.save_trim(sid, state)
             lfound = {**lfound, entry["at"]: [entry]}
-            sent, shown = dress(base), {}
-            view = render(radapter, sent, cut, note, first, gap, strip, mode, shown, clear, evict, inputs, old)
-        centry = _clock_entry(adapter, items, sent, cfound, cut, clock_text(budget, _clock() - state["clock_start"])) \
-            if budget > 0 else None
-        if centry:
-            # Recorded on the newest item, so every later request re-renders the line unchanged.
-            state["clock"] = (clocks + [centry])[-CLOCK_MAX:]
-            store.save_trim(sid, state)
-            cfound = {**cfound, centry["at"]: [centry]}
             sent, shown = dress(base), {}
             view = render(radapter, sent, cut, note, first, gap, strip, mode, shown, clear, evict, inputs, old)
         _write_masked_blobs(store, adapter, sent, shown)

@@ -226,3 +226,16 @@ test("CONTEXT_KEEP_ERRORS: the newest error results stay whole through clearing 
     assert.ok(plain.p1.startsWith(MASK_PREFIX) && plain.p2.startsWith(MASK_PREFIX));
   } finally { fs.rmSync(off, { recursive: true, force: true }); }
 }));
+
+test("a trailing system message leaves the ledger block on the newest result", withHome(async (home) => {
+  const cat = ["bash", { command: "cat a.py" }, "print(1)"];
+  const ls = ["bash", { command: "ls" }, "a.py\nb.py"];
+  const sys = (n) => ({ role: "system", content: `<total_tokens>${n} tokens left</total_tokens>` });
+  const first = [...turns([cat]), sys(1000)];
+  const v1 = await run(home, first, { CONTEXT_LEDGER: "1" });
+  assert.deepEqual(v1.at(-1), first.at(-1));
+  assert.match(v1.at(-2).content.at(-1).result.value, /\[smarter-compact ledger/);
+  const second = [...first, ...turns([cat, ls]).slice(-2), sys(999)];
+  const v2 = await run(home, second, { CONTEXT_LEDGER: "1" });
+  assert.equal(JSON.stringify(v2.slice(0, 4)), JSON.stringify(v1));
+}));
