@@ -247,5 +247,19 @@ class TtlSplitTests(ClockBase):
         self.assertEqual(core.cache_write_split({"usage": {"input_tokens": 1}}), {})
 
 
+class CacheWriteSplitShapeTests(unittest.TestCase):
+    def test_litellm_model_response_prompt_tokens_details(self):
+        # LiteLLM's ModelResponse for /v1/messages: Usage.prompt_tokens_details.cache_creation_token_details.
+        details = SimpleNamespace(cache_creation_token_details=SimpleNamespace(
+            ephemeral_5m_input_tokens=8112, ephemeral_1h_input_tokens=0))
+        response = SimpleNamespace(usage=SimpleNamespace(prompt_tokens=8114, prompt_tokens_details=details))
+        self.assertEqual(core.cache_write_split(response),
+                         {"cache_creation_1h_tokens": 0, "cache_creation_5m_tokens": 8112})
+
+    def test_no_details_is_empty(self):
+        response = SimpleNamespace(usage=SimpleNamespace(prompt_tokens=5, prompt_tokens_details=None))
+        self.assertEqual(core.cache_write_split(response), {})
+
+
 if __name__ == "__main__":
     unittest.main()

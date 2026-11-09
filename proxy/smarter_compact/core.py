@@ -1664,10 +1664,13 @@ def response_usage_counts(response, kwargs):
 
 def cache_write_split(response):
     """{cache_creation_1h_tokens, cache_creation_5m_tokens} from the response usage's cache_creation object
-    (Anthropic), else {}."""
+    (Anthropic) or LiteLLM's prompt_tokens_details.cache_creation_token_details, else {}."""
     for obj in (response, _field(response, "response")):
         usage = _field(obj, "usage") if obj is not None else None
         split = _field(usage, "cache_creation") if usage is not None else None
+        if split is None and usage is not None:
+            # LiteLLM's ModelResponse keeps it at prompt_tokens_details.cache_creation_token_details.
+            split = _field(_field(usage, "prompt_tokens_details"), "cache_creation_token_details")
         if split is not None:
             return {"cache_creation_1h_tokens": _count(_field(split, "ephemeral_1h_input_tokens")),
                     "cache_creation_5m_tokens": _count(_field(split, "ephemeral_5m_input_tokens"))}
