@@ -91,6 +91,7 @@ Anthropic route (`/v1/messages`) to Claude models only. Details: [context proxy]
 
 | Variable | Default | Read by | Effect |
 | --- | --- | --- | --- |
+| `SMARTER_COMPACT_QUIET` | unset | CLI | `1`, `true` or `yes` makes `enable` and `disable` print only errors and warnings, like `-q` |
 | `SMARTER_COMPACT_INSTALL_CURSOR` | unset | CLI | `1` lets `smarter-compact enable -g` install the Cursor MCP and hooks when `~/.cursor` exists |
 
 ## Config files

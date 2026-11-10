@@ -37,7 +37,7 @@ Cursor and Copilot CLI get hooks and MCP search tools only, with no automatic tr
 
 ## Install
 
-Install from npm with `npm install -g smarter-compact`, then register plugins with **`smarter-compact plugins add <claude|codex>`**. It finds the installed package itself, so you need neither `npm root -g` nor a git clone. **`smarter-compact enable -g`** detects Claude Code, Codex, and OpenCode (by config dir, or `opencode` on PATH), points each at the proxy, and starts the proxy. Clone the repo only to develop the trimmer or to pin a checkout path.
+Install from npm with `npm install -g smarter-compact`, then register plugins with **`smarter-compact plugins add <claude|codex>`**. It finds the installed package itself, so you need neither `npm root -g` nor a git clone. **`smarter-compact enable -g`** detects Claude Code, Codex, and OpenCode (by config dir, or `opencode` on PATH), points each at the proxy, and starts the proxy. It prints each step to stderr; `-q` (or `SMARTER_COMPACT_QUIET=1`) prints only errors and warnings. Clone the repo only to develop the trimmer or to pin a checkout path.
 
 ### Claude Code
 

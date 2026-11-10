@@ -57,16 +57,17 @@ function current(version) {
  * Ensure the `litellm` on PATH is LITELLM_VERSION; install LITELLM_SPEC with `uv tool install --force` when not.
  * `log` receives one line before the install starts; uv's own output goes to stderr.
  */
-export function ensureLitellm({ env = process.env, log = () => {} } = {}) {
+export function ensureLitellm({ env = process.env, log = () => {}, quiet = false } = {}) {
   const found = litellmVersion(env);
   if (current(found)) return { ok: true, status: "present", version: found };
   if (!onPath("uv", env)) return { ok: false, reason: "uv-missing", found };
 
   log(`installing ${LITELLM_SPEC} with uv tool install (${found ? `found ${found}` : "litellm not on PATH"})`);
   const install = spawnSync("uv", ["tool", "install", "--force", LITELLM_SPEC], {
-    env, stdio: ["ignore", 2, 2], timeout: INSTALL_TIMEOUT_MS, windowsHide: true,
+    env, stdio: quiet ? ["ignore", "pipe", "pipe"] : ["ignore", 2, 2], encoding: "utf8", timeout: INSTALL_TIMEOUT_MS, windowsHide: true,
   });
-  if (install.status !== 0) return { ok: false, reason: "install-failed", found };
+  // Quiet hides uv's progress but hands its output back on failure.
+  if (install.status !== 0) return { ok: false, reason: "install-failed", found, output: quiet ? `${install.stdout || ""}${install.stderr || ""}` : "" };
 
   const version = litellmVersion(env);
   if (current(version)) return { ok: true, status: "installed", version };

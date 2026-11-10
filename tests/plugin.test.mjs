@@ -114,6 +114,24 @@ test("enable and disable claude rewrite only our settings", () => {
   assert.equal(restored.env.ANTHROPIC_CUSTOM_HEADERS, undefined);
 });
 
+test("enable claude logs each step; -q prints only errors", () => {
+  const home = tmpHome();
+  fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
+  const env = { ...process.env, HOME: home, USERPROFILE: home, SMARTER_COMPACT_AUTO_PROXY: "0", SMARTER_COMPACT_QUIET: "" };
+  const run = (...args) => spawnSync(process.execPath, [CLI, ...args], { encoding: "utf8", env });
+  const loud = run("enable", "claude");
+  assert.equal(loud.status, 0, loud.stderr);
+  assert.match(loud.stderr, /writing claude config/);
+  assert.match(loud.stderr, /starting the proxy if needed/);
+  assert.match(loud.stderr, /proxy auto-start is off/);
+  const quiet = run("disable", "-q", "claude");
+  assert.equal(quiet.status, 0, quiet.stderr);
+  assert.equal(quiet.stdout + quiet.stderr, "");
+  const bad = run("enable", "--quiet", "nope");
+  assert.equal(bad.status, 2);
+  assert.notEqual(bad.stderr, "");
+});
+
 test("enable codex writes a provider and keeps a foreign model_provider for restore", () => {
   const home = tmpHome();
   fs.mkdirSync(path.join(home, ".codex"), { recursive: true });

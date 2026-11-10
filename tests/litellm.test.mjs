@@ -130,3 +130,11 @@ test("whichOnPath on Windows finds bin.exe under a Path key and skips directorie
   assert.equal(whichOnPath("litellm", { Path: `${a};${b}` }, "win32"), path.join(b, "litellm.exe"));
   assert.equal(whichOnPath("litellm", { Path: a }, "win32"), null);
 });
+
+test("ensureLitellm quiet returns uv's output on install failure", { skip: SH_STUBS }, () => {
+  const bin = tmpDir("sc-ll-");
+  stub(bin, "uv", 'echo "uv: resolution failed" >&2; exit 1');
+  const r = ensureLitellm({ env: { PATH: bin }, quiet: true });
+  assert.equal(r.reason, "install-failed");
+  assert.match(r.output, /uv: resolution failed/);
+});

@@ -20,6 +20,12 @@ import { summarizeEvents } from "../lib/session-db.mjs";
 ensureProductEnv();
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+const PROXY_STATUS = {
+  "already-up": "proxy already running",
+  stale: "proxy already running an older version",
+  disabled: "proxy auto-start is off (SMARTER_COMPACT_AUTO_PROXY=0)",
+  "not-needed": "no agent points at the proxy; not starting it",
+};
 const LITELLM_MISSING = `litellm is not on PATH. Run ${PRODUCT} enable, which installs litellm ${LITELLM_VERSION} with uv`;
 
 function repoRoot() {
@@ -29,8 +35,8 @@ function repoRoot() {
 function usage() {
   return `${PRODUCT} status
 ${PRODUCT} compact --session <id>
-${PRODUCT} enable [-g] [<claude|codex|opencode>]
-${PRODUCT} disable [-g] [<claude|codex|opencode>]
+${PRODUCT} enable [-g] [-q] [<claude|codex|opencode>]
+${PRODUCT} disable [-g] [-q] [<claude|codex|opencode>]
 ${PRODUCT} install cursor [--copy]
 ${PRODUCT} path
 ${PRODUCT} plugins add <claude|codex|copilot>
@@ -97,12 +103,15 @@ function compact(argv) {
 
 function parseEnableArgv(argv) {
   const global = argv.includes("-g") || argv.includes("--global");
+  const quiet = argv.includes("-q") || argv.includes("--quiet") || /^(1|true|yes)$/i.test(String(process.env.SMARTER_COMPACT_QUIET || "").trim());
   const agents = argv.filter((a) => !a.startsWith("-"));
-  return { global, agents };
+  return { global, quiet, agents };
 }
 
 async function enable(argv, enabled) {
-  const { global, agents: named } = parseEnableArgv(argv);
+  const { global, quiet, agents: named } = parseEnableArgv(argv);
+  // Progress and info lines go to stderr; quiet keeps only errors and warnings.
+  const info = (line) => { if (!quiet) console.error(`${PRODUCT}: ${line}`); };
   const home = os.homedir();
   let targets = named;
   if (global) {
@@ -117,7 +126,7 @@ async function enable(argv, enabled) {
       );
       process.exit(1);
     }
-    console.error(`${PRODUCT}: ${enabled ? "enabling" : "disabling"} ${targets.join(", ")}`);
+    info(`${enabled ? "enabling" : "disabling"} ${targets.join(", ")}`);
   } else if (targets.length !== 1 || !AGENTS.includes(targets[0])) {
     console.error(usage());
     process.exit(2);
@@ -126,19 +135,26 @@ async function enable(argv, enabled) {
   const port = resolveProxyPort(home, process.env);
   // Refuse before any config is written: an agent pointed at a proxy that cannot start loses every request.
   const autoProxy = !/^(0|false|no)$/i.test(String(process.env.SMARTER_COMPACT_AUTO_PROXY || "1").trim());
+  if (enabled && autoProxy) info(`checking for a running proxy on 127.0.0.1:${port}`);
   if (enabled && autoProxy && !(await probeContextProxy(port))) {
-    const litellm = ensureLitellm({ log: (line) => console.error(`${PRODUCT}: ${line}`) });
+    info("no proxy running; checking litellm (first run can take a few seconds)");
+    const litellm = ensureLitellm({ log: info, quiet });
     if (!litellm.ok) {
+      if (litellm.output) process.stderr.write(litellm.output);
       console.error(`${PRODUCT}: ${litellmProblem(litellm, PRODUCT)} No agent config changed.`);
       process.exit(1);
     }
-    if (litellm.status === "installed") console.error(`${PRODUCT}: installed litellm ${litellm.version}`);
+    info(litellm.status === "installed" ? `installed litellm ${litellm.version}` : `litellm ${litellm.version} found`);
   }
-  const results = targets.map((agent) => ({ agent, ...configureAgent(home, agent, { enabled, port }) }));
+  const results = targets.map((agent) => {
+    info(`${enabled ? "writing" : "restoring"} ${agent} config`);
+    return { agent, ...configureAgent(home, agent, { enabled, port }) };
+  });
   const ok = results.filter((r) => r.ok);
   const bad = results.filter((r) => !r.ok);
 
   if (enabled && ok.length) {
+    info("starting the proxy if needed (waits up to 12s for it to listen)");
     const proxy = await ensureContextProxyRunning({ importMetaUrl: import.meta.url, waitMs: 12_000 });
     if (!proxy.ok) {
       for (const r of ok) console.log(r.message);
@@ -147,18 +163,19 @@ async function enable(argv, enabled) {
         : `${PRODUCT}: proxy did not start (${proxy.status}${proxy.reason ? `: ${proxy.reason}` : ""}${proxy.log ? `; see ${proxy.log}` : ""})`);
       process.exit(1);
     }
-    if (proxy.status === "started") console.error(`${PRODUCT}: proxy listening on http://127.0.0.1:${port}`);
-    if (proxy.status === "restarted") console.error(`${PRODUCT}: proxy restarted, ${proxy.from} -> ${proxy.to}`);
+    if (proxy.status === "started") info(`proxy listening on http://127.0.0.1:${port}`);
+    else if (proxy.status === "restarted") info(`proxy restarted, ${proxy.from} -> ${proxy.to}`);
+    else info(PROXY_STATUS[proxy.status] || `proxy ${proxy.status}`);
     if (proxy.warning) console.error(`${PRODUCT}: ${proxy.warning}`);
   }
 
   if (global && enabled && process.env.SMARTER_COMPACT_INSTALL_CURSOR === "1" && fs.existsSync(path.join(home, ".cursor"))) {
     const cursor = installCursorPlugin({ importMetaUrl: import.meta.url });
-    if (cursor.ok) console.error(`${PRODUCT}: cursor plugin ${cursor.mode} → ${cursor.dest} (enable in Cursor settings)`);
+    if (cursor.ok) info(`cursor plugin ${cursor.mode} → ${cursor.dest} (enable in Cursor settings)`);
     else console.error(`${PRODUCT}: cursor install skipped (${cursor.message || "failed"})`);
   }
 
-  for (const r of ok) console.log(r.message);
+  if (!quiet) for (const r of ok) console.log(r.message);
   for (const r of bad) console.error(`${r.agent}: ${r.message}`);
   process.exit(bad.length && !ok.length ? 1 : bad.length ? 1 : 0);
 }
