@@ -34,8 +34,6 @@ Or add `CONTEXT_PROXY_PORT=4200` to `proxy.env`, then run `smarter-compact enabl
 
 The OpenCode 2 `proxyPort` option sets the port that plugin probes; it starts a proxy there only when an agent config already points at that port. Other agents read `CONTEXT_PROXY_PORT`.
 
-After an upgrade, the next session start restarts an idle proxy that `smarter-compact` started and shows `proxy restarted, <old> -> <new>`. When it cannot, it shows a warning; run `smarter-compact proxy restart`. That command stops only a proxy it started (`proxy.pid`, checked to be litellm) or a Docker container publishing the port, and refuses any other listener.
-
 Auto-start is off when `SMARTER_COMPACT_AUTO_PROXY=0`. Logs: `~/.config/smarter-compact/proxy.log`, rotated to `proxy.log.1` at 5 MB on each start.
 
 ## Configuration
@@ -143,6 +141,8 @@ The proxy writes `proxy-<port>.json` to the context dir at start, and at most ev
 | Compose container on another checkout version, a manual `smarter-compact proxy`, or no status file | Warning | Warning |
 
 Claude Code and Codex show the warning as a session-start system message; `enable` prints it to stderr. A warning names what to restart or update.
+
+`smarter-compact proxy restart` restarts at once. It stops only the litellm in `proxy.pid` (checked to be litellm; on Windows with its child processes) or a Docker container publishing the port, refuses any other listener, then starts the installed version.
 
 ## Limits
 

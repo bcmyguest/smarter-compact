@@ -138,6 +138,19 @@ smarter-compact enable opencode                   # OpenCode 1 only
 
 </details>
 
+## Upgrade
+
+Claude Code, Codex and OpenCode 1 send requests through the background proxy, which keeps running the version that started it. OpenCode 2 and Pi trim in-process and pick up the new version on their next start.
+
+```sh
+npm install -g smarter-compact@latest
+smarter-compact proxy restart                                   # load the new proxy now
+claude plugin marketplace update smarter-compact                # Claude Code: refresh the plugin,
+claude plugin update smarter-compact@smarter-compact            # then restart claude
+```
+
+Skip `proxy restart` and the next session start restarts the proxy once it has been idle 60 s, showing `proxy restarted, <old> -> <new>`. A proxy that is busy, or that `smarter-compact` did not start, gets a warning naming what to restart instead. `proxy restart` stops only a litellm that `smarter-compact` started, or a Docker container publishing the port; it works on Linux, macOS and Windows. See [Updates](docs/context-proxy.md#updates) for the rules.
+
 ## CLI
 
 After `npm install -g smarter-compact`, the command on your PATH is **`smarter-compact`**. From a clone, use `./plugin/scripts/smarter-compact` (or `node plugin/scripts/smarter-compact.mjs`).
