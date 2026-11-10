@@ -11,6 +11,7 @@ import {
   DEDUP_PREFIX, KEEP_ERRORS_MAX_CHARS, MASK_PREFIX, blobId, dedupPlaceholder, isErrorResult, trimContext, trimSettings,
 } from "../plugin/lib/context-trim.mjs";
 import { sweepOrphanBlobs } from "../plugin/lib/session-db.mjs";
+import { rmHome } from "./rm-home.mjs";
 
 // Same contracts as proxy/tests/test_ledger.py, test_log_reduce.py, test_strip_batch.py and test_keep_errors.py.
 const SID = "sess-1";
@@ -30,7 +31,7 @@ const LOG = ["============================= test session starts ================
 function withHome(fn) {
   return async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "sc-ledger-"));
-    try { await fn(home); } finally { fs.rmSync(home, { recursive: true, force: true }); }
+    try { await fn(home); } finally { rmHome(home); }
   };
 }
 
@@ -127,7 +128,7 @@ test("CONTEXT_LEDGER: blocks on new results, reuse pointers, nudges, byte-identi
     assert.equal(resultsOf(stale.at(-1)).p2.split("\n\n")[0], NUMBERED);
     const rerun = await grow(other, [CAT, EDIT, READ_RANGE, TEST, TEST], on);
     assert.match(ledgerTexts(rerun.at(-1)).at(-1), /`pytest -q tests` already ran with no file change since/);
-  } finally { fs.rmSync(other, { recursive: true, force: true }); }
+  } finally { rmHome(other); }
 }));
 
 test("CONTEXT_LEDGER: only a byte-identical re-read becomes the dedup pointer; a changed one stays whole", withHome(async (home) => {
@@ -150,8 +151,8 @@ test("CONTEXT_LEDGER: only a byte-identical re-read becomes the dedup pointer; a
     assert.equal(JSON.stringify(later.slice(0, views.at(-1).length)), JSON.stringify(views.at(-1)));
     assert.equal(JSON.stringify(await grow(third, [CAT, CAT], { CONTEXT_LEDGER: "1" })), JSON.stringify(views));
   } finally {
-    fs.rmSync(other, { recursive: true, force: true });
-    fs.rmSync(third, { recursive: true, force: true });
+    rmHome(other);
+    rmHome(third);
   }
 }));
 
@@ -225,12 +226,12 @@ test("CONTEXT_STRIP_REASONING_EVERY: the bound moves at batch boundaries, gated,
     for (let n = 1; n < 10; n++) gated[n] = await run(off, loop(n), { ...env, CONTEXT_STRIP_REASONING_MIN_TOKENS: "20000" });
     assert.equal(JSON.stringify(gated[7]), JSON.stringify(loop(7)));
     assert.deepEqual(reasoningAt(gated[8]), [15]);
-  } finally { fs.rmSync(off, { recursive: true, force: true }); }
+  } finally { rmHome(off); }
   // A message holding only reasoning keeps it.
   const only = loop(4).map((m) => (m.role === "assistant" ? { ...m, content: [m.content[0]] } : m)).filter((m) => m.role !== "tool")
     .flatMap((m) => (m.role === "assistant" ? [m, { role: "user", content: [{ type: "text", text: "go" }] }] : [m]));
   const kept = fs.mkdtempSync(path.join(os.tmpdir(), "sc-ledger-"));
-  try { assert.equal(JSON.stringify(await run(kept, only, env)), JSON.stringify(only)); } finally { fs.rmSync(kept, { recursive: true, force: true }); }
+  try { assert.equal(JSON.stringify(await run(kept, only, env)), JSON.stringify(only)); } finally { rmHome(kept); }
 }));
 
 const LONG = "y".repeat(3000);
@@ -260,7 +261,7 @@ test("CONTEXT_KEEP_ERRORS: the newest error results stay whole through clearing 
   try {
     const plain = resultsOf(await run(off, errTurns(outs), { ...env(outs), CONTEXT_KEEP_ERRORS: "0" }));
     assert.ok(plain.p1.startsWith(MASK_PREFIX) && plain.p2.startsWith(MASK_PREFIX));
-  } finally { fs.rmSync(off, { recursive: true, force: true }); }
+  } finally { rmHome(off); }
 }));
 
 test("CONTEXT_KEEP_ERRORS: only an error result up to KEEP_ERRORS_MAX_CHARS stays whole", withHome(async (home) => {

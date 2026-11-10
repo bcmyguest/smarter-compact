@@ -16,13 +16,20 @@ const VERSION_TIMEOUT_MS = 60_000;
 const INSTALL_TIMEOUT_MS = 15 * 60_000;
 
 /** Full path of the first executable `bin` on env.PATH, or null. spawn reports ENOENT only through an async event. */
-export function whichOnPath(bin, env = process.env) {
-  for (const dir of String(env.PATH || "").split(path.delimiter).filter(Boolean)) {
-    const file = path.join(dir, bin);
-    try {
-      fs.accessSync(file, fs.constants.X_OK);
-      return file;
-    } catch { /* next */ }
+export function whichOnPath(bin, env = process.env, platform = process.platform) {
+  const win = platform === "win32";
+  // A copied env keeps Windows' `Path` spelling; spawn without a shell runs only .exe/.com there.
+  const key = win ? Object.keys(env).find((k) => k.toUpperCase() === "PATH") : "PATH";
+  const names = win ? [`${bin}.exe`, `${bin}.com`, bin] : [bin];
+  for (const dir of String((key && env[key]) || "").split(win ? ";" : path.delimiter).filter(Boolean)) {
+    for (const name of names) {
+      const file = path.join(dir, name);
+      try {
+        if (win && !fs.statSync(file).isFile()) continue;
+        fs.accessSync(file, fs.constants.X_OK);
+        return file;
+      } catch { /* next */ }
+    }
   }
   return null;
 }

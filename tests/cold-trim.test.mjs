@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { trimContext, trimSettings } from "../plugin/lib/context-trim.mjs";
+import { rmHome } from "./rm-home.mjs";
 
 const SID = "sess-1";
 const T0 = 1_800_000_000;
@@ -23,7 +24,7 @@ function history(turns) {
 function withHome(fn) {
   return async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "sc-cold-"));
-    try { await fn(home); } finally { fs.rmSync(home, { recursive: true, force: true }); }
+    try { await fn(home); } finally { rmHome(home); }
   };
 }
 

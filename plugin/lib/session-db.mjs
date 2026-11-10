@@ -317,6 +317,12 @@ export function dropSession(file) {
   entry?.close();
 }
 
+/** Close every cached connection; Windows cannot delete a database file that is still open. */
+export function closeSessions() {
+  for (const entry of open.values()) entry.close();
+  open.clear();
+}
+
 /** Hours of events `smarter-compact context status` and the context_status MCP tool summarize by default. */
 export const EVENT_WINDOW_HOURS = 24;
 const LAST_ERRORS = 5;
@@ -859,6 +865,7 @@ export function sweepContextStore(root, ttlDays, now = Date.now()) {
   for (const [sid, group] of groups) {
     if (group.newest >= cutoff) continue;
     for (const file of group.files) {
+      dropSession(file);
       try { fs.unlinkSync(file); } catch (error) { if (error?.code !== "ENOENT") throw error; }
     }
     deleted.push(sid);

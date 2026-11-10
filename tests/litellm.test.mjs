@@ -5,6 +5,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { ensureLitellm, litellmProblem, litellmVersion, LITELLM_SPEC, whichOnPath } from "../plugin/lib/litellm.mjs";
 
+// The stubs are #!/bin/sh scripts, which Windows cannot execute.
+const SH_STUBS = process.platform === "win32" && "sh stubs need a POSIX shell";
+
 function tmpDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
@@ -34,14 +37,14 @@ function uvStub(dir, { bin, version = "1.109.0rc1", status = 0 }) {
   return log;
 }
 
-test("litellmVersion parses --version and is null when litellm is absent", () => {
+test("litellmVersion parses --version and is null when litellm is absent", { skip: SH_STUBS }, () => {
   const bin = tmpDir("sc-ll-");
   assert.equal(litellmVersion({ PATH: bin }), null);
   litellmStub(bin, "1.109.0.dev1");
   assert.equal(litellmVersion({ PATH: bin }), "1.109.0.dev1");
 });
 
-test("ensureLitellm keeps a current litellm and never calls uv", () => {
+test("ensureLitellm keeps a current litellm and never calls uv", { skip: SH_STUBS }, () => {
   const bin = tmpDir("sc-ll-");
   litellmStub(bin, "1.109.0rc1");
   const log = uvStub(bin, { bin });
@@ -50,7 +53,7 @@ test("ensureLitellm keeps a current litellm and never calls uv", () => {
   assert.equal(fs.existsSync(log), false);
 });
 
-test("ensureLitellm fails with uv-missing when litellm is old and uv absent", () => {
+test("ensureLitellm fails with uv-missing when litellm is old and uv absent", { skip: SH_STUBS }, () => {
   const bin = tmpDir("sc-ll-");
   litellmStub(bin, "1.105.1");
   const r = ensureLitellm({ env: { PATH: bin } });
@@ -60,7 +63,7 @@ test("ensureLitellm fails with uv-missing when litellm is old and uv absent", ()
   assert.match(litellmProblem(r, "smarter-compact"), /found 1\.105\.1.*uv is missing/);
 });
 
-test("ensureLitellm installs with uv when litellm is missing", () => {
+test("ensureLitellm installs with uv when litellm is missing", { skip: SH_STUBS }, () => {
   const bin = tmpDir("sc-ll-");
   const log = uvStub(bin, { bin });
   const lines = [];
@@ -70,14 +73,14 @@ test("ensureLitellm installs with uv when litellm is missing", () => {
   assert.match(lines[0], /litellm not on PATH/);
 });
 
-test("ensureLitellm upgrades an old litellm in uv's bin dir", () => {
+test("ensureLitellm upgrades an old litellm in uv's bin dir", { skip: SH_STUBS }, () => {
   const bin = tmpDir("sc-ll-");
   litellmStub(bin, "1.105.1");
   uvStub(bin, { bin });
   assert.deepEqual(ensureLitellm({ env: { PATH: bin } }), { ok: true, status: "installed", version: "1.109.0rc1" });
 });
 
-test("ensureLitellm replaces a newer litellm with the pinned one", () => {
+test("ensureLitellm replaces a newer litellm with the pinned one", { skip: SH_STUBS }, () => {
   const bin = tmpDir("sc-ll-");
   const log = path.join(bin, "uv.log");
   litellmStub(bin, "1.110.0.dev1");
@@ -86,7 +89,7 @@ test("ensureLitellm replaces a newer litellm with the pinned one", () => {
   assert.equal(fs.readFileSync(log, "utf8"), "tool install --force litellm[proxy]==1.109.0rc1\n");
 });
 
-test("ensureLitellm replaces a 1.109.0 dev build, which predates the pin", () => {
+test("ensureLitellm replaces a 1.109.0 dev build, which predates the pin", { skip: SH_STUBS }, () => {
   const bin = tmpDir("sc-ll-");
   litellmStub(bin, "1.109.0.dev2");
   uvStub(bin, { bin });
@@ -99,7 +102,7 @@ test("ensureLitellm reports install-failed when uv exits non-zero", () => {
   assert.equal(ensureLitellm({ env: { PATH: bin } }).reason, "install-failed");
 });
 
-test("ensureLitellm reports shadowed when an older litellm comes first on PATH", () => {
+test("ensureLitellm reports shadowed when an older litellm comes first on PATH", { skip: SH_STUBS }, () => {
   const first = tmpDir("sc-ll-first-");
   const uvBin = tmpDir("sc-ll-uv-");
   litellmStub(first, "1.105.1");
@@ -110,11 +113,20 @@ test("ensureLitellm reports shadowed when an older litellm comes first on PATH",
   assert.equal(r.uvBin, uvBin);
 });
 
-test("ensureLitellm reports not-on-path when uv's bin dir is off PATH", () => {
+test("ensureLitellm reports not-on-path when uv's bin dir is off PATH", { skip: SH_STUBS }, () => {
   const bin = tmpDir("sc-ll-");
   const uvBin = tmpDir("sc-ll-uv-");
   uvStub(bin, { bin: uvBin });
   const r = ensureLitellm({ env: { PATH: bin } });
   assert.equal(r.reason, "not-on-path");
   assert.equal(r.uvBin, uvBin);
+});
+
+test("whichOnPath on Windows finds bin.exe under a Path key and skips directories", () => {
+  const a = tmpDir("sc-win-a-");
+  const b = tmpDir("sc-win-b-");
+  fs.mkdirSync(path.join(a, "litellm.exe"));
+  fs.writeFileSync(path.join(b, "litellm.exe"), "", { mode: 0o755 });
+  assert.equal(whichOnPath("litellm", { Path: `${a};${b}` }, "win32"), path.join(b, "litellm.exe"));
+  assert.equal(whichOnPath("litellm", { Path: a }, "win32"), null);
 });

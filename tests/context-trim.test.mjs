@@ -29,6 +29,7 @@ import {
 } from "../plugin/lib/context-trim.mjs";
 import { callContextStoreTool } from "../plugin/lib/mcp/context-store.mjs";
 import { sweepOrphanBlobs } from "../plugin/lib/session-db.mjs";
+import { rmHome } from "./rm-home.mjs";
 
 // The pointer note and the standing instruction are what make a trimmed-away past recoverable: they
 // are the only text telling the model its past is stored, where to look, and that no summary exists.
@@ -201,7 +202,7 @@ test("CONTEXT_TRIM_MIN_GAIN_TOKENS skips a trim that frees too little", async ()
   const run = async (gain) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "sc-gain-"));
     const settings = trimSettings({ CONTEXT_TRIM_AT_TOKENS: "1", CONTEXT_TRIM_MIN_GAIN_TOKENS: String(gain), CONTEXT_SCRATCHPAD: "0", SMARTER_COMPACT_STATE_DIR: home }, home);
-    try { return await trimContext({ sessionID: SID, messages }, settings); } finally { fs.rmSync(home, { recursive: true, force: true }); }
+    try { return await trimContext({ sessionID: SID, messages }, settings); } finally { rmHome(home); }
   };
   assert.equal(await run(1e9), messages);
   assert.ok((await run(1)).length < messages.length);
@@ -237,7 +238,7 @@ async function clearRun(home, messages, trimAt, keep = "2") {
 function withHome(fn) {
   return async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "sc-clear-"));
-    try { await fn(home); } finally { fs.rmSync(home, { recursive: true, force: true }); }
+    try { await fn(home); } finally { rmHome(home); }
   };
 }
 
@@ -584,7 +585,7 @@ test("a call's input is cleared with its result, and clearing alone now settles 
     const off = await inputsRun(other, messages, { CONTEXT_CLEAR_INPUTS_OVER_CHARS: "0" });
     assert.ok(off.length < messages.length);
     assert.ok(JSON.stringify(off).includes("earlier messages are NOT"));
-  } finally { fs.rmSync(other, { recursive: true, force: true }); }
+  } finally { rmHome(other); }
 }));
 
 test("cleared inputs re-render byte-identical across requests", withHome(async (home) => {
@@ -624,7 +625,7 @@ test("CONTEXT_CLEAR_INPUTS_OVER_CHARS=0 gives the old bytes", async () => {
   const views = [];
   for (const bar of ["0", "1000000000"]) {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "sc-clear-"));
-    try { views.push(await inputsRun(home, messages, { CONTEXT_CLEAR_INPUTS_OVER_CHARS: bar })); } finally { fs.rmSync(home, { recursive: true, force: true }); }
+    try { views.push(await inputsRun(home, messages, { CONTEXT_CLEAR_INPUTS_OVER_CHARS: bar })); } finally { rmHome(home); }
   }
   assert.ok(!JSON.stringify(views[0]).includes(INPUT_MASK_PREFIX));
   assert.equal(JSON.stringify(views[0]), JSON.stringify(views[1]));
@@ -826,7 +827,7 @@ test("the pointer stays when the earlier copy is later cleared or dropped", with
   try {
     await dupRun(other, dupTurns([DUP, DUP]));
     dropped = await dupRun(other, messages, { ...env, CONTEXT_TRIM_AT_TOKENS: "1000", CONTEXT_TRIM_TO_TOKENS: "900" });
-  } finally { fs.rmSync(other, { recursive: true, force: true }); }
+  } finally { rmHome(other); }
   assert.ok(!("p0" in resultsOf(dropped)));
   assert.equal(resultsOf(dropped).p1, dedupPlaceholder(DUP));
 }));

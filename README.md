@@ -216,7 +216,7 @@ npm test
 
 The docs site (Astro Starlight) builds from `docs/*.md`: `cd site && pnpm install && pnpm test && pnpm build` writes `site/dist/` and fails on a broken link.
 
-CI runs the same `prek run --all-files` plus `npm test` and proxy unit tests. Use `feat:`, `fix:`, `docs:`, `chore:`, etc. so **Prepare release** can bump semver with git-cliff.
+CI runs the same `prek run --all-files` plus `npm test` and proxy unit tests, and `npm test` again on `windows-latest`. Tests that delete a home holding session databases must call `rmHome` from `tests/rm-home.mjs`, because Windows cannot delete an open file. Use `feat:`, `fix:`, `docs:`, `chore:`, etc. so **Prepare release** can bump semver with git-cliff.
 
 ## Releases
 

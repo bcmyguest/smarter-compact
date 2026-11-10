@@ -10,6 +10,7 @@ import {
 import {
   CONTEXT_STORE_MCP_TOOLS, callContextStoreTool, contextStoreTools,
 } from "../plugin/lib/mcp/context-store.mjs";
+import { rmHome } from "./rm-home.mjs";
 
 // CONTEXT_SCRATCHPAD on the OpenCode path and the MCP tool; same cases as proxy/tests/test_scratchpad.py.
 
@@ -40,7 +41,7 @@ function history(turns) {
 function withHome(fn) {
   return async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "sc-pad-"));
-    try { await fn(home); } finally { fs.rmSync(home, { recursive: true, force: true }); }
+    try { await fn(home); } finally { rmHome(home); }
   };
 }
 

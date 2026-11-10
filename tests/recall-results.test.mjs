@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { DEDUP_PREFIX, MARKER_PREFIX, trimContext, trimSettings } from "../plugin/lib/context-trim.mjs";
 import { callContextStoreTool, toolResultText } from "../plugin/lib/mcp/context-store.mjs";
+import { rmHome } from "./rm-home.mjs";
 
 // Results of our own recall tools reach the model whole on arrival: never compressed, log-reduced or pointered.
 // Same contract as proxy/tests/test_recall_results.py. Trial path-tracing-reverse__ujsWcua: a 16 KB objdump result
@@ -27,7 +28,7 @@ const resultsOf = (view) => Object.fromEntries(view.flatMap((m) => m.content.fil
 function withHome(fn) {
   return async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "sc-recall-"));
-    try { await fn(home); } finally { fs.rmSync(home, { recursive: true, force: true }); }
+    try { await fn(home); } finally { rmHome(home); }
   };
 }
 
