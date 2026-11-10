@@ -155,6 +155,7 @@ After `npm install -g smarter-compact`, the command on your PATH is **`smarter-c
 | `smarter-compact enable <claude\|codex\|opencode>` | Point one agent at the proxy |
 | `smarter-compact disable <claude\|codex\|opencode>` | Remove that pointing and restore the backup |
 | `smarter-compact proxy` | Run LiteLLM in the foreground (debugging; hooks normally start it detached) |
+| `smarter-compact proxy restart` | Stop the background proxy and start a fresh one, e.g. after an upgrade (Linux, macOS, Windows) |
 | `smarter-compact status` | Same numbers as the slash command |
 
 A fail-open sends the request on untrimmed and records the error, so a failed trim never blocks a request.

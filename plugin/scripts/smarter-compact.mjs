@@ -13,7 +13,7 @@ import { AGENTS, configureAgent, detectInstalledAgents } from "../lib/enable.mjs
 import { installCursorPlugin } from "../lib/install-cursor.mjs";
 import { addPluginMarketplace, PLUGIN_AGENTS } from "../lib/plugins-cli.mjs";
 import { runContextCommand } from "../lib/context-config.mjs";
-import { ensureContextProxyRunning, litellmEnv, packageRoot, probeContextProxy } from "../lib/proxy-daemon.mjs";
+import { ensureContextProxyRunning, litellmEnv, packageRoot, probeContextProxy, restartContextProxy } from "../lib/proxy-daemon.mjs";
 import { ensureLitellm, litellmProblem, LITELLM_VERSION } from "../lib/litellm.mjs";
 import { summarizeEvents } from "../lib/session-db.mjs";
 
@@ -41,7 +41,7 @@ ${PRODUCT} install cursor [--copy]
 ${PRODUCT} path
 ${PRODUCT} plugins add <claude|codex|copilot>
 ${PRODUCT} context list|set|unset
-${PRODUCT} proxy`;
+${PRODUCT} proxy [restart]`;
 }
 
 function printPath() {
@@ -197,6 +197,17 @@ function install(argv) {
   console.log("Reload Cursor and enable the smarter-compact local plugin.");
 }
 
+async function proxyRestart() {
+  const port = resolveProxyPort(os.homedir(), process.env);
+  console.error(`${PRODUCT}: restarting the proxy on 127.0.0.1:${port}`);
+  const r = await restartContextProxy({ importMetaUrl: import.meta.url });
+  if (!r.ok) {
+    console.error(r.reason === "litellm-missing" ? `${PRODUCT}: ${LITELLM_MISSING}.` : `${PRODUCT}: restart failed (${r.status}: ${r.reason})`);
+    process.exit(1);
+  }
+  console.error(`${PRODUCT}: proxy listening on http://127.0.0.1:${port}${r.via ? ` (${r.via})` : ""}`);
+}
+
 function proxy() {
   const root = repoRoot();
   if (!root) {
@@ -226,6 +237,7 @@ else if (cmd === "install") install(rest);
 else if (cmd === "path") printPath();
 else if (cmd === "plugins") plugins(rest);
 else if (cmd === "context") process.exit(runContextCommand(rest, { home: os.homedir() }));
+else if (cmd === "proxy" && rest[0] === "restart") proxyRestart().catch((err) => { console.error(err?.message || err); process.exit(1); });
 else if (cmd === "proxy") proxy();
 else {
   console.error(usage());

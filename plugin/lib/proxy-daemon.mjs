@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  configDir, ensureProductEnv, PRODUCT_NAME, resolveProxyPort, ROOT_ENV, stateParent, withProxyEnvSecrets,
+  configDir, ensureProductEnv, PRODUCT, PRODUCT_NAME, resolveProxyPort, ROOT_ENV, stateParent, withProxyEnvSecrets,
 } from "./brand.mjs";
 import { contextRoot } from "./context-store.mjs";
 import { agentsPointedAtProxy, ensureKey } from "./enable.mjs";
@@ -164,6 +164,30 @@ async function dockerProxy(port, exec) {
   return name ? { name, dir: dir || null } : null;
 }
 
+/** Whether pid runs litellm; guards against signalling a pid the OS reused. */
+async function isLitellm(pid, exec, platform = process.platform) {
+  let cmdline = null;
+  if (platform === "linux") {
+    try { cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8"); } catch { cmdline = null; }
+  } else if (platform === "win32") {
+    cmdline = await exec("tasklist", ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"], 5_000);
+  } else {
+    cmdline = await exec("ps", ["-p", String(pid), "-o", "command="], 5_000);
+  }
+  return /litellm/i.test(cmdline || "");
+}
+
+/** Stop pid and its children; on Windows litellm.exe is a launcher, so the tree must go. */
+async function killTree(pid, exec, platform = process.platform) {
+  if (platform === "win32") return await exec("taskkill", ["/PID", String(pid), "/T", "/F"], 10_000) !== null;
+  try {
+    process.kill(pid, "SIGTERM");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function waitFor(want, port, fetch, ms) {
   const deadline = Date.now() + ms;
   while (Date.now() < deadline) {
@@ -186,7 +210,7 @@ async function refreshStale({ home, env, port, importMetaUrl, fetch, exec, waitM
   if (status?.version === installed) return null;
   const where = `the ${PRODUCT_NAME} proxy on port ${port}`;
   if (!status) {
-    return { status: "stale", warning: `${where} reports no version; restart it once to run ${installed}.` };
+    return { status: "stale", warning: `${where} reports no version; run \`${PRODUCT} proxy restart\` to load ${installed}.` };
   }
   const running = status.version ?? "an unknown version";
   const idleFor = now - seen(status) * 1000;
@@ -194,7 +218,7 @@ async function refreshStale({ home, env, port, importMetaUrl, fetch, exec, waitM
   const pid = ownedPid(home, status);
   if (pid) {
     if (busy) return { status: "stale", warning: `${where} runs ${running}, installed is ${installed}; it restarts once idle for ${IDLE_MS / 1000} s.` };
-    process.kill(pid, "SIGTERM");
+    await killTree(pid, exec);
     await waitFor(false, port, fetch, STOP_WAIT_MS);
     const spawned = spawnContextProxyDaemon(home, importMetaUrl, env);
     if (spawned.ok && await waitFor(true, port, fetch, waitMs)) return { status: "restarted", from: running, to: installed };
@@ -212,7 +236,7 @@ async function refreshStale({ home, env, port, importMetaUrl, fetch, exec, waitM
     }
     return { status: "stale", warning: `${where} did not restart; run docker restart ${docker.name}.` };
   }
-  return { status: "stale", warning: `${where} runs ${running}, installed is ${installed}; restart it to load the new code.` };
+  return { status: "stale", warning: `${where} runs ${running}, installed is ${installed}; run \`${PRODUCT} proxy restart\` to load it.` };
 }
 
 /** Start LiteLLM detached; logs append to `~/.config/smarter-compact/proxy.log`, rotated to `.1` at 5 MB on each start. */
@@ -242,6 +266,41 @@ export function spawnContextProxyDaemon(home, importMetaUrl, env = process.env) 
   fs.writeFileSync(proxyPidPath(home), String(child.pid), { mode: 0o600 });
   try { fs.closeSync(logFd); } catch { /* ignore */ }
   return { ok: true, pid: child.pid };
+}
+
+/**
+ * Stop the proxy on the configured port and start a fresh one. Stops only a litellm this package started
+ * (proxy.pid) or a Docker container publishing the port; any other listener is left alone and reported.
+ */
+export async function restartContextProxy({
+  home = os.homedir(),
+  env = process.env,
+  importMetaUrl,
+  waitMs = DEFAULT_WAIT_MS,
+  fetch = globalThis.fetch,
+  exec = run,
+} = {}) {
+  const port = resolveProxyPort(home, env);
+  if (await probeContextProxy(port, { fetch })) {
+    let pid = null;
+    try { pid = Number.parseInt(fs.readFileSync(proxyPidPath(home), "utf8"), 10); } catch { /* none */ }
+    const owned = pid > 0 && pidAlive(pid) && await isLitellm(pid, exec);
+    if (owned) {
+      await killTree(pid, exec);
+      if (!await waitFor(false, port, fetch, STOP_WAIT_MS)) {
+        return { ok: false, status: "stop-failed", reason: `pid ${pid} still serves port ${port}` };
+      }
+    } else {
+      const docker = await dockerProxy(port, exec);
+      if (!docker) return { ok: false, status: "foreign", reason: `port ${port} is held by a process ${PRODUCT_NAME} did not start; stop it, then rerun` };
+      const ok = await exec("docker", ["restart", docker.name], DOCKER_TIMEOUT_MS) !== null && await waitFor(true, port, fetch, waitMs);
+      return ok ? { ok: true, status: "restarted", via: `docker ${docker.name}` } : { ok: false, status: "timeout", reason: `docker restart ${docker.name} did not come back` };
+    }
+  }
+  const spawned = spawnContextProxyDaemon(home, importMetaUrl, env);
+  if (!spawned.ok) return { ok: false, status: "spawn-failed", reason: spawned.reason };
+  if (await waitFor(true, port, fetch, waitMs)) return { ok: true, status: "restarted", pid: spawned.pid };
+  return { ok: false, status: "timeout", reason: `see ${proxyLogPath(home)}` };
 }
 
 /**

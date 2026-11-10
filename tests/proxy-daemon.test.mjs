@@ -6,7 +6,9 @@ import assert from "node:assert/strict";
 import { ensureProductEnv, resolveProxyPort } from "../plugin/lib/brand.mjs";
 import { agentsPointedAtProxy, configureAgent, proxyEnvPath } from "../plugin/lib/enable.mjs";
 import { upsertEnvFile } from "../plugin/lib/file-io.mjs";
-import { ensureContextProxyRunning, litellmEnv, packageRoot, probeContextProxy } from "../plugin/lib/proxy-daemon.mjs";
+import { ensureContextProxyRunning, litellmEnv, packageRoot, probeContextProxy, restartContextProxy } from "../plugin/lib/proxy-daemon.mjs";
+import http from "node:http";
+import { once } from "node:events";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -116,7 +118,7 @@ test("a proxy on the installed version is left alone", async () => {
 test("a proxy without a status file gets a restart-once warning", async () => {
   const r = await ensureStale(staleHome(null), async () => null);
   assert.equal(r.status, "stale");
-  assert.match(r.warning, /reports no version/);
+  assert.match(r.warning, /reports no version; run `smarter-compact proxy restart`/);
 });
 
 test("a stale compose proxy restarts when idle and its checkout matches", async () => {
@@ -152,4 +154,55 @@ test("a compose proxy whose checkout is behind is not restarted", async () => {
   const r = await ensureStale(home, async (cmd, args) => { calls.push(args[0]); return `sc-proxy\t${checkout}\n`; });
   assert.match(r.warning, /update that checkout/);
   assert.deepEqual(calls, ["ps"]);
+});
+
+// A fake litellm: a node HTTP server answering /health/liveliness on --port; "litellm" stays in its cmdline.
+function fakeLitellmBin() {
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), "sc-fake-ll-"));
+  const server = path.join(bin, "server.mjs");
+  fs.writeFileSync(server, 'import http from "node:http";\nconst port = Number(process.argv[process.argv.indexOf("--port") + 1]);\nhttp.createServer((q, r) => r.end("ok")).listen(port, "127.0.0.1");\n');
+  fs.writeFileSync(path.join(bin, "litellm"), `#!/bin/sh\nexec "${process.execPath}" "${server}" litellm "$@"\n`, { mode: 0o755 });
+  return bin;
+}
+
+async function freePort() {
+  const srv = http.createServer().listen(0, "127.0.0.1");
+  await once(srv, "listening");
+  const { port } = srv.address();
+  srv.close();
+  return port;
+}
+
+const SH_ONLY = process.platform === "win32" && "fake litellm is a sh script";
+
+test("proxy restart starts, then replaces, the proxy it owns", { skip: SH_ONLY }, async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "sc-restart-"));
+  const port = await freePort();
+  const env = { ...process.env, PATH: `${fakeLitellmBin()}${path.delimiter}${process.env.PATH}`, CONTEXT_PROXY_PORT: String(port) };
+  const opts = { home, env, importMetaUrl: import.meta.url, waitMs: 5_000, exec: async () => null };
+  const first = await restartContextProxy(opts);
+  assert.equal(first.ok, true, first.reason);
+  const second = await restartContextProxy(opts);
+  try {
+    assert.equal(second.ok, true, second.reason);
+    assert.notEqual(second.pid, first.pid);
+    assert.throws(() => process.kill(first.pid, 0));
+    assert.equal(await probeContextProxy(port), true);
+  } finally {
+    process.kill(second.pid, "SIGTERM");
+  }
+});
+
+test("proxy restart leaves a listener it did not start alone", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "sc-restart-"));
+  const srv = http.createServer((q, r) => r.end("ok")).listen(0, "127.0.0.1");
+  await once(srv, "listening");
+  try {
+    const env = { ...process.env, CONTEXT_PROXY_PORT: String(srv.address().port) };
+    const r = await restartContextProxy({ home, env, importMetaUrl: import.meta.url, exec: async () => null });
+    assert.deepEqual([r.ok, r.status], [false, "foreign"]);
+    assert.equal(await probeContextProxy(srv.address().port), true);
+  } finally {
+    srv.close();
+  }
 });

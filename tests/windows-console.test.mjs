@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { spawnContextProxyDaemon } from "../plugin/lib/proxy-daemon.mjs";
+import { probeContextProxy, restartContextProxy, spawnContextProxyDaemon } from "../plugin/lib/proxy-daemon.mjs";
 
 const WIN = process.platform === "win32";
 const WAIT_MS = 20_000;
@@ -47,9 +47,26 @@ public static class FakeLitellm {
   }
 }`;
 
-function buildFake(dir) {
+// Fake litellm for restart: like uv's launcher, the exe only starts a child; the child serves /health on --port.
+const SERVER_CS = `
+using System; using System.Diagnostics; using System.Net; using System.Net.Sockets; using System.Text;
+public static class FakeLitellmServer {
+  public static void Main(string[] args) {
+    if (args.Length > 0 && args[0] == "--child") {
+      int port = int.Parse(args[Array.IndexOf(args, "--port") + 1]);
+      var l = new TcpListener(IPAddress.Loopback, port); l.Start();
+      byte[] ok = Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nok");
+      while (true) { using (var c = l.AcceptTcpClient()) { var st = c.GetStream(); st.Read(new byte[4096], 0, 4096); st.Write(ok, 0, ok.Length); } }
+    }
+    var psi = new ProcessStartInfo(Process.GetCurrentProcess().MainModule.FileName, "--child " + string.Join(" ", args));
+    psi.UseShellExecute = false; psi.CreateNoWindow = true;
+    Process.Start(psi).WaitForExit();
+  }
+}`;
+
+function buildFake(dir, source = FAKE_CS) {
   const src = path.join(dir, "fake.cs");
-  fs.writeFileSync(src, FAKE_CS);
+  fs.writeFileSync(src, source);
   const exe = path.join(dir, "litellm.exe");
   const ps = `Add-Type -TypeDefinition (Get-Content -Raw '${src}') -OutputAssembly '${exe}' -OutputType ConsoleApplication`;
   const r = spawnSync("powershell.exe", ["-NoProfile", "-Command", ps], { encoding: "utf8", windowsHide: true });
@@ -89,4 +106,25 @@ test("detached proxy spawn gets no visible console window on Windows (#1)", { sk
   const r = spawnContextProxyDaemon(home, import.meta.url, env);
   assert.equal(r.ok, true, r.reason);
   assert.equal(await consoleState(bin, r.pid), "hidden");
+});
+
+test("proxy restart stops the whole litellm.exe tree on Windows", { skip: !WIN && "Windows only" }, async () => {
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), "sc-fake-server-"));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "sc-win-home-"));
+  buildFake(bin, SERVER_CS);
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.toUpperCase() !== "PATH"));
+  env.Path = `${bin};${process.env.PATH}`;
+  env.CONTEXT_PROXY_PORT = "4187";
+  const opts = { home, env, importMetaUrl: import.meta.url, waitMs: WAIT_MS };
+  const first = await restartContextProxy(opts);
+  assert.equal(first.ok, true, first.reason);
+  // A launcher-only kill leaves the child on the port, and restart reports stop-failed.
+  const second = await restartContextProxy(opts);
+  try {
+    assert.equal(second.ok, true, second.reason);
+    assert.notEqual(second.pid, first.pid);
+    assert.equal(await probeContextProxy(4187), true);
+  } finally {
+    spawnSync("taskkill", ["/T", "/F", "/PID", String(second.pid ?? first.pid)], { windowsHide: true });
+  }
 });
