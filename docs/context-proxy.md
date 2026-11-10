@@ -147,6 +147,7 @@ Claude Code and Codex show the warning as a session-start system message; `enabl
 - **One LiteLLM worker.** Session locking is in-process; do not run multiple workers.
 - **Fail open.** Rewrite errors log one line and forward the request untrimmed; `fail_open` events in the session DB.
 - **Codex pass-through** requires the dev LiteLLM build noted above.
+- **No Claude Code Remote Control.** Claude Code blocks Remote Control while `ANTHROPIC_BASE_URL` points at the proxy; run `smarter-compact disable claude` first ([quick start](quick-start.md#claude-code)).
 - **OpenAI-format clients** need explicit routes in `proxy/config.yaml` unless using Anthropic models (see comments in that file).
 
 Overview: [how it works](context-management.md). Agent matrix: [agents](agents.md).

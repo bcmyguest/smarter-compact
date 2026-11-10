@@ -49,6 +49,8 @@ smarter-compact enable claude
 
 Start a new `claude` session after `enable`. The marketplace install registers the search tools and the compact command. `enable` points `ANTHROPIC_BASE_URL` at `http://127.0.0.1:4101`, starts the LiteLLM proxy in the background when needed, and stores a key in `~/.config/smarter-compact/proxy.env` (mode 600). Session hooks also ensure the proxy is up. `enable` saves any previous base URL in `~/.config/smarter-compact/proxy-backup.json`, and `smarter-compact disable claude` restores it. Logs: `~/.config/smarter-compact/proxy.log`. Set `SMARTER_COMPACT_AUTO_PROXY=0` to disable auto-start.
 
+**Remote Control.** Claude Code refuses [Remote Control](https://code.claude.com/docs/en/remote-control) while `ANTHROPIC_BASE_URL` points anywhere but `api.anthropic.com` ("Remote Control is only available when using Claude via api.anthropic.com"). The `env` block in `~/.claude/settings.json` overrides the shell, so `unset` does not help. Run `smarter-compact disable claude` before `claude remote-control` or `/remote-control`, and `smarter-compact enable claude` afterwards. Sessions started while disabled bypass the proxy and are not trimmed.
+
 On Claude Code 2.1.275 or later you can install the plugin from inside Claude Code instead of running `plugins add`:
 
 ```
