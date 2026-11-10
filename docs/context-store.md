@@ -217,7 +217,7 @@ One writer per session at a time is the design: the proxy serializes a session u
 | Parameter | Effect |
 | --- | --- |
 | `query` | Words; each becomes an FTS5 string (`"word"`), so matching is case-insensitive and by token (`KEY-7` matches the tokens `key 7`). A row matches when it contains any word; rows with more words rank first, then by BM25 |
-| `pattern` | JavaScript regex, at most 200 characters, tested against each row's first 20000 characters (row hits) and each line's first 20000 characters (line count), within a 1 s budget |
+| `pattern` | JavaScript regex, at most 200 characters, tested against each whole row (row hits) and each line (line count), within a 1 s budget; a hit returns a 400-character excerpt around the match |
 | `role` | `user`, `assistant`, `tool`, a list, or `all`; default `["user", "tool"]` |
 | `in_context` | `true`: rows still in context; `false`: trimmed rows; omitted: both |
 | `mode` | `hybrid` (default when the session has vectors) or `lexical` |

@@ -32,7 +32,6 @@ const BLOB_PAGE_CHARS = 12_000;
 const BLOB_MAX_CHARS = 100_000; // ceiling for an explicit max_chars
 const BLOB_ID_RE = /^[0-9a-f]{16}$/;
 const PATTERN_MAX_CHARS = 200;
-const PATTERN_ROW_CHARS = 20_000;
 const PATTERN_BUDGET_MS = 1000;
 const CONTEXT_MAX = 5;
 const ROLES = ["user", "assistant", "tool"];
@@ -82,7 +81,7 @@ export const CONTEXT_STORE_MCP_TOOLS = [
         query: { type: "string", description: "Words to find (case-insensitive whole words; rows with more words rank first). Omit when passing pattern" },
         pattern: {
           type: "string",
-          description: `JavaScript regex source, at most ${PATTERN_MAX_CHARS} characters; tested against each row's first ${PATTERN_ROW_CHARS} characters and against every line. Omit when passing query`,
+          description: `JavaScript regex source, at most ${PATTERN_MAX_CHARS} characters; tested against each whole row and every line. Omit when passing query`,
         },
         ignore_case: { type: "boolean", description: "Match pattern case-insensitively (default false)" },
         context: { type: "number", description: `Neighbouring rows of the same conversation to return before and after each hit, 0-${CONTEXT_MAX} (default 0)` },
@@ -447,15 +446,14 @@ function ftsTerms(query) {
 }
 
 /**
- * Regex hits as [rowIndex, offset] pairs over the first PATTERN_ROW_CHARS of each text, and matching lines
+ * Regex hits as [rowIndex, offset] pairs over each whole text, and matching lines
  * (lines[i]: the lines-table rows of texts[i]) added to counter.lines. Runs in a vm context so V8 interrupts catastrophic backtracking at the deadline;
  * hits and lines counted before the deadline are kept. Returns whether the deadline cut the scan short.
  */
 function patternScan(re, texts, lines, deadline, out, counter) {
   const timeout = Math.floor(deadline - Date.now());
   if (timeout < 1) return true;
-  const cut = (t) => t.slice(0, PATTERN_ROW_CHARS);
-  const sandbox = { re, texts: texts.map(cut), lines: lines.map((group) => group.map(cut)), out, counter };
+  const sandbox = { re, texts, lines, out, counter };
   try {
     vm.runInNewContext(
       // Row by row, its lines with it, so a deadline keeps the counts of every row scanned before it.

@@ -144,6 +144,22 @@ test("search: a real session id searches only that session, and says nothing ext
   assert.equal(r.session_id_note, undefined, "no note when the id was honourable");
 });
 
+test("search: a pattern matches past the first 20,000 characters of a long row", async () => {
+  const s = store({ cwd: "/work", sids: [] });
+  const dir = path.join(s.opts.env.SMARTER_COMPACT_STATE_DIR, "context", "sessions");
+  fs.writeFileSync(path.join(dir, "ses_long.json"), JSON.stringify({ sid: "ses_long", cwd: "/work", registered_at: new Date(1700000000000).toISOString() }));
+  // A 70,000-character tool log with the match near its end, the shape a real session archived.
+  const log = Array.from({ length: 1000 }, (_, i) => `line ${i} ${"x".repeat(60)}`).join("\n").replace("line 900 ", "line 900 NEEDLE_LATE ");
+  assert.ok(log.indexOf("NEEDLE_LATE") > 60_000);
+  const db = openSession(path.join(dir, "ses_long.db"));
+  db.sync([{ fingerprint: "fp-long", thread: "t", role: "tool", kind: "tool", name: null, text: log, blob_id: null, keep: true }], null, "2023-11-14T22:13:20Z");
+  db.close();
+  const r = await callContextStoreTool("smart_compact_search", { session_id: "ses_long", pattern: "NEEDLE_LATE" }, s.opts);
+  assert.equal(r.line_matches, 1);
+  assert.equal(r.total_matches, 1, "a counted line match must come with its row");
+  assert.match(JSON.stringify(r), /NEEDLE_LATE/, "the excerpt must show the match");
+});
+
 test("search: omitting session_id still searches the workspace", async () => {
   const s = store({ cwd: "/work", sids: ["ses_one", "ses_two"] });
   const r = await callContextStoreTool("smart_compact_search", { pattern: "COUPLED_WCS_HEADER" }, s.opts);
