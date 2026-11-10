@@ -15,7 +15,7 @@ import { onPath } from "./litellm.mjs";
 import { rotateLog } from "./log-rotate.mjs";
 
 const PROBE_TIMEOUT_MS = 1500;
-const DEFAULT_WAIT_MS = 12_000;
+const DEFAULT_WAIT_MS = 30_000; // a cold litellm start took 14 s on Linux
 // A stale proxy restarts only after this long without a request, so an open session's call is not cut off.
 const IDLE_MS = 60_000;
 const STOP_WAIT_MS = 5_000;

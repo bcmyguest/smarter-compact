@@ -154,8 +154,8 @@ async function enable(argv, enabled) {
   const bad = results.filter((r) => !r.ok);
 
   if (enabled && ok.length) {
-    info("starting the proxy if needed (waits up to 12s for it to listen)");
-    const proxy = await ensureContextProxyRunning({ importMetaUrl: import.meta.url, waitMs: 12_000 });
+    info("starting the proxy if needed (waits up to 30s for it to listen)");
+    const proxy = await ensureContextProxyRunning({ importMetaUrl: import.meta.url });
     if (!proxy.ok) {
       for (const r of ok) console.log(r.message);
       console.error(proxy.reason === "litellm-missing"
