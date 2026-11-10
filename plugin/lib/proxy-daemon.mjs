@@ -14,7 +14,7 @@ import { agentsPointedAtProxy, ensureKey } from "./enable.mjs";
 import { onPath } from "./litellm.mjs";
 import { rotateLog } from "./log-rotate.mjs";
 
-const PROBE_TIMEOUT_MS = 1500;
+const PROBE_TIMEOUT_MS = 5000; // a cold first fetch on a Windows runner took over 1.5 s
 const DEFAULT_WAIT_MS = 30_000; // a cold litellm start took 14 s on Linux
 // A stale proxy restarts only after this long without a request, so an open session's call is not cut off.
 const IDLE_MS = 60_000;
