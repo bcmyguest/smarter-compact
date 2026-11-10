@@ -17,7 +17,7 @@ function runCli(args) {
     let out = "";
     let child;
     try {
-      child = spawn(process.execPath, [CLI, ...args], { stdio: ["ignore", "pipe", "ignore"] });
+      child = spawn(process.execPath, [CLI, ...args], { stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
     } catch {
       resolve("");
       return;

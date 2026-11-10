@@ -34,7 +34,7 @@ export function onPath(bin, env = process.env) {
 /** Version the first `litellm` on PATH reports (`LiteLLM: Current Version = X`), or null. */
 export function litellmVersion(env = process.env) {
   if (!onPath("litellm", env)) return null;
-  const r = spawnSync("litellm", ["--version"], { env, encoding: "utf8", timeout: VERSION_TIMEOUT_MS });
+  const r = spawnSync("litellm", ["--version"], { env, encoding: "utf8", timeout: VERSION_TIMEOUT_MS, windowsHide: true });
   return /Current Version = (\S+)/.exec(`${r.stdout || ""}${r.stderr || ""}`)?.[1] ?? null;
 }
 
@@ -57,13 +57,13 @@ export function ensureLitellm({ env = process.env, log = () => {} } = {}) {
 
   log(`installing ${LITELLM_SPEC} with uv tool install (${found ? `found ${found}` : "litellm not on PATH"})`);
   const install = spawnSync("uv", ["tool", "install", "--force", LITELLM_SPEC], {
-    env, stdio: ["ignore", 2, 2], timeout: INSTALL_TIMEOUT_MS,
+    env, stdio: ["ignore", 2, 2], timeout: INSTALL_TIMEOUT_MS, windowsHide: true,
   });
   if (install.status !== 0) return { ok: false, reason: "install-failed", found };
 
   const version = litellmVersion(env);
   if (current(version)) return { ok: true, status: "installed", version };
-  const uvBin = spawnSync("uv", ["tool", "dir", "--bin"], { env, encoding: "utf8" }).stdout?.trim() || null;
+  const uvBin = spawnSync("uv", ["tool", "dir", "--bin"], { env, encoding: "utf8", windowsHide: true }).stdout?.trim() || null;
   return { ok: false, reason: version ? "shadowed" : "not-on-path", found: version, path: whichOnPath("litellm", env), uvBin };
 }
 

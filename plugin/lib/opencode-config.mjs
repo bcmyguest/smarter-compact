@@ -6,7 +6,7 @@ import { writeFileAtomic } from "./file-io.mjs";
 /** OpenCode major version from `opencode --version`; any failure counts as 1. */
 export function opencodeMajorVersion({ env = process.env, spawn = spawnSync } = {}) {
   try {
-    const r = spawn("opencode", ["--version"], { env, encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "ignore"] });
+    const r = spawn("opencode", ["--version"], { env, encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
     const match = r?.status === 0 ? /(\d+)\.\d+/.exec(String(r.stdout || "")) : null;
     const major = match ? Number(match[1]) : 1;
     return major >= 2 ? major : 1;

@@ -698,6 +698,7 @@ function runSql(args, env, cwd) {
     encoding: "utf8",
     timeout: SQL_TIMEOUT_MS,
     killSignal: "SIGKILL",
+    windowsHide: true,
     maxBuffer: 64 * 1024 * 1024,
   });
   if (child.error?.code === "ETIMEDOUT" || child.signal === "SIGKILL") {

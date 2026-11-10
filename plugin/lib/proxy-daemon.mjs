@@ -152,7 +152,7 @@ function ownedPid(home, status) {
 
 function run(cmd, args, timeout) {
   return new Promise((resolve) => {
-    execFile(cmd, args, { timeout }, (err, stdout) => resolve(err ? null : String(stdout)));
+    execFile(cmd, args, { timeout, windowsHide: true }, (err, stdout) => resolve(err ? null : String(stdout)));
   });
 }
 
@@ -230,6 +230,7 @@ export function spawnContextProxyDaemon(home, importMetaUrl, env = process.env) 
     child = spawn("litellm", ["--config", config, "--host", "127.0.0.1", "--port", port], {
       env: litellmEnv(home, root, port, env),
       detached: true,
+      windowsHide: true,
       stdio: ["ignore", logFd, logFd],
     });
   } catch (err) {

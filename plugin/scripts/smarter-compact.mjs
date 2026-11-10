@@ -190,7 +190,7 @@ function proxy() {
   const port = String(resolveProxyPort(os.homedir(), process.env));
   const env = litellmEnv(home, root, port, process.env);
   const config = path.join(root, "proxy", "config.yaml");
-  const child = spawn("litellm", ["--config", config, "--host", "127.0.0.1", "--port", port], { env, stdio: "inherit" });
+  const child = spawn("litellm", ["--config", config, "--host", "127.0.0.1", "--port", port], { env, stdio: "inherit", windowsHide: true });
   child.on("error", (err) => {
     console.error(err.code === "ENOENT"
       ? `${LITELLM_MISSING}, then run ${PRODUCT} proxy again.`

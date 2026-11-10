@@ -36,7 +36,7 @@ export function addPluginMarketplace(agent, root, { spawn = spawnSync } = {}) {
   const steps = pluginMarketplaceSteps(agent, root);
   if (!steps) return { ok: false, message: `unknown plugin agent ${agent}` };
   for (const [bin, ...args] of steps) {
-    const r = spawn(bin, args, { env: process.env, stdio: "inherit" });
+    const r = spawn(bin, args, { env: process.env, stdio: "inherit", windowsHide: true });
     if (r.error) {
       if (r.error.code === "ENOENT") return { ok: false, message: `${bin} not on PATH` };
       return { ok: false, message: r.error.message };

@@ -33,7 +33,7 @@ export function detectInstalledAgents(home) {
     found.push("opencode");
   } else {
     try {
-      const r = spawnSync("opencode", ["--version"], { encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "ignore"] });
+      const r = spawnSync("opencode", ["--version"], { encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
       if (r?.status === 0) found.push("opencode");
     } catch { /* not on PATH */ }
   }
