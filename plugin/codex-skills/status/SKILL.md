@@ -3,8 +3,8 @@ name: status
 description: Show Smarter Compact trims, tokens saved, and fail-opens for this machine.
 ---
 
-Run this exact command, then show the output verbatim:
+Run the installed CLI and show its output verbatim:
 
 ```
-"${PLUGIN_ROOT}/scripts/smarter-compact" status
+smarter-compact status
 ```
