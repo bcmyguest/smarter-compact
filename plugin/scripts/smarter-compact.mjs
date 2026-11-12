@@ -2,7 +2,7 @@
 /**
  * smarter-compact status | compact | enable | disable | proxy
  */
-import { spawn } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -14,7 +14,8 @@ import { installCursorPlugin } from "../lib/install-cursor.mjs";
 import { addPluginMarketplace, PLUGIN_AGENTS } from "../lib/plugins-cli.mjs";
 import { runContextCommand } from "../lib/context-config.mjs";
 import { ensureContextProxyRunning, litellmEnv, packageRoot, probeContextProxy, restartContextProxy } from "../lib/proxy-daemon.mjs";
-import { ensureLitellm, litellmProblem, LITELLM_VERSION } from "../lib/litellm.mjs";
+import { ensureLitellm, LITELLM_IMAGE, litellmProblem, LITELLM_VERSION } from "../lib/litellm.mjs";
+import { CONTAINER_NAME, proxyRuntime } from "../lib/docker-proxy.mjs";
 import { summarizeEvents } from "../lib/session-db.mjs";
 
 ensureProductEnv();
@@ -26,7 +27,13 @@ const PROXY_STATUS = {
   disabled: "proxy auto-start is off (SMARTER_COMPACT_AUTO_PROXY=0)",
   "not-needed": "no agent points at the proxy; not starting it",
 };
-const LITELLM_MISSING = `litellm is not on PATH. Run ${PRODUCT} enable, which installs litellm ${LITELLM_VERSION} with uv`;
+const LITELLM_MISSING = `Docker is not running and litellm is not on PATH. Start Docker, or run ${PRODUCT} enable, which installs litellm ${LITELLM_VERSION} with uv when Docker is absent`;
+
+function execQuiet(cmd, args, timeout) {
+  return new Promise((resolve) => {
+    execFile(cmd, args, { timeout, windowsHide: true }, (err, stdout) => resolve(err ? null : String(stdout)));
+  });
+}
 
 function repoRoot() {
   return packageRoot(import.meta.url);
@@ -137,14 +144,27 @@ async function enable(argv, enabled) {
   const autoProxy = !/^(0|false|no)$/i.test(String(process.env.SMARTER_COMPACT_AUTO_PROXY || "1").trim());
   if (enabled && autoProxy) info(`checking for a running proxy on 127.0.0.1:${port}`);
   if (enabled && autoProxy && !(await probeContextProxy(port))) {
-    info("no proxy running; checking litellm (first run can take a few seconds)");
-    const litellm = ensureLitellm({ log: info, quiet });
-    if (!litellm.ok) {
-      if (litellm.output) process.stderr.write(litellm.output);
-      console.error(`${PRODUCT}: ${litellmProblem(litellm, PRODUCT)} No agent config changed.`);
-      process.exit(1);
+    if (await proxyRuntime(process.env, execQuiet) === "docker") {
+      // The container comes back on its own after a reboot (--restart always); pull now so the first start is quick.
+      info(`no proxy running; pulling ${LITELLM_IMAGE} for the ${CONTAINER_NAME} container`);
+      const pull = spawnSync("docker", ["pull", LITELLM_IMAGE], {
+        stdio: quiet ? ["ignore", "pipe", "pipe"] : ["ignore", 2, 2], encoding: "utf8", timeout: 15 * 60_000, windowsHide: true,
+      });
+      if (pull.status !== 0) {
+        if (quiet) process.stderr.write(`${pull.stdout || ""}${pull.stderr || ""}`);
+        console.error(`${PRODUCT}: docker pull ${LITELLM_IMAGE} failed. Fix it and run ${PRODUCT} enable again, or set SMARTER_COMPACT_PROXY_RUNTIME=native to use uv. No agent config changed.`);
+        process.exit(1);
+      }
+    } else {
+      info("no proxy running; no Docker daemon, checking the native litellm (first run can take a few seconds)");
+      const litellm = ensureLitellm({ log: info, quiet });
+      if (!litellm.ok) {
+        if (litellm.output) process.stderr.write(litellm.output);
+        console.error(`${PRODUCT}: ${litellmProblem(litellm, PRODUCT)} No agent config changed.`);
+        process.exit(1);
+      }
+      info(litellm.status === "installed" ? `installed litellm ${litellm.version}` : `litellm ${litellm.version} found`);
     }
-    info(litellm.status === "installed" ? `installed litellm ${litellm.version}` : `litellm ${litellm.version} found`);
   }
   const results = targets.map((agent) => {
     info(`${enabled ? "writing" : "restoring"} ${agent} config`);
@@ -163,7 +183,9 @@ async function enable(argv, enabled) {
         : `${PRODUCT}: proxy did not start (${proxy.status}${proxy.reason ? `: ${proxy.reason}` : ""}${proxy.log ? `; see ${proxy.log}` : ""})`);
       process.exit(1);
     }
-    if (proxy.status === "started") info(`proxy listening on http://127.0.0.1:${port}`);
+    if (proxy.status === "started") {
+      info(`proxy listening on http://127.0.0.1:${port}${proxy.runtime === "docker" ? ` (docker ${CONTAINER_NAME}, restarts with Docker)` : ""}`);
+    }
     else if (proxy.status === "restarted") info(`proxy restarted, ${proxy.from} -> ${proxy.to}`);
     else info(PROXY_STATUS[proxy.status] || `proxy ${proxy.status}`);
     if (proxy.warning) console.error(`${PRODUCT}: ${proxy.warning}`);

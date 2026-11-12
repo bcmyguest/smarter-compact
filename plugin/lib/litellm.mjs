@@ -10,6 +10,8 @@ import { eq } from "@renovatebot/pep440";
 // (/backend-api/codex). Later dev builds are untested here; move the pin once a stable release carries #41522.
 export const LITELLM_VERSION = "1.109.0rc1";
 export const LITELLM_SPEC = `litellm[proxy]==${LITELLM_VERSION}`;
+// The same release as an image: the default runtime (docker-proxy.mjs). Keep in step with compose.yaml.
+export const LITELLM_IMAGE = "ghcr.io/berriai/litellm:v1.109.0-rc.1";
 export const UV_INSTALL_URL = "https://docs.astral.sh/uv/getting-started/installation/";
 // litellm imports its whole proxy stack before it prints a version.
 const VERSION_TIMEOUT_MS = 60_000;
@@ -77,7 +79,7 @@ export function ensureLitellm({ env = process.env, log = () => {}, quiet = false
 
 /** One line that says why LiteLLM is unusable and how to fix it. */
 export function litellmProblem(result, product) {
-  const docker = `or run the proxy with docker compose from a clone (docs/context-proxy.md)`;
+  const docker = `or start Docker, which ${product} uses instead when its daemon is running`;
   switch (result.reason) {
     case "uv-missing":
       return `litellm ${LITELLM_VERSION} is not on PATH${result.found ? ` (found ${result.found})` : ""} and uv is missing. Install uv (${UV_INSTALL_URL}) and run ${product} enable again, ${docker}.`;

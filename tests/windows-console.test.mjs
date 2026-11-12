@@ -115,6 +115,7 @@ test("proxy restart stops the whole litellm.exe tree on Windows", { skip: !WIN &
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.toUpperCase() !== "PATH"));
   env.Path = `${bin};${process.env.PATH}`;
   env.CONTEXT_PROXY_PORT = "4187";
+  env.SMARTER_COMPACT_PROXY_RUNTIME = "native"; // the runner has Docker; this tests the native process tree
   const opts = { home, env, importMetaUrl: import.meta.url, waitMs: WAIT_MS };
   const first = await restartContextProxy(opts);
   assert.equal(first.ok, true, first.reason);

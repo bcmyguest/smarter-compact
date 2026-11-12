@@ -41,7 +41,7 @@ test("ensure reports litellm-missing at once when litellm is not on PATH", async
   const started = Date.now();
   const r = await ensureContextProxyRunning({
     home,
-    env: { ...process.env, PATH: emptyBin, SMARTER_COMPACT_AUTO_PROXY: "1" },
+    env: { ...process.env, PATH: emptyBin, SMARTER_COMPACT_AUTO_PROXY: "1", SMARTER_COMPACT_PROXY_RUNTIME: "native" },
     importMetaUrl: import.meta.url,
     fetch: async () => { throw new Error("down"); },
   });
