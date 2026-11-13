@@ -132,7 +132,7 @@ class StoreEveryMessageTests(DbBase):
         shadow = ("_data", "_idx", "_docsize", "_config")
         names = [r[0] for r in self.query("SELECT name FROM sqlite_master WHERE type IN ('table', 'trigger') ORDER BY name")
                  if not r[0].endswith(shadow)]
-        self.assertEqual(names, ["events", "lines", "lines_fts", "lines_fts_insert", "messages", "messages_fts",
+        self.assertEqual(names, ["events", "forgotten", "lines", "lines_fts", "lines_fts_insert", "messages", "messages_fts",
                                  "messages_fts_insert", "vectors"])
 
     def test_trim_marks_rows_out_of_context_with_cut_seq(self):
@@ -535,3 +535,39 @@ class EmbeddingTests(DbBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ForgottenRowsTests(DbBase):
+    """smart_compact_forget (plugin/lib/forget.mjs) redacts a row's text and records its original dedup content key
+    in `forgotten`; the proxy's writer must match a resent original to that row instead of storing it again."""
+
+    SECRET = "sk-live-4f9a2c1d8e7b"
+
+    def _forget(self):
+        conn = sqlite3.connect(self.path())
+        try:
+            for seq, role, kind, name, text in conn.execute(
+                    "SELECT seq, role, kind, name, text FROM messages WHERE instr(text, ?) > 0", (self.SECRET,)).fetchall():
+                key = sessiondb.content_key({"role": role, "kind": kind, "name": name, "text": text})
+                conn.execute("INSERT INTO forgotten (message_seq, content_key, at) VALUES (?, ?, ?)", (seq, key, "t"))
+                conn.execute("UPDATE messages SET text = replace(text, ?, '[forgotten]') WHERE seq = ?", (self.SECRET, seq))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def test_resent_original_matches_the_forgotten_row(self):
+        msgs = history(1)
+        msgs[0]["content"][0]["text"] = f"key {self.SECRET}"
+        self.run_req(msgs)
+        self.assertEqual(self.query("SELECT count(*) FROM messages")[0][0], 4)
+        self._forget()
+        for fresh in (False, True):
+            if fresh:  # a restarted proxy rebuilds its index from the database
+                sessiondb.drop_session(self.path())
+            self.run_req(msgs)
+            self.assertEqual(self.query("SELECT count(*) FROM messages")[0][0], 4)
+            self.assertEqual(self.query("SELECT count(*) FROM messages WHERE instr(text, ?) > 0", (self.SECRET,))[0][0], 0)
+
+    def test_schema_has_the_forgotten_table(self):
+        self.run_req(history(1))
+        self.assertEqual(self.query("SELECT name FROM sqlite_master WHERE name = 'forgotten'"), [("forgotten",)])

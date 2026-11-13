@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import { withProxyEnvSecrets } from "../brand.mjs";
 import { embeddingEndpoint, queryText } from "../local-embedding.mjs";
+import { FORGET_MIN_CHARS, FORGOTTEN, forgetText } from "../forget.mjs";
 import { contextStoreEnvFromConfig } from "../context-config.mjs";
 import { contextRoot as hookContextRoot, sanitizeSessionId as hookSanitizeSessionId } from "../context-store.mjs";
 import {
@@ -166,6 +167,26 @@ export const CONTEXT_STORE_MCP_TOOLS = [
       properties: {
         hours: { type: "number", description: `Window in hours, 1-${STATUS_MAX_HOURS} (default ${EVENT_WINDOW_HOURS})` },
       },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "smart_compact_forget",
+    title: "Forget a string from the stored context",
+    description:
+      "Only when the user asks you to forget something (a pasted key, password or other secret): replace every "
+      + `occurrence of text in the stored context with ${FORGOTTEN}, in message rows, their search indexes and vectors, `
+      + "blob files and scratchpads. Pass session_id to clean one session; omit it to clean every session. It cannot "
+      + "reach copies outside the store: tell the user the text is still in your live context until it is trimmed, and in "
+      + "the agent's own transcript files. Returns how many rows, blobs and scratchpads changed.",
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    inputSchema: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: `The exact text to forget, at least ${FORGET_MIN_CHARS} characters` },
+        session_id: { type: "string", description: "One session to clean (from the [smarter-compact: …] pointer). Omit to clean every session" },
+      },
+      required: ["text"],
       additionalProperties: false,
     },
   },
@@ -622,6 +643,8 @@ async function search(args, env, cwd, opts) {
       line_matches: lineMatches,
       ...(vectorStatus ? { vectors: vectorStatus } : {}),
       ...(embeddingError ? { embedding_error: embeddingError } : {}),
+      // An empty result is a finding about where the search looked, not proof the thing never happened.
+      ...(ranked.length === 0 ? { empty_result_note: emptyResultNote(sessions, mode, roles, inContext) } : {}),
     };
     const overhead = JSON.stringify(envelope, null, 2).length;
     const results = [];
@@ -723,6 +746,31 @@ function runSql(args, env, cwd) {
 /** `<root>/scratchpad/<sid>.md`, the file the proxy reads at every trim (Store.read_scratchpad). */
 function scratchpadPath(env, sid) {
   return path.join(contextRoot(env), "scratchpad", `${sid}.md`);
+}
+
+/** What an empty search covered, in words the agent can pass on to the user. */
+export function emptyResultNote(sessions, mode, roles, inContext) {
+  const where = sessions.length === 1 ? `session ${sessions[0]}` : `${sessions.length} sessions (${sessions.join(", ") || "none"})`;
+  const how = mode === "hybrid" ? "keyword and semantic search" : "keyword search only";
+  const which = `${Array.isArray(roles) ? roles.join("/") : roles} messages${inContext === null ? "" : inContext === 1 ? " still in context" : " already trimmed"}`;
+  return `No match in ${where}, by ${how}, over ${which}. Tell the user where you looked rather than that it never happened; `
+    + "widen the search (other roles, pattern, another session) before concluding.";
+}
+
+/** smart_compact_forget: forgetText over one session or all; never echoes the text back. */
+function forget(args, env) {
+  const sessionIds = args.session_id === undefined || args.session_id === "" ? null : [sanitizeSessionId(args.session_id)];
+  const r = forgetText(contextRoot(env), args.text, { sessionIds });
+  const rows = r.sessions.reduce((n, s) => n + s.rows, 0);
+  return {
+    forgotten: rows + r.blobs + r.scratchpads > 0,
+    rows,
+    sessions_changed: r.sessions.filter((s) => s.rows > 0).map((s) => s.session_id),
+    sessions_searched: r.sessions.length,
+    blobs: r.blobs,
+    scratchpads: r.scratchpads,
+    note: "Copies outside the store are untouched: the live context until it is trimmed, and the agent's own transcript files.",
+  };
 }
 
 /** smart_compact_scratchpad: view/create/str_replace/insert on the session's pad, capped at SCRATCHPAD_MAX_CHARS. */
@@ -839,6 +887,7 @@ export async function callContextStoreTool(name, args = {}, opts = {}) {
   else if (name === "smart_compact_sql") result = runSql(args, env, opts.cwd || process.cwd());
   else if (name === "context_status") return contextStatusTool(args, env);
   else if (name === SCRATCHPAD_MCP_TOOL.name && scratchpadEnabled(env)) return scratchpad(args, env);
+  else if (name === "smart_compact_forget") return forget(args, env);
   else throw new Error(`unknown tool: ${name}`);
   // Telemetry for `smarter-compact context stats`; never affects the tool result.
   if (name === "smart_compact_search") {

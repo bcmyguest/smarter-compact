@@ -57,7 +57,7 @@ test("recall MCP server exists and lists the session-store tools", async () => {
     const tools = lines.map(toolsReply).find(Boolean);
     assert.deepEqual(
       tools.map((t) => t.name).sort(),
-      ["context_status", "smart_compact_get", "smart_compact_scratchpad", "smart_compact_search", "smart_compact_sql"],
+      ["context_status", "smart_compact_forget", "smart_compact_get", "smart_compact_scratchpad", "smart_compact_search", "smart_compact_sql"],
     );
   } finally {
     child.kill();
