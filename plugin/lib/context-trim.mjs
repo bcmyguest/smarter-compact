@@ -986,6 +986,7 @@ export function pointerText(sid, dropped, names = LEGACY_RECALL_NAMES) {
     + `You MUST call ${names.search}(session_id="${sid}", query=... or pattern=...) before relying on `
     + 'anything in them, and never claim "not found", "never received" or "no search tool" '
     + "without calling it. "
+    + "When a search finds nothing, tell the user where you looked, not that it never happened. "
     + "Dropped user turns may hold instructions or corrections that still apply: search them "
     + `(${names.search} with role="user") before changing course. `
     + "To recover a file you read earlier, search for the text you need instead of reading it again, "

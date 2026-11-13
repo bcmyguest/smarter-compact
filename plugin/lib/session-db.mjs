@@ -11,7 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { rotateLog } from "./log-rotate.mjs";
 
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 /** Version 1, executed in order on an empty database. Same strings as SCHEMA in sessiondb.py. */
 export const SCHEMA = [
   "CREATE TABLE messages (seq INTEGER PRIMARY KEY, fingerprint TEXT NOT NULL UNIQUE, thread TEXT NOT NULL, "
@@ -49,6 +49,10 @@ export const MIGRATIONS = [
   // Usage: Anthropic's cache writes by lifetime (usage.cache_creation ephemeral_1h / ephemeral_5m input tokens).
   [6, ["ALTER TABLE events ADD COLUMN cache_creation_1h_tokens INTEGER",
     "ALTER TABLE events ADD COLUMN cache_creation_5m_tokens INTEGER"]],
+  // Forget (smart_compact_forget): a redacted row keeps the dedup content key of its original text, so a request
+  // that still carries the original matches the stored row instead of storing the text again.
+  [7, ["CREATE TABLE forgotten (message_seq INTEGER PRIMARY KEY REFERENCES messages (seq), "
+    + "content_key TEXT NOT NULL, at TEXT NOT NULL)"]],
 ];
 export const EVENT_COLUMNS = ["at", "kind", "version", "location", "error", "tokens_before", "tokens_after", "dropped", "model",
   "thread_root", "trimmed", "input_tokens", "cache_read_tokens", "cache_creation_tokens", "output_tokens", "breakpoints",
@@ -202,9 +206,9 @@ export class SessionDB {
   refresh() {
     const version = this.db.prepare("PRAGMA data_version").get().data_version;
     if (version === this.dataVersion) return;
-    for (const r of this.db.prepare("SELECT seq, thread, role, kind, name, text FROM messages WHERE seq > ? ORDER BY seq")
-      .all(this.lastSeq)) {
-      this.add(r.seq, r.thread, contentKey(r));
+    for (const r of this.db.prepare("SELECT m.seq, m.thread, m.role, m.kind, m.name, m.text, f.content_key AS forgotten_key "
+      + "FROM messages m LEFT JOIN forgotten f ON f.message_seq = m.seq WHERE m.seq > ? ORDER BY m.seq").all(this.lastSeq)) {
+      this.add(r.seq, r.thread, r.forgotten_key || contentKey(r));
       this.lastSeq = r.seq;
     }
     this.flags.clear();

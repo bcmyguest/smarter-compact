@@ -109,9 +109,9 @@ A trim keeps the pinned first turn's and the reply's rows `in_context = 1`. `in_
 
 `sessions/<sid>.db` is a SQLite database, one per session, in WAL mode. The proxy (Python `sqlite3`, `proxy/smarter_compact/sessiondb.py`) and the OpenCode 2 plugin (`node:sqlite`, `cli/coding-agent/session-db.mjs`) write it; the MCP tools open it read-only. The file is created mode 600; SQLite gives `-wal` and `-shm` the same mode.
 
-### Schema (`PRAGMA user_version = 6`)
+### Schema (`PRAGMA user_version = 7`)
 
-A writer that finds `user_version = 0` creates these objects in one `BEGIN IMMEDIATE` transaction, in this order and with these exact statements (both writers share the strings, `SCHEMA` then `MIGRATIONS`; the parity test compares `sqlite_master`), then sets `user_version = 6`. A writer that finds an older version runs only the statements after it (version 2 creates the `events` table, version 3 adds its usage columns, version 4 `applied_edits`, version 5 `scratchpad_chars`, version 6 `cache_creation_1h_tokens` and `cache_creation_5m_tokens`) in the same kind of transaction; rows already stored are untouched, and older events get `NULL` in the new columns. A writer that finds a newer version leaves the file alone and logs `UnsupportedSchema`; a reader skips it. Readers (`smart_compact_*`, `context_status`) accept versions 1 to 6; a version 1 file has no `events` table, a version 2 file has no usage columns, a version 3 file has no `applied_edits`, a version 4 file has no `scratchpad_chars`, a version 5 file has no cache-write split. A schema change appends to `MIGRATIONS`, bumps `user_version` and changes this section first.
+A writer that finds `user_version = 0` creates these objects in one `BEGIN IMMEDIATE` transaction, in this order and with these exact statements (both writers share the strings, `SCHEMA` then `MIGRATIONS`; the parity test compares `sqlite_master`), then sets `user_version = 7`. A writer that finds an older version runs only the statements after it (version 2 creates the `events` table, version 3 adds its usage columns, version 4 `applied_edits`, version 5 `scratchpad_chars`, version 6 `cache_creation_1h_tokens` and `cache_creation_5m_tokens`, version 7 the `forgotten` table) in the same kind of transaction; rows already stored are untouched, and older events get `NULL` in the new columns. A writer that finds a newer version leaves the file alone and logs `UnsupportedSchema`; a reader skips it. Readers (`smart_compact_*`, `context_status`) accept versions 1 to 7; a version 1 file has no `events` table, a version 2 file has no usage columns, a version 3 file has no `applied_edits`, a version 4 file has no `scratchpad_chars`, a version 5 file has no cache-write split, a version 6 file has no `forgotten` table. A schema change appends to `MIGRATIONS`, bumps `user_version` and changes this section first.
 
 ```sql
 CREATE TABLE messages (seq INTEGER PRIMARY KEY, fingerprint TEXT NOT NULL UNIQUE, thread TEXT NOT NULL,
@@ -142,6 +142,8 @@ ALTER TABLE events ADD COLUMN scratchpad_chars INTEGER;
 -- version 6
 ALTER TABLE events ADD COLUMN cache_creation_1h_tokens INTEGER;
 ALTER TABLE events ADD COLUMN cache_creation_5m_tokens INTEGER;
+-- version 7
+CREATE TABLE forgotten (message_seq INTEGER PRIMARY KEY REFERENCES messages (seq), content_key TEXT NOT NULL, at TEXT NOT NULL);
 ```
 
 | Column | Values |
@@ -162,6 +164,7 @@ ALTER TABLE events ADD COLUMN cache_creation_5m_tokens INTEGER;
 | `messages_fts`, `lines_fts` | FTS5 (default `unicode61` tokenizer) over `messages.text` and `lines.text`; rowid = `messages.seq` / `lines.id` |
 | `vectors` | Embedding of the head of `messages.text` (first `CONTEXT_EMBEDDING_MAX_CHARS` characters, default 4000) per model: `dim` float32 values, little-endian, in `blob`. `dim = 0` with an empty `blob` marks a row skipped after repeated failures |
 | `events` | One row per trim, fail-open or model call, [below](#events) |
+| `forgotten` | One row per message [forget](#forget) redacted: the dedup content key of its original text, and when. Writers index such a row by this key instead of its stored text |
 
 ### Rows
 
@@ -228,6 +231,7 @@ One writer per session at a time is the design: the proxy serializes a session u
 | --- | --- |
 | `total_matches` | Rows that match lexically under the filters (`query`: at least one word; `pattern`: the regex matches the row) |
 | `vectors` | Background embedding progress of the searched sessions for their model: `filled` (rows with a vector), `pending` (non-blank rows still waiting), `skipped` (rows given up on). Present when `CONTEXT_EMBEDDING_MODEL` is set or a session has vectors; absent for `pattern` searches |
+| `empty_result_note` | Only when nothing matched: where the search looked (sessions, keyword or hybrid, roles, in-context filter), and that the user should be told that rather than "it never happened" |
 | `line_matches` | Exact count of `lines` rows that match under the same filters, across the whole session: every word (`lines_fts MATCH "w1" AND "w2"`) for `query`, the regex for `pattern` (`^` and `$` per line, as `grep -c`). When the pattern budget runs out the response carries the partial count and `timed_out: true` |
 
 `mode` in the response says which ranking ran. **Hybrid**: the MCP server embeds the query with the model that has the most vectors in the database (the configured `CONTEXT_EMBEDDING_MODEL` when it has vectors), takes the 50 nearest rows by brute-force cosine under the same filters, and merges them with the lexical ranking by reciprocal rank fusion (score Σ 1/(60 + rank)). Vector-only hits carry `similarity` and `matched_terms: 0`. When the query embedding fails, the response is lexical and carries `embedding_error`. `pattern` searches are always lexical.
@@ -281,11 +285,24 @@ For Ollama: `ollama pull nomic-embed-text`, then `CONTEXT_EMBEDDING_MODEL=nomic-
 
 **Failures.** A row that fails alone (batch 1) is set aside for the rest of the run and retried in later runs after rows that never failed. After 3 failures, while the endpoint works for other rows, it gets a `dim = 0` vector (`embedding skipped seq=<seq> after 3 failures`) and is never retried; nearest-neighbour search ignores it. Failure counts live in memory, so a restart resets them. When 3 single-row calls fail in a row before any row succeeds in that run, the endpoint looks down: the run stops, logs `smarter-compact: embedding failed <type> at <file:line>` (proxy) or `fail-open` (OpenCode 2 plugin), and that database waits 60 s before the next try. Python (`proxy/smarter_compact/embed.py`) and JS (`embedPending` in `cli/coding-agent/session-db.mjs`) follow the same rules.
 
+## Forget
+
+Forgets one string (a pasted key, password or other secret) without deleting its sessions: `smart_compact_forget(text=..., session_id=...)`, which the agent calls only when the user asks, or `smarter-compact context forget [--session <id>] <text|->` (`-` reads the text from stdin, keeping it out of shell history). Without a session it cleans every session. The text must be at least 4 characters.
+
+- **What changes.** Every occurrence of the text becomes `[forgotten]` in `messages.text`, in the row's `lines` (rebuilt, since the text may span several), in `messages_fts` and `lines_fts` (FTS5 `delete` with the old text, then the new text, then `optimize` so the old terms leave the index), in every blob file under `blobs/` (blobs are shared across sessions, so all of them are checked; the file keeps its id) and in the session's scratchpad. The row's vectors are deleted and re-embedded from the redacted text by the next background run.
+- **What stays.** The row's `seq` and chained fingerprint. Its original dedup content key goes to the `forgotten` table, so a request that still carries the original text (it may still be in the live context) matches the stored row instead of storing the text again, in both writers and after a restart.
+- **On disk.** The connection runs with `PRAGMA secure_delete = ON` and checkpoints the WAL (`wal_checkpoint(TRUNCATE)`) afterwards, so the old bytes are zeroed rather than left in free pages.
+- **Out of reach.** The agent's live context until a trim drops the turn, the agent's own transcript files (`~/.claude/projects/*.jsonl` for Claude Code), provider-side logs and backups. The tool's result says so.
+
+The result counts rows, sessions changed, blobs and scratchpads; it never echoes the text.
+
 ## Retention
 
 `CONTEXT_STORE_TTL_DAYS` (default 30; `0` keeps everything). At start, the proxy (on a daemon thread) and the MCP server sweep `sessions/`, at most once a day: when `.ttl-stamp` is older than 24 h or missing, they touch it and delete every session whose newest file is older than the TTL. A session's files are grouped by suffix (`.db`, `.db-wal`, `.db-shm`, `.json`, `.trim.json`, `.force`, `.log.jsonl`); dot files and other names are left alone. After session cleanup, the same pass deletes orphaned `blobs/<id>.txt` files that no remaining `messages.blob_id` references and that are not the blob id of a remaining `tool_result` row's text (the blob a cleared result's placeholder names), nor of a string in a remaining `tool_use` row's input long enough to be cleared (the blob a cleared input's placeholder names; blobs are content-addressed and shared across sessions). If any remaining session database cannot be opened, the blob pass is skipped for that run. A writer that finds its cached database deleted or replaced reopens it on the next request.
 
 **Contents.** The store holds tool output verbatim, unredacted, as Claude Code's own `~/.claude/projects/*.jsonl` transcripts do; redaction would break exact recall of values such as keys. `sessions/` and `blobs/` are mode 700, session files mode 600.
+
+**Forget one string.** See [Forget](#forget): a pasted key or password, redacted everywhere in the store, without dropping the session.
 
 **Purge one session now.** Delete its files: `rm sessions/<sid>.*` under the context root. Its blobs stay in `blobs/` until the next daily sweep finds them unreferenced; to remove them at once, delete `.ttl-stamp` and start the MCP server or proxy.
 
@@ -316,7 +333,7 @@ It is a constant (`STANDING_INSTRUCTION` in `proxy/smarter_compact/core.py` and 
 Pointer note added at the cut turn after a trim ([note placement](#note-placement)):
 
 ```
-[smarter-compact: continuing session <sid>; <n> earlier messages are NOT in your context. Older turns were moved out to save space, so a gap in what you see (missing batches, lines, keys) is in them. Continue the task from where you were. The tools smart_compact_search and smart_compact_sql are available to you in this request. You MUST call smart_compact_search(session_id="<sid>", query=... or pattern=...) before relying on anything in them, and never claim "not found", "never received" or "no search tool" without calling it. Dropped user turns may hold instructions or corrections that still apply: search them (smart_compact_search with role="user") before changing course. To recover a file you read earlier, search for the text you need instead of reading it again, and re-read only the lines you still lack (offset/limit). Every message of this session is stored and queryable with smart_compact_search and smart_compact_sql(session_id="<sid>", sql=...).]
+[smarter-compact: continuing session <sid>; <n> earlier messages are NOT in your context. Older turns were moved out to save space, so a gap in what you see (missing batches, lines, keys) is in them. Continue the task from where you were. The tools smart_compact_search and smart_compact_sql are available to you in this request. You MUST call smart_compact_search(session_id="<sid>", query=... or pattern=...) before relying on anything in them, and never claim "not found", "never received" or "no search tool" without calling it. When a search finds nothing, tell the user where you looked, not that it never happened. Dropped user turns may hold instructions or corrections that still apply: search them (smart_compact_search with role="user") before changing course. To recover a file you read earlier, search for the text you need instead of reading it again, and re-read only the lines you still lack (offset/limit). Every message of this session is stored and queryable with smart_compact_search and smart_compact_sql(session_id="<sid>", sql=...).]
 ```
 
 It names no file path, so the proxy (in its container) and the OpenCode 2 plugin (on the host) produce the same bytes.

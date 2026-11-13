@@ -15,7 +15,7 @@ from pathlib import Path
 
 from .tokens import fingerprint
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 # Version 1, executed in order on an empty database. Same strings as SCHEMA in cli/coding-agent/session-db.mjs.
 SCHEMA = (
     "CREATE TABLE messages (seq INTEGER PRIMARY KEY, fingerprint TEXT NOT NULL UNIQUE, thread TEXT NOT NULL, "
@@ -51,6 +51,10 @@ MIGRATIONS = (
     # Usage: Anthropic's cache writes by lifetime (usage.cache_creation ephemeral_1h / ephemeral_5m input tokens).
     (6, ("ALTER TABLE events ADD COLUMN cache_creation_1h_tokens INTEGER",
          "ALTER TABLE events ADD COLUMN cache_creation_5m_tokens INTEGER")),
+    # Forget (smart_compact_forget): a redacted row keeps the dedup content key of its original text, so a request
+    # that still carries the original matches the stored row instead of storing the text again.
+    (7, ("CREATE TABLE forgotten (message_seq INTEGER PRIMARY KEY REFERENCES messages (seq), "
+         "content_key TEXT NOT NULL, at TEXT NOT NULL)",)),
 )
 EVENT_COLUMNS = ("at", "kind", "version", "location", "error", "tokens_before", "tokens_after", "dropped", "model",
                  "thread_root", "trimmed", "input_tokens", "cache_read_tokens", "cache_creation_tokens", "output_tokens",
@@ -191,9 +195,10 @@ class SessionDB:
         version = self.conn.execute("PRAGMA data_version").fetchone()[0]
         if version == self.data_version:
             return
-        for seq, thread, role, kind, name, text in self.conn.execute(
-                "SELECT seq, thread, role, kind, name, text FROM messages WHERE seq > ? ORDER BY seq", (self.last_seq,)):
-            self._add(seq, thread, content_key({"role": role, "kind": kind, "name": name, "text": text}))
+        for seq, thread, role, kind, name, text, forgotten_key in self.conn.execute(
+                "SELECT m.seq, m.thread, m.role, m.kind, m.name, m.text, f.content_key FROM messages m "
+                "LEFT JOIN forgotten f ON f.message_seq = m.seq WHERE m.seq > ? ORDER BY m.seq", (self.last_seq,)):
+            self._add(seq, thread, forgotten_key or content_key({"role": role, "kind": kind, "name": name, "text": text}))
             self.last_seq = seq
         self.flags.clear()
         self.flags.update(self.conn.execute("SELECT seq, in_context FROM messages"))

@@ -293,6 +293,7 @@ def pointer_text(sid, dropped, names=None):
         f'You MUST call {names["search"]}(session_id="{sid}", query=... or pattern=...) before relying on '
         f'anything in them, and never claim "not found", "never received" or "no search tool" '
         f"without calling it. "
+        f"When a search finds nothing, tell the user where you looked, not that it never happened. "
         f"Dropped user turns may hold instructions or corrections that still apply: search them "
         f'({names["search"]} with role="user") before changing course. '
         f"To recover a file you read earlier, search for the text you need instead of reading it again, "
