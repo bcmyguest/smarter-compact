@@ -10,8 +10,12 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from litellm.integrations.custom_logger import CustomLogger  # noqa: E402
+try:
+    from litellm.llms.custom_llm import CustomLLM  # noqa: E402
+except ImportError:  # unit tests stub litellm with only CustomLogger
+    CustomLLM = object
 
-from smarter_compact import Settings, process_request, process_usage, startup  # noqa: E402
+from smarter_compact import Settings, local_embed, process_request, process_usage, startup  # noqa: E402
 from smarter_compact.core import STREAM_TAIL_BYTES, note_stream_edits  # noqa: E402
 
 
@@ -52,3 +56,22 @@ if _settings.enabled and _settings.server_clear:
 startup()
 
 handler = SmarterCompactHook()
+
+
+class LocalEmbeddings(CustomLLM):
+    """`litellm_settings.custom_provider_map`: serves the built-in model (smarter_compact.local_embed) on
+    /v1/embeddings as `smarter-compact-embed`, so the MCP server embeds search queries with the same model."""
+
+    def embedding(self, model, input, model_response, *args, **kwargs):
+        texts = [input] if isinstance(input, str) else list(input)
+        vectors = local_embed.embed(texts)
+        model_response.model = local_embed.LOCAL_MODEL
+        model_response.object = "list"
+        model_response.data = [{"object": "embedding", "index": i, "embedding": v} for i, v in enumerate(vectors)]
+        return model_response
+
+    async def aembedding(self, model, input, model_response, *args, **kwargs):
+        return await asyncio.to_thread(self.embedding, model, input, model_response)
+
+
+embed_handler = LocalEmbeddings()

@@ -18,6 +18,10 @@
 # (PR #41522, in the pinned dev image) forwards the ChatGPT bearer to chatgpt.com; the client sends the LiteLLM key
 # in x-litellm-api-key. The hook sees those calls as call type pass_through_endpoint.
 model_list:
+  # Built-in embedding model for semantic search (proxy/smarter_compact/local_embed.py), served on /v1/embeddings.
+  - model_name: smarter-compact-embed
+    litellm_params:
+      model: smarter-compact/bge-small-en-v1.5
   - model_name: "anthropic/*"
     litellm_params:
       model: "anthropic/*"
@@ -28,6 +32,9 @@ model_list:
 litellm_settings:
   # Resolved relative to this file: proxy/smarter_compact_hook.py
   callbacks: smarter_compact_hook.handler
+  custom_provider_map:
+    - provider: smarter-compact
+      custom_handler: smarter_compact_hook.embed_handler
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

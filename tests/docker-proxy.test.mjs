@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { configureAgent } from "../plugin/lib/enable.mjs";
 import {
-  CONTAINER_NAME, containerEnv, containerUrl, dockerRunArgs, ensureContainer, proxyRuntime,
+  CONTAINER_NAME, containerEnv, containerUrl, dockerRunArgs, ensureContainer, hostNetwork, proxyRuntime,
 } from "../plugin/lib/docker-proxy.mjs";
 import { LITELLM_IMAGE } from "../plugin/lib/litellm.mjs";
 import { ensureContextProxyRunning, restartContextProxy } from "../plugin/lib/proxy-daemon.mjs";
@@ -22,7 +22,7 @@ function fakeDocker({ daemon = true, container = null, published = null } = {}) 
     if (cmd !== "docker" || !daemon) return null;
     switch (args[0]) {
       case "info": return "27.0.0\n";
-      case "inspect": return container ? `${container.running}\t${container.version}\t${container.root}\t${container.port}\n` : null;
+      case "inspect": return container ? `${container.running}\t${container.version}\t${container.root}\t${container.port}\t${container.network ?? ""}\n` : null;
       case "ps": return published ? `${published}\t\n` : "";
       default: return "ok\n";
     }
@@ -61,14 +61,30 @@ test("containerEnv keeps proxy keys only and sets the container paths", () => {
   assert.equal("PYTHONPATH" in env, false);
 });
 
+test("containerEnv on the host network leaves loopback URLs alone", () => {
+  const env = containerEnv({ ANTHROPIC_BASE_URL: "http://127.0.0.1:9000" }, 4101, { host: true });
+  assert.equal(env.ANTHROPIC_BASE_URL, "http://127.0.0.1:9000");
+  assert.equal("CONTEXT_EMBEDDING_URL" in env, false); // settings.py's 127.0.0.1:11434 default is the host's Ollama
+});
+
+test("dockerRunArgs on Linux uses the host network and binds the proxy port on loopback", () => {
+  const args = dockerRunArgs({ root: "/pkg", port: 4101, version: "1.2.3", state: "/st", containerEnvKeys: [], platform: "linux" });
+  const s = args.join(" ");
+  assert.match(s, /--network host/);
+  assert.match(s, /--host 127\.0\.0\.1 --port 4101$/);
+  assert.match(s, /smarter-compact\.network=host/);
+  assert.equal(args.includes("-p"), false);
+});
+
 test("dockerRunArgs restarts always, binds loopback and keeps secrets off argv", () => {
   const args = dockerRunArgs({
     root: "/pkg", port: 4101, version: "1.2.3", state: "/st", containerEnvKeys: ["LITELLM_MASTER_KEY"],
-    platform: "linux", ids: { uid: 1000, gid: 1000 },
+    platform: "darwin", ids: { uid: 1000, gid: 1000 },
   });
   const s = args.join(" ");
   assert.match(s, /--restart always/);
   assert.match(s, /-p 127\.0\.0\.1:4101:4000/);
+  assert.match(s, /--port 4000$/);
   assert.ok(s.includes(`-v ${path.join("/pkg", "proxy")}:/app/proxy:ro`), s); // host path in the platform's form
   assert.match(s, /-v \/st:\/state/);
   assert.match(s, /--user 1000:1000/);
@@ -79,7 +95,8 @@ test("dockerRunArgs restarts always, binds loopback and keeps secrets off argv",
 });
 
 test("ensureContainer leaves a running container for this version alone (it may still be booting)", async () => {
-  const d = fakeDocker({ container: { running: true, version: "1.2.3", root: "/pkg", port: "4101" } });
+  const network = hostNetwork() ? "host" : "bridge";
+  const d = fakeDocker({ container: { running: true, version: "1.2.3", root: "/pkg", port: "4101", network } });
   const r = await ensureContainer({ home: home(), env: {}, root: "/pkg", port: "4101", version: "1.2.3", nativeEnv: {}, exec: d.exec });
   assert.equal(r.status, "running");
   assert.deepEqual(d.verbs(), ["inspect"]);

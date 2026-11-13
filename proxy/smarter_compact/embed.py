@@ -5,7 +5,8 @@ no vector for the configured model through an OpenAI-compatible POST <url>/embed
 go first, newest first. Batches adapt to the endpoint: they start at START_BATCH, double while a call takes under
 GROW_FRACTION of its timeout, and halve on a failure down to 1. A row that fails alone MAX_FAILURES times is skipped
 and recorded as a dim-0 vector. Errors are logged (type and location only) and an endpoint that keeps failing is
-retried after RETRY_S. Stdlib only; cli/coding-agent/session-db.mjs embeds the same way.
+retried after RETRY_S. Stdlib only, except the built-in model (local_embed: numpy, tokenizers), which is imported
+on first use; cli/coding-agent/session-db.mjs embeds the same way.
 """
 
 import json
@@ -17,6 +18,7 @@ import traceback
 import urllib.parse
 import urllib.request
 
+from . import local_embed
 from .sessiondb import BUSY_TIMEOUT_MS, pack_vector
 from .settings import DEFAULT_EMBEDDING_MAX_CHARS as DEFAULT_MAX_CHARS
 from .settings import DEFAULT_EMBEDDING_TIMEOUT_S as DEFAULT_TIMEOUT_S
@@ -139,6 +141,14 @@ def embed_pending(path, model, url, api_key="", embed=urllib_embed, *, state=Non
         conn.close()
 
 
+def default_embed(url, model, api_key, texts, timeout=DEFAULT_TIMEOUT_S):
+    """The built-in model in process (no HTTP, so no URL to reach from inside a container); any other model through
+    the OpenAI-compatible endpoint."""
+    if model == local_embed.LOCAL_MODEL:
+        return local_embed.embed(texts)
+    return urllib_embed(url, model, api_key, texts, timeout)
+
+
 def _insert(conn, rows):
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -152,7 +162,7 @@ def _insert(conn, rows):
 class Embedder:
     """One daemon thread; notify() queues a database path and never blocks on the network."""
 
-    def __init__(self, embed=urllib_embed):
+    def __init__(self, embed=default_embed):
         self._embed = embed
         self._queue = {}
         self._retry_at = {}

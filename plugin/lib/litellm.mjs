@@ -12,6 +12,8 @@ export const LITELLM_VERSION = "1.109.0rc1";
 export const LITELLM_SPEC = `litellm[proxy]==${LITELLM_VERSION}`;
 // The same release as an image: the default runtime (docker-proxy.mjs). Keep in step with compose.yaml.
 export const LITELLM_IMAGE = "ghcr.io/berriai/litellm:v1.109.0-rc.1";
+// The built-in embedding model (proxy/smarter_compact/local_embed.py) runs on numpy, which litellm[proxy] lacks.
+export const LITELLM_WITH = ["numpy"];
 export const UV_INSTALL_URL = "https://docs.astral.sh/uv/getting-started/installation/";
 // litellm imports its whole proxy stack before it prints a version.
 const VERSION_TIMEOUT_MS = 60_000;
@@ -47,6 +49,24 @@ export function litellmVersion(env = process.env) {
   return /Current Version = (\S+)/.exec(`${r.stdout || ""}${r.stderr || ""}`)?.[1] ?? null;
 }
 
+/**
+ * Whether the Python behind the `litellm` on PATH imports every LITELLM_WITH package. Read from the script's
+ * shebang (uv tool venvs); true when that cannot be told (Windows .exe shims), so the check never blocks.
+ */
+export function litellmHasExtras(env = process.env) {
+  const script = whichOnPath("litellm", env);
+  if (!script) return false;
+  let python;
+  try {
+    python = /^#!\s*(\S+)/.exec(fs.readFileSync(script, "utf8").split("\n", 1)[0])?.[1];
+  } catch {
+    return true;
+  }
+  if (!python || !/python[\d.]*$/i.test(path.basename(python))) return true;
+  const r = spawnSync(python, ["-c", LITELLM_WITH.map((m) => `import ${m}`).join("; ")], { env, timeout: VERSION_TIMEOUT_MS, windowsHide: true });
+  return r.status === 0;
+}
+
 function current(version) {
   try {
     return Boolean(version) && eq(version, LITELLM_VERSION);
@@ -61,11 +81,15 @@ function current(version) {
  */
 export function ensureLitellm({ env = process.env, log = () => {}, quiet = false } = {}) {
   const found = litellmVersion(env);
-  if (current(found)) return { ok: true, status: "present", version: found };
+  const extras = current(found) && litellmHasExtras(env);
+  if (extras) return { ok: true, status: "present", version: found };
+  // The right version without numpy still proxies; only semantic search needs the reinstall.
+  if (current(found) && !onPath("uv", env)) return { ok: true, status: "present", version: found };
   if (!onPath("uv", env)) return { ok: false, reason: "uv-missing", found };
 
-  log(`installing ${LITELLM_SPEC} with uv tool install (${found ? `found ${found}` : "litellm not on PATH"})`);
-  const install = spawnSync("uv", ["tool", "install", "--force", LITELLM_SPEC], {
+  const why = current(found) ? `found ${found} without ${LITELLM_WITH.join(", ")}` : found ? `found ${found}` : "litellm not on PATH";
+  log(`installing ${LITELLM_SPEC} with ${LITELLM_WITH.join(", ")} using uv tool install (${why})`);
+  const install = spawnSync("uv", ["tool", "install", "--force", LITELLM_SPEC, ...LITELLM_WITH.flatMap((m) => ["--with", m])], {
     env, stdio: quiet ? ["ignore", "pipe", "pipe"] : ["ignore", 2, 2], encoding: "utf8", timeout: INSTALL_TIMEOUT_MS, windowsHide: true,
   });
   // Quiet hides uv's progress but hands its output back on failure.

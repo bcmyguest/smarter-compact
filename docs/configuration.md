@@ -82,7 +82,7 @@ Anthropic route (`/v1/messages`) to Claude models only. Details: [context proxy]
 | --- | --- | --- | --- |
 | `SMARTER_COMPACT_STATE_DIR` | `~/.local/share/smarter-compact` | all | Store parent; files live under `context/` ([location](context-store.md#location)). `OPENMEM_STATE_DIR` is the pre-rename name, still read |
 | `CONTEXT_STORE_TTL_DAYS` | `30` | proxy, MCP | Sessions idle longer are deleted at start, at most once a day; `0` keeps everything ([retention](context-store.md#retention)) |
-| `CONTEXT_EMBEDDING_MODEL` | empty (vectors off) | proxy, OpenCode 2, MCP | Embedding model for hybrid search ([vectors](context-store.md#vectors)) |
+| `CONTEXT_EMBEDDING_MODEL` | empty (vectors off); `enable` writes `smarter-compact-embed`, the [built-in model](context-store.md#built-in-model), to `proxy.env` | proxy, OpenCode 2, MCP | Embedding model for hybrid search ([vectors](context-store.md#vectors)); an empty value in `proxy.env` opts out |
 | `CONTEXT_EMBEDDING_URL` | `http://127.0.0.1:11434/v1` (Docker compose: `http://host.docker.internal:11434/v1`) | proxy, OpenCode 2, MCP | OpenAI-compatible base URL; requests go to `POST <url>/embeddings` |
 | `CONTEXT_EMBEDDING_API_KEY` | empty | proxy, OpenCode 2, MCP | Bearer token, when the endpoint needs one |
 | `CONTEXT_EMBEDDING_TIMEOUT_S` | `30` | proxy, OpenCode 2 | Seconds per row: a call of n rows times out after n × this |

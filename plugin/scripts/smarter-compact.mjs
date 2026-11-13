@@ -16,6 +16,7 @@ import { runContextCommand } from "../lib/context-config.mjs";
 import { ensureContextProxyRunning, litellmEnv, packageRoot, probeContextProxy, restartContextProxy } from "../lib/proxy-daemon.mjs";
 import { ensureLitellm, LITELLM_IMAGE, litellmProblem, LITELLM_VERSION } from "../lib/litellm.mjs";
 import { CONTAINER_NAME, proxyRuntime } from "../lib/docker-proxy.mjs";
+import { ensureEmbeddings, warmEmbeddings } from "../lib/embeddings.mjs";
 import { summarizeEvents } from "../lib/session-db.mjs";
 
 ensureProductEnv();
@@ -140,6 +141,9 @@ async function enable(argv, enabled) {
   }
 
   const port = resolveProxyPort(home, process.env);
+  // Semantic search: the proxy's built-in model unless the user configured their own (or opted out).
+  const embeddings = enabled ? ensureEmbeddings({ home }) : { status: "skipped" };
+  if (embeddings.status === "enabled") info("semantic search on (built-in model, runs in the proxy)");
   // Refuse before any config is written: an agent pointed at a proxy that cannot start loses every request.
   const autoProxy = !/^(0|false|no)$/i.test(String(process.env.SMARTER_COMPACT_AUTO_PROXY || "1").trim());
   if (enabled && autoProxy) info(`checking for a running proxy on 127.0.0.1:${port}`);
@@ -188,6 +192,15 @@ async function enable(argv, enabled) {
     }
     else if (proxy.status === "restarted") info(`proxy restarted, ${proxy.from} -> ${proxy.to}`);
     else info(PROXY_STATUS[proxy.status] || `proxy ${proxy.status}`);
+    if (embeddings.status === "enabled" && proxy.status === "already-up") {
+      console.error(`${PRODUCT}: the running proxy has no embedding model yet; run ${PRODUCT} proxy restart to load it.`);
+    } else if (embeddings.status === "enabled" || embeddings.status === "unchanged") {
+      // The first call downloads the weights (~135 MB) once; it never blocks enable from succeeding.
+      info("loading the built-in embedding model (first run downloads ~135 MB)");
+      const warm = await warmEmbeddings({ home });
+      if (warm.ok) info(`semantic search ready (${warm.dim}-dim, ${warm.seconds.toFixed(1)}s)`);
+      else console.error(`${PRODUCT}: semantic search not ready yet (${warm.reason}); search stays keyword-only until the proxy can load the model. See docker logs ${CONTAINER_NAME} or the proxy log.`);
+    }
     if (proxy.warning) console.error(`${PRODUCT}: ${proxy.warning}`);
   }
 

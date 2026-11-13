@@ -257,7 +257,19 @@ The middle row exists because the alternative was a `total_matches: 0` from a st
 
 ## Vectors
 
-Vectors are off unless `CONTEXT_EMBEDDING_MODEL` names a model. The stack ships no embedding route: the LiteLLM configs route only chat models. To turn vectors on, serve an embedding model behind an OpenAI-compatible `POST <url>/embeddings` and set `CONTEXT_EMBEDDING_MODEL` and `CONTEXT_EMBEDDING_URL`.
+Vectors are off unless `CONTEXT_EMBEDDING_MODEL` names a model. `smarter-compact enable` turns them on with the **built-in model** when neither `CONTEXT_EMBEDDING_MODEL` nor `CONTEXT_EMBEDDING_URL` is set: it writes `CONTEXT_EMBEDDING_MODEL=smarter-compact-embed` to `proxy.env`, and once the proxy listens it embeds one string through it to load the model and report `semantic search ready`. To opt out, put `CONTEXT_EMBEDDING_MODEL=` (empty) in `proxy.env`; an explicit model or URL is never touched. A proxy already running when `enable` turns vectors on needs `smarter-compact proxy restart` to load it.
+
+### Built-in model
+
+`smarter-compact-embed` is [BAAI/bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) (MIT; 384 dimensions, 512 tokens, CLS pooling, unit length) at a pinned revision, run by the proxy itself (`proxy/smarter_compact/local_embed.py`): a BERT forward pass in numpy with the `tokenizers` library, both already in the LiteLLM image (the native install adds numpy with `uv tool install --with numpy`, and `enable` reinstalls a current litellm whose Python lacks it). Its output matches the model's official ONNX export (cosine 1.000000 on the five texts checked). No embedding server is needed.
+
+- **Weights.** The first embed downloads `config.json`, `tokenizer.json` and `model.safetensors` (about 135 MB) from the Hugging Face Hub into `models/` under the state dir (`/state/models` in the container); later starts read them offline.
+- **Rows.** The proxy's background embedder calls the model in process, texts grouped by length so short rows are not padded to a long one. About 3–4 rows a second on 2 CPU cores, more with more cores; it never runs on the request path.
+- **Queries.** The proxy also serves the model on its own `/v1/embeddings` (`custom_provider_map` in `proxy/config.yaml`). The MCP server and the OpenCode 2 plugin call it there at `http://127.0.0.1:<proxy port>/v1` with the master key from `proxy.env`, whatever `CONTEXT_EMBEDDING_URL` says, and prefix search queries (not rows) with bge's retrieval instruction, `Represent this sentence for searching relevant passages: `.
+
+### Your own model
+
+To use another model instead, serve it behind an OpenAI-compatible `POST <url>/embeddings` and set `CONTEXT_EMBEDDING_MODEL` and `CONTEXT_EMBEDDING_URL`.
 
 Variables and defaults: [configuration reference](configuration.md#store-and-search).
 
