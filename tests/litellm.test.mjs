@@ -5,6 +5,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { ensureLitellm, litellmProblem, litellmVersion, LITELLM_SPEC, whichOnPath } from "../plugin/lib/litellm.mjs";
 
+const INSTALL = `tool install --force ${LITELLM_SPEC} --with numpy`;
+
 // The stubs are #!/bin/sh scripts, which Windows cannot execute.
 const SH_STUBS = process.platform === "win32" && "sh stubs need a POSIX shell";
 
@@ -69,7 +71,7 @@ test("ensureLitellm installs with uv when litellm is missing", { skip: SH_STUBS 
   const lines = [];
   const r = ensureLitellm({ env: { PATH: bin }, log: (l) => lines.push(l) });
   assert.deepEqual(r, { ok: true, status: "installed", version: "1.109.0rc1" });
-  assert.equal(fs.readFileSync(log, "utf8"), `tool install --force ${LITELLM_SPEC}\n`);
+  assert.equal(fs.readFileSync(log, "utf8"), `${INSTALL}\n`);
   assert.match(lines[0], /litellm not on PATH/);
 });
 
@@ -86,7 +88,7 @@ test("ensureLitellm replaces a newer litellm with the pinned one", { skip: SH_ST
   litellmStub(bin, "1.110.0.dev1");
   uvStub(bin, { bin });
   assert.deepEqual(ensureLitellm({ env: { PATH: bin } }), { ok: true, status: "installed", version: "1.109.0rc1" });
-  assert.equal(fs.readFileSync(log, "utf8"), "tool install --force litellm[proxy]==1.109.0rc1\n");
+  assert.equal(fs.readFileSync(log, "utf8"), `${INSTALL}\n`);
 });
 
 test("ensureLitellm replaces a 1.109.0 dev build, which predates the pin", { skip: SH_STUBS }, () => {
@@ -137,4 +139,28 @@ test("ensureLitellm quiet returns uv's output on install failure", { skip: SH_ST
   const r = ensureLitellm({ env: { PATH: bin }, quiet: true });
   assert.equal(r.reason, "install-failed");
   assert.match(r.output, /uv: resolution failed/);
+});
+
+test("ensureLitellm reinstalls a current litellm whose Python lacks numpy", { skip: SH_STUBS }, () => {
+  const bin = tmpDir("sc-ll-");
+  // A uv tool venv: the script's shebang names the venv's python, which cannot import numpy.
+  stub(bin, "python3", "exit 1");
+  fs.writeFileSync(path.join(bin, "litellm"), `#!${path.join(bin, "python3")}\n`, { mode: 0o755 });
+  const venvLitellm = path.join(bin, "litellm");
+  const log = uvStub(bin, { bin });
+  // --version goes through the stub python too; answer it as litellm would.
+  stub(bin, "python3", `case "$1" in -c) exit 1;; *) echo "LiteLLM: Current Version = 1.109.0rc1";; esac`);
+  const lines = [];
+  const r = ensureLitellm({ env: { PATH: bin }, log: (l) => lines.push(l) });
+  assert.equal(r.ok, true);
+  assert.equal(fs.readFileSync(log, "utf8"), `${INSTALL}\n`);
+  assert.match(lines[0], /without numpy/);
+  assert.ok(venvLitellm);
+});
+
+test("ensureLitellm keeps a current litellm without numpy when uv is absent", { skip: SH_STUBS }, () => {
+  const bin = tmpDir("sc-ll-");
+  stub(bin, "python3", `case "$1" in -c) exit 1;; *) echo "LiteLLM: Current Version = 1.109.0rc1";; esac`);
+  fs.writeFileSync(path.join(bin, "litellm"), `#!${path.join(bin, "python3")}\n`, { mode: 0o755 });
+  assert.deepEqual(ensureLitellm({ env: { PATH: bin } }), { ok: true, status: "present", version: "1.109.0rc1" });
 });

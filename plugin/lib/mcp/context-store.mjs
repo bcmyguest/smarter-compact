@@ -12,6 +12,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import { withProxyEnvSecrets } from "../brand.mjs";
+import { embeddingEndpoint, queryText } from "../local-embedding.mjs";
 import { contextStoreEnvFromConfig } from "../context-config.mjs";
 import { contextRoot as hookContextRoot, sanitizeSessionId as hookSanitizeSessionId } from "../context-store.mjs";
 import {
@@ -584,8 +585,8 @@ async function search(args, env, cwd, opts) {
         const byModel = new Map();
         for (const v of withVectors) {
           if (!byModel.has(v.model)) {
-            const config = { model: v.model, url: settings.embeddingUrl, apiKey: settings.embeddingApiKey };
-            byModel.set(v.model, (await fetchEmbeddings(config, [query], opts.fetch))[0]);
+            const config = { model: v.model, ...embeddingEndpoint(settings, v.model, { home: opts.home || env.HOME || os.homedir(), env }) };
+            byModel.set(v.model, (await fetchEmbeddings(config, [queryText(v.model, query)], opts.fetch))[0]);
           }
           for (const [seq, similarity] of nearest(v.db, byModel.get(v.model), v.model, VECTOR_CANDIDATES, filter.where, filter.params)) {
             vectorHits.push({ sid: v.sid, sessionRank: v.sessionRank, seq, similarity });

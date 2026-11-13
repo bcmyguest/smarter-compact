@@ -1,68 +1,44 @@
 /**
- * Semantic search by default: `enable` turns vectors on (CONTEXT_EMBEDDING_MODEL in proxy.env) when a local Ollama
- * answers, pulling the model if needed. Without Ollama, search stays lexical and `enable` says so. An explicit
- * CONTEXT_EMBEDDING_MODEL or CONTEXT_EMBEDDING_URL (env or proxy.env, empty included) is left alone, so
- * `CONTEXT_EMBEDDING_MODEL=` in proxy.env opts out.
+ * Semantic search by default: `enable` sets CONTEXT_EMBEDDING_MODEL to the built-in model (local-embedding.mjs),
+ * which the proxy runs itself, so no embedding server is needed. An explicit CONTEXT_EMBEDDING_MODEL or
+ * CONTEXT_EMBEDDING_URL (env or proxy.env, empty included) is left alone, so `CONTEXT_EMBEDDING_MODEL=` in proxy.env
+ * opts out. After the proxy is up, warmEmbeddings() embeds one string through it: the first call downloads the
+ * weights (~135 MB) and proves the route works.
  */
 import { proxyEnvPath, readProxyEnv } from "./brand.mjs";
 import { upsertEnvFile } from "./file-io.mjs";
+import { embeddingEndpoint, LOCAL_EMBEDDING_MODEL } from "./local-embedding.mjs";
 
-export const DEFAULT_EMBEDDING_MODEL = "nomic-embed-text";
-export const OLLAMA_URL = "http://127.0.0.1:11434";
-const PROBE_TIMEOUT_MS = 2_000;
-const PULL_TIMEOUT_MS = 15 * 60_000;
-const EMBED_TIMEOUT_MS = 60_000;
+const WARM_TIMEOUT_MS = 5 * 60_000;
 
-async function request(fetchImpl, url, init, timeoutMs) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const res = await fetchImpl(url, { ...init, signal: ctrl.signal });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-const post = (fetchImpl, url, body, timeoutMs) =>
-  request(fetchImpl, url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }, timeoutMs);
-
-/**
- * Result status: "configured" (the user set the model or URL; untouched), "enabled" (written to proxy.env now),
- * "no-ollama", "pull-failed", "embed-failed".
- */
-export async function ensureEmbeddings({ home, env = process.env, fetch: fetchImpl = globalThis.fetch, log = () => {} }) {
+/** "configured" (the user set the model or URL; untouched), "enabled" (written now) or "unchanged" (already on). */
+export function ensureEmbeddings({ home, env = process.env }) {
   const file = readProxyEnv(home);
-  for (const key of ["CONTEXT_EMBEDDING_MODEL", "CONTEXT_EMBEDDING_URL"]) {
-    if (env[key] !== undefined || Object.hasOwn(file, key)) return { status: "configured", model: env.CONTEXT_EMBEDDING_MODEL ?? file.CONTEXT_EMBEDDING_MODEL ?? "" };
+  if (env.CONTEXT_EMBEDDING_URL !== undefined || Object.hasOwn(file, "CONTEXT_EMBEDDING_URL")) {
+    return { status: "configured", model: env.CONTEXT_EMBEDDING_MODEL ?? file.CONTEXT_EMBEDDING_MODEL ?? "" };
   }
-  const model = DEFAULT_EMBEDDING_MODEL;
-  const tags = await request(fetchImpl, `${OLLAMA_URL}/api/tags`, {}, PROBE_TIMEOUT_MS);
-  if (!tags) return { status: "no-ollama" };
-  const have = (tags.models || []).some((m) => [m.name, m.model].some((n) => n === model || String(n || "").startsWith(`${model}:`)));
-  if (!have) {
-    log(`pulling ${model} into Ollama for semantic search`);
-    const pulled = await post(fetchImpl, `${OLLAMA_URL}/api/pull`, { model, stream: false }, PULL_TIMEOUT_MS);
-    if (!pulled || (pulled.status && pulled.status !== "success")) return { status: "pull-failed", model };
-  }
-  // The same OpenAI-compatible route the proxy embeds through (settings DEFAULT_EMBEDDING_URL).
-  const probe = await post(fetchImpl, `${OLLAMA_URL}/v1/embeddings`, { model, input: ["smarter-compact"] }, EMBED_TIMEOUT_MS);
-  if (!probe?.data?.[0]?.embedding?.length) return { status: "embed-failed", model };
-  upsertEnvFile(proxyEnvPath(home), { CONTEXT_EMBEDDING_MODEL: model }, { mode: 0o600 });
-  return { status: "enabled", model };
+  const model = env.CONTEXT_EMBEDDING_MODEL ?? file.CONTEXT_EMBEDDING_MODEL;
+  if (model === LOCAL_EMBEDDING_MODEL) return { status: "unchanged", model };
+  if (model !== undefined) return { status: "configured", model };
+  upsertEnvFile(proxyEnvPath(home), { CONTEXT_EMBEDDING_MODEL: LOCAL_EMBEDDING_MODEL }, { mode: 0o600 });
+  return { status: "enabled", model: LOCAL_EMBEDDING_MODEL };
 }
 
-/** One line for `enable` to print, or null when there is nothing to say. */
-export function embeddingsMessage(r, product) {
-  const otherServer = "or set CONTEXT_EMBEDDING_URL and CONTEXT_EMBEDDING_MODEL in proxy.env for another OpenAI-compatible embeddings server";
-  switch (r.status) {
-    case "enabled": return { level: "info", text: `semantic search on (${r.model} via Ollama)` };
-    case "no-ollama": return { level: "warn", text: `semantic search off: no Ollama at ${OLLAMA_URL}, so search is keyword-only. Install Ollama and run ${product} enable again, ${otherServer}.` };
-    case "pull-failed": return { level: "warn", text: `semantic search off: ollama pull ${r.model} failed. Run it yourself and ${product} enable again, ${otherServer}.` };
-    case "embed-failed": return { level: "warn", text: `semantic search off: Ollama did not return an embedding from ${r.model}. Check ollama run ${r.model}, ${otherServer}.` };
-    default: return null;
+/** Embed one string with the built-in model through the running proxy; {ok, seconds, dim} or {ok: false, reason}. */
+export async function warmEmbeddings({ home, env = process.env, fetch: fetchImpl = globalThis.fetch }) {
+  const { url, apiKey } = embeddingEndpoint({ embeddingApiKey: "" }, LOCAL_EMBEDDING_MODEL, { home, env });
+  const started = Date.now();
+  try {
+    const res = await fetchImpl(`${url}/embeddings`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) },
+      body: JSON.stringify({ model: LOCAL_EMBEDDING_MODEL, input: ["smarter-compact"] }),
+      signal: AbortSignal.timeout(WARM_TIMEOUT_MS),
+    });
+    if (!res.ok) return { ok: false, reason: `HTTP ${res.status}` };
+    const dim = (await res.json())?.data?.[0]?.embedding?.length || 0;
+    return dim ? { ok: true, dim, seconds: (Date.now() - started) / 1000 } : { ok: false, reason: "no vector in the response" };
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
   }
 }

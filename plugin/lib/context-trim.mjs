@@ -11,6 +11,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { withProxyEnvSecrets } from "./brand.mjs";
+import { embeddingEndpoint } from "./local-embedding.mjs";
 import {
   LEDGER_HEAD, LEDGER_MAX, REUSE_PREFIX, coreId, ledgerBlock, nudgeLine, reduceLog, walk,
 } from "./context-ledger.mjs";
@@ -655,7 +656,7 @@ function storeMessages(store, sid, settings, original, items, cut, view, ts, dep
     if (!rows.length) return;
     const added = openSession(file).sync(rows, cutRow, ts);
     if (added && settings.embeddingModel) {
-      void scheduleEmbedding(file, { model: settings.embeddingModel, url: settings.embeddingUrl, apiKey: settings.embeddingApiKey,
+      void scheduleEmbedding(file, { model: settings.embeddingModel, ...embeddingEndpoint(settings, settings.embeddingModel),
         timeoutS: settings.embeddingTimeoutS, maxChars: settings.embeddingMaxChars },
         { fetchFn: deps.fetch, onError: logFailOpen });
     }
