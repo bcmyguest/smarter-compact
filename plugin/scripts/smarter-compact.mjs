@@ -16,6 +16,7 @@ import { runContextCommand } from "../lib/context-config.mjs";
 import { ensureContextProxyRunning, litellmEnv, packageRoot, probeContextProxy, restartContextProxy } from "../lib/proxy-daemon.mjs";
 import { ensureLitellm, LITELLM_IMAGE, litellmProblem, LITELLM_VERSION } from "../lib/litellm.mjs";
 import { CONTAINER_NAME, proxyRuntime } from "../lib/docker-proxy.mjs";
+import { embeddingsMessage, ensureEmbeddings } from "../lib/embeddings.mjs";
 import { summarizeEvents } from "../lib/session-db.mjs";
 
 ensureProductEnv();
@@ -140,6 +141,11 @@ async function enable(argv, enabled) {
   }
 
   const port = resolveProxyPort(home, process.env);
+  // Semantic search: on when a local Ollama can serve the model; never blocks enable.
+  const embeddings = enabled ? await ensureEmbeddings({ home, log: info }) : { status: "skipped" };
+  const embeddingsNote = embeddingsMessage(embeddings, PRODUCT);
+  if (embeddingsNote?.level === "info") info(embeddingsNote.text);
+  else if (embeddingsNote) console.error(`${PRODUCT}: ${embeddingsNote.text}`);
   // Refuse before any config is written: an agent pointed at a proxy that cannot start loses every request.
   const autoProxy = !/^(0|false|no)$/i.test(String(process.env.SMARTER_COMPACT_AUTO_PROXY || "1").trim());
   if (enabled && autoProxy) info(`checking for a running proxy on 127.0.0.1:${port}`);
@@ -188,6 +194,9 @@ async function enable(argv, enabled) {
     }
     else if (proxy.status === "restarted") info(`proxy restarted, ${proxy.from} -> ${proxy.to}`);
     else info(PROXY_STATUS[proxy.status] || `proxy ${proxy.status}`);
+    if (embeddings.status === "enabled" && proxy.status === "already-up") {
+      console.error(`${PRODUCT}: the running proxy has no embedding model yet; run ${PRODUCT} proxy restart to load it.`);
+    }
     if (proxy.warning) console.error(`${PRODUCT}: ${proxy.warning}`);
   }
 

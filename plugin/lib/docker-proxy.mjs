@@ -18,6 +18,15 @@ const RM_TIMEOUT_MS = 30_000;
 const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
 
 /**
+ * Linux runs the container on the host network: host.docker.internal there is the bridge gateway, which a host
+ * service bound to 127.0.0.1 (Ollama's default) never sees. Docker Desktop maps host.docker.internal to the host's
+ * loopback, so macOS and Windows keep the bridge and a published port.
+ */
+export function hostNetwork(platform = process.platform) {
+  return platform === "linux";
+}
+
+/**
  * "docker" or "native". `SMARTER_COMPACT_PROXY_RUNTIME` forces one; otherwise docker when its daemon answers.
  * exec(cmd, args, timeoutMs, opts) resolves stdout, or null on any failure.
  */
@@ -48,18 +57,23 @@ export function containerUrl(url) {
  * Environment the container gets, from the env the native proxy would run with (litellmEnv). Only the proxy's own
  * keys and the upstream ANTHROPIC_BASE_URL cross over; host paths and the host PATH do not.
  */
-export function containerEnv(nativeEnv, port) {
+export function containerEnv(nativeEnv, port, { host = false } = {}) {
   const out = {};
   for (const key of ["LITELLM_MASTER_KEY", "ANTHROPIC_BASE_URL", ...PROXY_ENV_CONTEXT_KEYS, ...PROXY_ENV_SECRET_KEYS]) {
     const v = nativeEnv[key];
     if (v !== undefined && v !== null && String(v).trim() !== "") out[key] = String(v);
   }
-  if (out.ANTHROPIC_BASE_URL) out.ANTHROPIC_BASE_URL = containerUrl(out.ANTHROPIC_BASE_URL);
-  // settings.py defaults to 127.0.0.1:11434, which inside the container is the container itself.
-  out.CONTEXT_EMBEDDING_URL = containerUrl(out.CONTEXT_EMBEDDING_URL || "http://127.0.0.1:11434/v1");
+  if (!host) {
+    // On the bridge, loopback is the container itself. settings.py defaults the embeddings URL to 127.0.0.1:11434.
+    if (out.ANTHROPIC_BASE_URL) out.ANTHROPIC_BASE_URL = containerUrl(out.ANTHROPIC_BASE_URL);
+    out.CONTEXT_EMBEDDING_URL = containerUrl(out.CONTEXT_EMBEDDING_URL || "http://127.0.0.1:11434/v1");
+  }
   Object.assign(out, {
     HOME: "/tmp",
     PYTHONDONTWRITEBYTECODE: "1",
+    // Use the cost map bundled in the image: the remote fetch retries for ~20 s offline or behind a TLS proxy,
+    // which delays the first listen past enable's 30 s wait.
+    LITELLM_LOCAL_MODEL_COST_MAP: "True",
     SMARTER_COMPACT_STATE_DIR: "/state",
     CONTEXT_PROXY_PORT: String(port),
   });
@@ -68,31 +82,36 @@ export function containerEnv(nativeEnv, port) {
 
 /** `docker run` arguments. Values go by name only (`-e KEY`), read from the CLI's env, so no secret is on argv. */
 export function dockerRunArgs({ root, port, version, state, containerEnvKeys, platform = process.platform, ids }) {
+  const host = hostNetwork(platform);
   const args = [
     "run", "-d", "--name", CONTAINER_NAME, "--restart", "always",
     "--label", `${LABEL}.version=${version ?? ""}`,
     "--label", `${LABEL}.root=${root}`,
     "--label", `${LABEL}.port=${port}`,
-    "-p", `127.0.0.1:${port}:${CONTAINER_PORT}`,
+    "--label", `${LABEL}.network=${host ? "host" : "bridge"}`,
+    ...(host
+      ? ["--network", "host"]
+      : ["-p", `127.0.0.1:${port}:${CONTAINER_PORT}`, "--add-host", "host.docker.internal:host-gateway"]),
     "-v", `${path.join(root, "proxy")}:/app/proxy:ro`,
     "-v", `${path.join(root, "package.json")}:/app/package.json:ro`,
     "-v", `${state}:/state`,
-    "--add-host", "host.docker.internal:host-gateway",
   ];
   // Run as the host user so the session store stays host-owned (docs/context-store.md).
   if (platform !== "win32" && ids) args.push("--user", `${ids.uid}:${ids.gid}`);
   for (const key of containerEnvKeys) args.push("-e", key);
-  args.push(LITELLM_IMAGE, "--config", "/app/proxy/config.yaml", "--port", String(CONTAINER_PORT));
+  // On the host network LiteLLM binds the proxy port itself, on loopback only.
+  args.push(LITELLM_IMAGE, "--config", "/app/proxy/config.yaml",
+    ...(host ? ["--host", "127.0.0.1", "--port", String(port)] : ["--port", String(CONTAINER_PORT)]));
   return args;
 }
 
 /** The container's state: running, and the version, root and port it was created for; null when it does not exist. */
 export async function inspectContainer(exec) {
-  const fmt = `{{.State.Running}}\t{{index .Config.Labels "${LABEL}.version"}}\t{{index .Config.Labels "${LABEL}.root"}}\t{{index .Config.Labels "${LABEL}.port"}}`;
+  const fmt = `{{.State.Running}}\t{{index .Config.Labels "${LABEL}.version"}}\t{{index .Config.Labels "${LABEL}.root"}}\t{{index .Config.Labels "${LABEL}.port"}}\t{{index .Config.Labels "${LABEL}.network"}}`;
   const out = await exec("docker", ["inspect", "--format", fmt, CONTAINER_NAME], INFO_TIMEOUT_MS);
   if (!out) return null;
-  const [running, version, root, port] = out.trim().split("\t");
-  return { running: running === "true", version: version || null, root: root || null, port: port || null };
+  const [running, version, root, port, network] = out.trim().split("\t");
+  return { running: running === "true", version: version || null, root: root || null, port: port || null, network: network || null };
 }
 
 /** Remove the container and create it from the installed package. */
@@ -101,7 +120,7 @@ export async function recreateContainer({ home, env, root, port, version, native
   const state = stateParent(home, env);
   // Docker would create a missing bind source as root.
   fs.mkdirSync(path.join(state, "context"), { recursive: true });
-  const cenv = containerEnv(nativeEnv, port);
+  const cenv = containerEnv(nativeEnv, port, { host: hostNetwork() });
   const ids = typeof process.getuid === "function" ? { uid: process.getuid(), gid: process.getgid() } : null;
   const args = dockerRunArgs({ root, port, version, state, containerEnvKeys: Object.keys(cenv), ids });
   const out = await exec("docker", args, RUN_TIMEOUT_MS, { env: { ...process.env, ...cenv }, log });
@@ -115,7 +134,8 @@ export async function recreateContainer({ home, env, root, port, version, native
 export async function ensureContainer(opts) {
   const { root, port, version, exec } = opts;
   const c = await inspectContainer(exec);
-  if (c?.running && c.version === (version ?? null) && c.root === root && c.port === String(port)) {
+  const network = hostNetwork() ? "host" : "bridge";
+  if (c?.running && c.version === (version ?? null) && c.root === root && c.port === String(port) && c.network === network) {
     return { ok: true, status: "running" };
   }
   const r = await recreateContainer(opts);

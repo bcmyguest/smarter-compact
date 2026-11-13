@@ -257,7 +257,7 @@ The middle row exists because the alternative was a `total_matches: 0` from a st
 
 ## Vectors
 
-Vectors are off unless `CONTEXT_EMBEDDING_MODEL` names a model. The stack ships no embedding route: the LiteLLM configs route only chat models. To turn vectors on, serve an embedding model behind an OpenAI-compatible `POST <url>/embeddings` and set `CONTEXT_EMBEDDING_MODEL` and `CONTEXT_EMBEDDING_URL`.
+Vectors are off unless `CONTEXT_EMBEDDING_MODEL` names a model. `smarter-compact enable` sets it for you when it is unset (and `CONTEXT_EMBEDDING_URL` is too): if Ollama answers on `127.0.0.1:11434`, it pulls `nomic-embed-text` when missing, checks that `/v1/embeddings` returns a vector, and writes `CONTEXT_EMBEDDING_MODEL=nomic-embed-text` to `proxy.env`. Without Ollama it warns that search is keyword-only and changes nothing. To opt out, put `CONTEXT_EMBEDDING_MODEL=` (empty) in `proxy.env`; an explicit model or URL is never touched. A proxy already running when `enable` turns vectors on needs `smarter-compact proxy restart` to load it. The stack ships no embedding route: the LiteLLM configs route only chat models. To turn vectors on, serve an embedding model behind an OpenAI-compatible `POST <url>/embeddings` and set `CONTEXT_EMBEDDING_MODEL` and `CONTEXT_EMBEDDING_URL`.
 
 Variables and defaults: [configuration reference](configuration.md#store-and-search).
 
