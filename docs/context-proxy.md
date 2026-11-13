@@ -1,6 +1,6 @@
 # Context proxy
 
-For Claude Code, OpenCode 1, and Codex, **Smarter Compact** runs a local **LiteLLM** process (`smarter-compact proxy`, or auto-started by the plugin) that rewrites each request before forwarding to the real model API:
+For Claude Code, OpenCode 1, and Codex, **Smarter Compact** runs a local **LiteLLM** proxy (a Docker container by default, or a native process; see [Runtime](#runtime)) that rewrites each request before forwarding to the real model API:
 
 1. **Tool-result compression.** Results over `CONTEXT_COMPRESS_OVER_TOKENS` become a short header plus `smart_compact_get(id=...)`; full text in `blobs/<id>.txt`.
 2. **Store.** Messages go into `sessions/<sid>.db` ([session database](context-store.md#session-database)).
@@ -11,7 +11,22 @@ The cut is sticky for prompt-cache stability. **OpenCode 2** applies the same ru
 
 Code: `proxy/smarter_compact/`, `proxy/smarter_compact_hook.py`, `proxy/config.yaml`. Tests: `python3 -m unittest discover -s proxy/tests`.
 
-You need **LiteLLM 1.109.0rc1** (pinned; the first release candidate with PR #41522) on `PATH` as `litellm` for Codex ChatGPT pass-through. `smarter-compact enable` checks `litellm --version` and, when it is missing or another version, runs `uv tool install --force 'litellm[proxy]==1.109.0rc1'`. Without uv it stops before it changes any agent config; run the proxy with `docker compose` from a clone instead (see `compose.yaml`). Session hooks only start the proxy; they never install.
+The proxy runs **LiteLLM 1.109.0rc1** (pinned; the first release candidate with PR #41522, needed for Codex ChatGPT pass-through).
+
+## Runtime
+
+| | Docker (default when `docker info` answers) | Native (no Docker, or `SMARTER_COMPACT_PROXY_RUNTIME=native`) |
+| --- | --- | --- |
+| What runs | Container `smarter-compact-proxy`, image `ghcr.io/berriai/litellm:v1.109.0-rc.1`, the installed package's `proxy/` mounted read-only | `litellm` on `PATH`, started detached |
+| Installed by `enable` | `docker pull` of the image | `uv tool install --force 'litellm[proxy]==1.109.0rc1'` when `litellm --version` is missing or another version |
+| After a reboot | Docker restarts it (`--restart always`), before any agent starts | Gone until the next session start or `enable` starts it again |
+| Logs | `docker logs smarter-compact-proxy` (failed `docker` commands also go to `proxy.log`) | `~/.config/smarter-compact/proxy.log` |
+
+`SMARTER_COMPACT_PROXY_RUNTIME=docker` forces Docker. With neither Docker nor uv, `enable` stops before it changes any agent config. Session hooks only start the proxy; they never pull or install.
+
+The container listens on `127.0.0.1:<port>` only, runs as your user (except on Windows) and mounts the session store dir at `/state`. It gets `LITELLM_MASTER_KEY`, the `CONTEXT_*` settings and `ANTHROPIC_BASE_URL` from the same sources as the native proxy, by name (`docker run -e KEY`), so no secret is on the command line; a loopback `ANTHROPIC_BASE_URL` or `CONTEXT_EMBEDDING_URL` (default `http://127.0.0.1:11434/v1`) is rewritten to `host.docker.internal`. Settings are fixed when the container is created: after editing `proxy.env`, run `smarter-compact proxy restart`, which recreates it.
+
+`--restart always` brings the proxy back only once the Docker daemon itself runs: on Linux `sudo systemctl enable docker`; with Docker Desktop (macOS, Windows), turn on *Start Docker Desktop when you sign in*. A session that starts while the container is still booting (a cold start takes about 15 s) waits for it instead of recreating it.
 
 ## Proxy port
 
@@ -34,7 +49,7 @@ Or add `CONTEXT_PROXY_PORT=4200` to `proxy.env`, then run `smarter-compact enabl
 
 The OpenCode 2 `proxyPort` option sets the port that plugin probes; it starts a proxy there only when an agent config already points at that port. Other agents read `CONTEXT_PROXY_PORT`.
 
-Auto-start is off when `SMARTER_COMPACT_AUTO_PROXY=0`. Logs: `~/.config/smarter-compact/proxy.log`, rotated to `proxy.log.1` at 5 MB on each start.
+Auto-start is off when `SMARTER_COMPACT_AUTO_PROXY=0`. Logs: `docker logs smarter-compact-proxy`, or for the native runtime `~/.config/smarter-compact/proxy.log`, rotated to `proxy.log.1` at 5 MB on each start.
 
 ## Configuration
 
@@ -119,9 +134,9 @@ http_headers = { "x-litellm-api-key" = "Bearer <LITELLM_MASTER_KEY>" }
 
 Set `CONTEXT_DEBUG_SHAPES=1` (environment or `~/.config/smarter-compact/proxy.env`) and restart the proxy. Each request then writes one line to `~/.config/smarter-compact/proxy.log`, as received from the client: item count, pinned items, system prompt size in characters, tool count, the thread root fingerprint and the roles of the last 12 items. It logs counts only, never message content. Use it to tell whether a short request left the client short or was cut in the proxy.
 
-## Run it in Docker (from this repo)
+## Run it with docker compose (from this repo)
 
-`compose.yaml` at the repo root runs the same proxy without installing LiteLLM: it starts the pinned LiteLLM image with `./proxy` mounted at `/app/proxy`, so **the requests are rewritten by the code in this checkout** — `docker compose restart context-proxy` is the deploy step.
+For working on the proxy itself. `compose.yaml` at the repo root runs the same image (also `restart: always`) as the compose service `context-proxy`: it starts the pinned LiteLLM image with `./proxy` mounted at `/app/proxy`, so **the requests are rewritten by the code in this checkout** — `docker compose restart context-proxy` is the deploy step.
 
 ```sh
 HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose up -d context-proxy   # or put both in ./.env
@@ -136,13 +151,14 @@ The proxy writes `proxy-<port>.json` to the context dir at start, and at most ev
 
 | Proxy on the port | Idle 60 s or more | Busy |
 | --- | --- | --- |
-| Started by the plugin (`proxy.pid`, same pid as the status file) | Stopped and started from the installed package | Warning |
+| The plugin's `smarter-compact-proxy` container | Recreated from the installed package | Warning |
+| Started by the plugin as a native process (`proxy.pid`, same pid as the status file) | Stopped and started from the installed package | Warning |
 | Docker compose container whose checkout's `package.json` matches the installed version | `docker restart <container>` | Warning |
 | Compose container on another checkout version, a manual `smarter-compact proxy`, or no status file | Warning | Warning |
 
 Claude Code and Codex show the warning as a session-start system message; `enable` prints it to stderr. A warning names what to restart or update.
 
-`smarter-compact proxy restart` restarts at once. It stops only the litellm in `proxy.pid` (checked to be litellm; on Windows with its child processes) or a Docker container publishing the port, refuses any other listener, then starts the installed version.
+`smarter-compact proxy restart` restarts at once. It recreates the `smarter-compact-proxy` container, or stops the litellm in `proxy.pid` (checked to be litellm; on Windows with its child processes), or restarts another Docker container publishing the port; it refuses any other listener. Then it starts the installed version in the default runtime, so a native proxy moves to Docker once Docker runs.
 
 ## Limits
 

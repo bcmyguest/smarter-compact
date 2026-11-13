@@ -15,7 +15,8 @@ services:
   context-proxy:
     image: ghcr.io/berriai/litellm:v1.109.0-rc.1
     container_name: smarter-compact-context-proxy
-    restart: unless-stopped
+    # always, not unless-stopped: the proxy must come back after a reboot even if it was stopped by hand before it.
+    restart: always
     command: ["--config", "/app/proxy/config.yaml", "--port", "4000"]
     # LiteLLM imports the hook from /app/proxy, and the rewrite code lives there: editing proxy/smarter_compact/
     # here changes the running proxy after `docker compose restart context-proxy`.

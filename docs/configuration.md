@@ -70,6 +70,7 @@ Anthropic route (`/v1/messages`) to Claude models only. Details: [context proxy]
 | --- | --- | --- | --- |
 | `CONTEXT_PROXY_PORT` | `4101` (Docker compose: `4100`) | CLI, proxy | LiteLLM listen port on `127.0.0.1`; env wins over `proxy.env`; the proxy names its status file after it ([proxy port](context-proxy.md#proxy-port)) |
 | `SMARTER_COMPACT_AUTO_PROXY` | `1` | CLI | `0`, `false` or `no` stops hooks and plugins from starting the proxy |
+| `SMARTER_COMPACT_PROXY_RUNTIME` | auto | CLI | `docker` or `native`; unset runs the proxy as a `--restart always` Docker container when the Docker daemon answers, else the uv-installed litellm ([runtime](context-proxy.md#runtime)) |
 | `LITELLM_MASTER_KEY` | generated | LiteLLM | Key agents send in `x-litellm-api-key`. The CLI generates it into `proxy.env` (mode 600) and passes it to the proxy it starts |
 | `SMARTER_COMPACT_ROOT` | package location | CLI | Package root holding `proxy/smarter_compact_hook.py`, when the proxy files moved |
 | `CONTEXT_PROXY_ENV_FILE` | `~/.config/smarter-compact/proxy.env` | Docker compose | `env_file` path for the container |

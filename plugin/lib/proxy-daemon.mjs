@@ -1,5 +1,6 @@
 /**
- * Detached LiteLLM context proxy (same process as `smarter-compact proxy`, started in the background).
+ * The background LiteLLM context proxy: a `--restart always` Docker container when Docker runs (docker-proxy.mjs),
+ * else a detached native litellm (same process as `smarter-compact proxy`).
  */
 import { execFile, spawn } from "node:child_process";
 import fs from "node:fs";
@@ -10,6 +11,7 @@ import {
   configDir, ensureProductEnv, PRODUCT, PRODUCT_NAME, resolveProxyPort, ROOT_ENV, stateParent, withProxyEnvSecrets,
 } from "./brand.mjs";
 import { contextRoot } from "./context-store.mjs";
+import { CONTAINER_NAME, ensureContainer, proxyRuntime, recreateContainer } from "./docker-proxy.mjs";
 import { agentsPointedAtProxy, ensureKey } from "./enable.mjs";
 import { onPath } from "./litellm.mjs";
 import { rotateLog } from "./log-rotate.mjs";
@@ -150,9 +152,15 @@ function ownedPid(home, status) {
   return pid > 0 && pid === status.pid && pidAlive(pid) ? pid : null;
 }
 
-function run(cmd, args, timeout) {
+/** stdout, or null on failure; with opts.log, a failure's stderr is appended to that file. */
+function run(cmd, args, timeout, { env, log } = {}) {
   return new Promise((resolve) => {
-    execFile(cmd, args, { timeout, windowsHide: true }, (err, stdout) => resolve(err ? null : String(stdout)));
+    execFile(cmd, args, { timeout, windowsHide: true, ...(env ? { env } : {}) }, (err, stdout, stderr) => {
+      if (err && log) {
+        try { fs.appendFileSync(log, `${cmd} ${args[0]} failed: ${String(stderr || err.message).trim()}\n`); } catch { /* ignore */ }
+      }
+      resolve(err ? null : String(stdout));
+    });
   });
 }
 
@@ -220,11 +228,17 @@ async function refreshStale({ home, env, port, importMetaUrl, fetch, exec, waitM
     if (busy) return { status: "stale", warning: `${where} runs ${running}, installed is ${installed}; it restarts once idle for ${IDLE_MS / 1000} s.` };
     await killTree(pid, exec);
     await waitFor(false, port, fetch, STOP_WAIT_MS);
-    const spawned = spawnContextProxyDaemon(home, importMetaUrl, env);
+    const spawned = await startProxy({ home, env, importMetaUrl, exec, fresh: true });
     if (spawned.ok && await waitFor(true, port, fetch, waitMs)) return { status: "restarted", from: running, to: installed };
     return { status: "stale", warning: `${where} did not restart; see ${proxyLogPath(home)}.` };
   }
   const docker = await dockerProxy(port, exec);
+  if (docker?.name === CONTAINER_NAME) {
+    if (busy) return { status: "stale", warning: `${where} runs ${running}, installed is ${installed}; it restarts once idle for ${IDLE_MS / 1000} s.` };
+    const started = await startProxy({ home, env, importMetaUrl, exec, runtime: "docker", fresh: true });
+    if (started.ok && await waitFor(true, port, fetch, waitMs)) return { status: "restarted", from: running, to: installed };
+    return { status: "stale", warning: `${where} did not restart; see docker logs ${CONTAINER_NAME} and ${proxyLogPath(home)}.` };
+  }
   if (docker) {
     const checkout = docker.dir ? packageVersion(docker.dir) : null;
     if (checkout !== installed) {
@@ -269,6 +283,29 @@ export function spawnContextProxyDaemon(home, importMetaUrl, env = process.env) 
 }
 
 /**
+ * Start the proxy in the runtime proxyRuntime picks (Docker when its daemon answers). Docker: a `--restart always`
+ * container, so it outlives this process and comes back after a reboot; `fresh` recreates it even when it already
+ * runs this version. Native: a detached litellm, gone at the next reboot until a session start or enable brings it
+ * back.
+ */
+export async function startProxy({ home, env, importMetaUrl, exec = run, runtime, fresh = false }) {
+  const rt = runtime || await proxyRuntime(env, exec);
+  if (rt !== "docker") return { ...spawnContextProxyDaemon(home, importMetaUrl, env), runtime: "native" };
+  const root = packageRoot(importMetaUrl);
+  if (!root) return { ok: false, reason: "no-package-root", runtime: rt };
+  const port = String(resolveProxyPort(home, env));
+  fs.mkdirSync(configDir(home), { recursive: true, mode: 0o700 });
+  rotateLog(proxyLogPath(home));
+  // A proxy.pid left by a native proxy must not match the pid the container writes to its status file.
+  try { fs.rmSync(proxyPidPath(home), { force: true }); } catch { /* ignore */ }
+  const opts = {
+    home, env, root, port, version: packageVersion(root), nativeEnv: litellmEnv(home, root, port, env), exec, log: proxyLogPath(home),
+  };
+  const r = fresh ? await recreateContainer(opts) : await ensureContainer(opts);
+  return { ...r, runtime: rt, container: CONTAINER_NAME };
+}
+
+/**
  * Stop the proxy on the configured port and start a fresh one. Stops only a litellm this package started
  * (proxy.pid) or a Docker container publishing the port; any other listener is left alone and reported.
  */
@@ -292,15 +329,24 @@ export async function restartContextProxy({
       }
     } else {
       const docker = await dockerProxy(port, exec);
+      if (docker?.name === CONTAINER_NAME) {
+        // Recreate rather than restart: the new package may live at another path and proxy.env may have changed.
+        const r = await startProxy({ home, env, importMetaUrl, exec, runtime: "docker", fresh: true });
+        if (!r.ok) return { ok: false, status: "spawn-failed", reason: `${r.reason}; see ${proxyLogPath(home)}` };
+        return await waitFor(true, port, fetch, waitMs)
+          ? { ok: true, status: "restarted", via: `docker ${CONTAINER_NAME}` }
+          : { ok: false, status: "timeout", reason: `see docker logs ${CONTAINER_NAME}` };
+      }
       if (!docker) return { ok: false, status: "foreign", reason: `port ${port} is held by a process ${PRODUCT_NAME} did not start; stop it, then rerun` };
       const ok = await exec("docker", ["restart", docker.name], DOCKER_TIMEOUT_MS) !== null && await waitFor(true, port, fetch, waitMs);
       return ok ? { ok: true, status: "restarted", via: `docker ${docker.name}` } : { ok: false, status: "timeout", reason: `docker restart ${docker.name} did not come back` };
     }
   }
-  const spawned = spawnContextProxyDaemon(home, importMetaUrl, env);
+  const spawned = await startProxy({ home, env, importMetaUrl, exec, fresh: true });
   if (!spawned.ok) return { ok: false, status: "spawn-failed", reason: spawned.reason };
-  if (await waitFor(true, port, fetch, waitMs)) return { ok: true, status: "restarted", pid: spawned.pid };
-  return { ok: false, status: "timeout", reason: `see ${proxyLogPath(home)}` };
+  const via = spawned.runtime === "docker" ? `docker ${CONTAINER_NAME}` : undefined;
+  if (await waitFor(true, port, fetch, waitMs)) return { ok: true, status: "restarted", pid: spawned.pid, via };
+  return { ok: false, status: "timeout", reason: via ? `see docker logs ${CONTAINER_NAME}` : `see ${proxyLogPath(home)}` };
 }
 
 /**
@@ -326,15 +372,16 @@ export async function ensureContextProxyRunning({
   }
   if (!agentsPointedAtProxy(home, port).length) return { ok: true, status: "not-needed" };
 
-  const spawned = spawnContextProxyDaemon(home, importMetaUrl, env);
-  if (!spawned.ok) return { ok: false, status: "spawn-failed", reason: spawned.reason };
+  const spawned = await startProxy({ home, env, importMetaUrl, exec });
+  if (!spawned.ok) return { ok: false, status: "spawn-failed", reason: spawned.reason, log: proxyLogPath(home) };
 
   const deadline = Date.now() + waitMs;
   while (Date.now() < deadline) {
     if (await probeContextProxy(port, { fetch })) {
-      return { ok: true, status: "started", pid: spawned.pid };
+      return { ok: true, status: "started", pid: spawned.pid, runtime: spawned.runtime };
     }
     await new Promise((resolve) => { setTimeout(resolve, 300); });
   }
+  if (spawned.runtime === "docker") return { ok: false, status: "timeout", log: `docker logs ${CONTAINER_NAME}` };
   return { ok: false, status: "timeout", log: proxyLogPath(home) };
 }
