@@ -6,6 +6,8 @@ import fs from "node:fs";
 import TOML from "@iarna/toml";
 import { configDir } from "./brand.mjs";
 import { writeFileAtomic } from "./file-io.mjs";
+import { contextRoot } from "./context-store.mjs";
+import { forgetText } from "./forget.mjs";
 
 const CONFIG_HEADER = "# Smarter Compact — see docs/context-proxy.md\n";
 const TRIM_AT_TABLE = "trim_at";
@@ -188,6 +190,8 @@ Usage:
   smarter-compact context set <family>=<tokens>   e.g. haiku=95000, default=125000
   smarter-compact context set trim=<tokens>        same threshold for every model
   smarter-compact context unset <family|trim>
+  smarter-compact context forget [--session <id>] <text|->   redact text from the stored context
+                                                              (- reads it from stdin, keeping it out of shell history)
 
 With no global trim set, the proxy matches model ids against [context_proxy.trim_at] in
 ~/.config/smarter-compact/config.toml (built-in: haiku → 95000, else default 125000).
@@ -198,6 +202,36 @@ export function runContextCommand(argv, { home = process.env.HOME, log = console
   if (!action || action === "--help" || action === "-h" || action === "help") {
     log.log(HELP);
     return 0;
+  }
+  if (action === "forget") {
+    let sessionIds = null;
+    const args = argv.slice(1);
+    const at = args.indexOf("--session");
+    if (at !== -1) {
+      if (!args[at + 1]) {
+        log.error("usage: smarter-compact context forget [--session <id>] <text|->");
+        return 2;
+      }
+      sessionIds = [args[at + 1]];
+      args.splice(at, 2);
+    }
+    let text = args[0];
+    if (text === "-") text = fs.readFileSync(0, "utf8").replace(/\r?\n$/, "");
+    if (!text) {
+      log.error("usage: smarter-compact context forget [--session <id>] <text|->");
+      return 2;
+    }
+    try {
+      const r = forgetText(contextRoot(home), text, { sessionIds });
+      const rows = r.sessions.reduce((n, s) => n + s.rows, 0);
+      const changed = r.sessions.filter((s) => s.rows > 0).length;
+      log.log(`forgot ${rows} row(s) in ${changed} of ${r.sessions.length} session(s), ${r.blobs} blob(s), ${r.scratchpads} scratchpad(s)`);
+      log.log("Copies outside the store are untouched: the agent's live context and its own transcript files.");
+      return 0;
+    } catch (error) {
+      log.error(`smarter-compact: ${error.message}`);
+      return 1;
+    }
   }
   if (action === "list") {
     const { global, families } = listTrimConfig(home);
