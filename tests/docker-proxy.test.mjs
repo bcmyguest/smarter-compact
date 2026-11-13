@@ -69,7 +69,7 @@ test("dockerRunArgs restarts always, binds loopback and keeps secrets off argv",
   const s = args.join(" ");
   assert.match(s, /--restart always/);
   assert.match(s, /-p 127\.0\.0\.1:4101:4000/);
-  assert.match(s, /-v \/pkg\/proxy:\/app\/proxy:ro/);
+  assert.ok(s.includes(`-v ${path.join("/pkg", "proxy")}:/app/proxy:ro`), s); // host path in the platform's form
   assert.match(s, /-v \/st:\/state/);
   assert.match(s, /--user 1000:1000/);
   assert.match(s, /-e LITELLM_MASTER_KEY /);
