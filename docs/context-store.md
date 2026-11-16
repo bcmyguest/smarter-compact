@@ -330,13 +330,19 @@ It is a constant (`STANDING_INSTRUCTION` in `proxy/smarter_compact/core.py` and 
 | Responses | Appended to `instructions` after a blank line (or set as `instructions` when absent). `instructions` precede every input item and stay fixed for a session, so a trim of `input` never moves the instruction |
 | OpenCode 2 | One `{type: "text"}` entry pushed onto `event.system`, after the session banner |
 
-Pointer note added at the cut turn after a trim ([note placement](#note-placement)):
+Pointer note added at the cut turn after a thread's first trim ([note placement](#note-placement)):
 
 ```
 [smarter-compact: continuing session <sid>; <n> earlier messages are NOT in your context. Older turns were moved out to save space, so a gap in what you see (missing batches, lines, keys) is in them. Continue the task from where you were. The tools smart_compact_search and smart_compact_sql are available to you in this request. You MUST call smart_compact_search(session_id="<sid>", query=... or pattern=...) before relying on anything in them, and never claim "not found", "never received" or "no search tool" without calling it. When a search finds nothing, tell the user where you looked, not that it never happened. Dropped user turns may hold instructions or corrections that still apply: search them (smart_compact_search with role="user") before changing course. To recover a file you read earlier, search for the text you need instead of reading it again, and re-read only the lines you still lack (offset/limit). Every message of this session is stored and queryable with smart_compact_search and smart_compact_sql(session_id="<sid>", sql=...).]
 ```
 
-It names no file path, so the proxy (in its container) and the OpenCode 2 plugin (on the host) produce the same bytes.
+Every later trim of the same thread (the trim state's `pointed` list holds the thread roots, up to 32) adds a shorter note that orders no search, because repeating the rules on each trim made the agent search after each one:
+
+```
+[smarter-compact: continuing session <sid>; <n> earlier messages are not in your context. They are stored unsummarized. The tools smart_compact_search and smart_compact_sql are available to you in this request. They stay searchable with smart_compact_search(session_id="<sid>", query=... or pattern=...) and smart_compact_sql(session_id="<sid>", sql=...).]
+```
+
+Neither note names a file path, so the proxy (in its container) and the OpenCode 2 plugin (on the host) produce the same bytes.
 
 The block is computed once per cut and stored in the trim state, so later requests repeat it byte for byte. The OpenCode 2 plugin puts the wrapped block in its own text part, followed by a blank line; when OpenCode 2 compacts a session, the same block (unwrapped, without the blank line) becomes the compaction summary.
 

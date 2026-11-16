@@ -44,7 +44,8 @@ class Base(unittest.TestCase):
         core._pending.clear()
 
     def settings(self, **kw):
-        base = dict(trim_at_tokens=10 ** 9, compress_over_tokens=0, context_dir=self.ctx, standing_instruction=False)
+        base = dict(trim_at_tokens=10 ** 9, compress_over_tokens=0, context_dir=self.ctx, standing_instruction=False,
+                    trim_min_gain_tokens=0)
         base.update(kw)
         return Settings(**base)
 

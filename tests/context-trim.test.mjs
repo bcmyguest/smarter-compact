@@ -13,6 +13,7 @@ import {
   MASK_PREFIX,
   blobId,
   inputPlaceholder,
+  laterPointerText,
   maskedInput,
   maskPlaceholder,
   addStandingInstruction,
@@ -59,6 +60,16 @@ test("the pointer states what was removed, denies a summary, and names both tool
   assert.match(note, /To recover a file you read earlier, search for the text you need instead of reading it again/);
   assert.match(note, /re-read only the lines you still lack \(offset\/limit\)/);
   assert.match(note, /smart_compact_sql\(session_id="sess-1", sql=\.\.\.\)\.\]$/);
+});
+
+// Same string as proxy/tests/test_context_proxy.py::StandingInstructionTests.test_later_pointer_text_contract.
+test("the later pointer states what is gone without ordering a search", () => {
+  assert.equal(laterPointerText("s1", 3),
+    "[smarter-compact: continuing session s1; 3 earlier messages are not in your context. "
+    + "They are stored unsummarized. "
+    + "The tools smart_compact_search and smart_compact_sql are available to you in this request. "
+    + 'They stay searchable with smart_compact_search(session_id="s1", query=... or pattern=...) '
+    + 'and smart_compact_sql(session_id="s1", sql=...).]');
 });
 
 // Same form as wrap_note in proxy adapters.py (proxy/tests/test_note_placement.py checks the bytes against this).
@@ -198,7 +209,7 @@ test("CONTEXT_TRIM_MIN_GAIN_TOKENS skips a trim that frees too little", async ()
   const messages = [];
   for (let i = 0; i < 3; i++) messages.push(text("user", `question ${i} ${"q".repeat(200)}`), text("assistant", `answer ${i}`));
   messages.push(text("user", "now this"));
-  assert.equal(trimSettings({}, os.tmpdir()).trimMinGainTokens, 0);
+  assert.equal(trimSettings({}, os.tmpdir()).trimMinGainTokens, 15000);
   const run = async (gain) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "sc-gain-"));
     const settings = trimSettings({ CONTEXT_TRIM_AT_TOKENS: "1", CONTEXT_TRIM_MIN_GAIN_TOKENS: String(gain), CONTEXT_SCRATCHPAD: "0", SMARTER_COMPACT_STATE_DIR: home }, home);
@@ -206,6 +217,31 @@ test("CONTEXT_TRIM_MIN_GAIN_TOKENS skips a trim that frees too little", async ()
   };
   assert.equal(await run(1e9), messages);
   assert.ok((await run(1)).length < messages.length);
+});
+
+// A pointer that re-orders a search on every trim makes the agent search after each one.
+// Same contract as proxy/tests/test_context_proxy.py::FirstUserPinTests.test_pointer_orders_a_search_once_per_thread.
+test("the pointer orders a search once per thread", async () => {
+  const text = (role, t) => ({ role, content: [{ type: "text", text: t }] });
+  const turns = (from, n) => Array.from({ length: n }, (_, k) => [text("user", `question ${from + k} ${"q".repeat(200)}`),
+    text("assistant", `answer ${from + k}`)]).flat();
+  const note = (out) => out.flatMap((m) => m.content).map((p) => p.text ?? "").find((t) => t.includes("[smarter-compact: continuing session"));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "sc-once-"));
+  const env = { CONTEXT_TRIM_AT_TOKENS: "1", CONTEXT_TRIM_MIN_GAIN_TOKENS: "0", CONTEXT_SCRATCHPAD: "0", SMARTER_COMPACT_STATE_DIR: home };
+  try {
+    const settings = trimSettings(env, home);
+    const messages = [...turns(0, 3), text("user", "now this")];
+    assert.match(note(await trimContext({ sessionID: SID, messages }, settings)), /You MUST call smart_compact_search/);
+    messages.push(text("assistant", "done"), ...turns(3, 2), text("user", "follow-up"));
+    const later = note(await trimContext({ sessionID: SID, messages }, settings));
+    assert.match(later, /\[smarter-compact: continuing session sess-1;/);
+    assert.ok(!later.includes("MUST"), later);
+    assert.ok(!later.includes("before changing course"), later);
+    assert.match(later, /smart_compact_search\(session_id="sess-1"/);
+    assert.match(later, /smart_compact_sql\(session_id="sess-1"/);
+    // Another session still gets the full pointer on its first trim.
+    assert.match(note(await trimContext({ sessionID: "s2", messages }, settings)), /You MUST call smart_compact_search/);
+  } finally { rmHome(home); }
 });
 
 // CONTEXT_CLEAR_KEEP_RESULTS: same contract as proxy/tests/test_trim_experiments.py::ClearResultsTests.
@@ -231,7 +267,7 @@ const resultsOf = (view) => Object.fromEntries(view.flatMap((m) => m.content.fil
 async function clearRun(home, messages, trimAt, keep = "2") {
   const settings = trimSettings({ CONTEXT_TRIM_AT_TOKENS: String(trimAt), CONTEXT_CLEAR_KEEP_RESULTS: keep,
     CONTEXT_TRIM_TO_TOKENS: String(Math.ceil(0.3 * trimAt)), CONTEXT_CHARS_PER_TOKEN: "1", CONTEXT_COMPRESS_OVER_TOKENS: "0",
-    CONTEXT_STANDING_INSTRUCTION: "0", CONTEXT_PROGRESS_NOTE: "0", CONTEXT_MASK_OBSERVATIONS: "0", SMARTER_COMPACT_STATE_DIR: home }, home);
+    CONTEXT_STANDING_INSTRUCTION: "0", CONTEXT_PROGRESS_NOTE: "0", CONTEXT_MASK_OBSERVATIONS: "0", CONTEXT_TRIM_MIN_GAIN_TOKENS: "0", SMARTER_COMPACT_STATE_DIR: home }, home);
   return trimContext({ sessionID: SID, messages: structuredClone(messages) }, settings);
 }
 
@@ -357,7 +393,7 @@ function inFlightTurn(pad = "", steps = STEPS) {
 async function expRun(home, messages, env = {}, sid = SID) {
   const settings = trimSettings({ CONTEXT_TRIM_AT_TOKENS: "1", CONTEXT_TRIM_TO_TOKENS: "1", CONTEXT_CHARS_PER_TOKEN: "1",
     CONTEXT_COMPRESS_OVER_TOKENS: "0", CONTEXT_STANDING_INSTRUCTION: "0",
-    SMARTER_COMPACT_STATE_DIR: home, ...env }, home);
+    CONTEXT_TRIM_MIN_GAIN_TOKENS: "0", SMARTER_COMPACT_STATE_DIR: home, ...env }, home);
   return trimContext({ sessionID: sid, messages: structuredClone(messages) }, settings);
 }
 
@@ -652,7 +688,7 @@ async function reasonRun(home, messages, trimAt, env = {}, sid = SID) {
   const settings = trimSettings({ CONTEXT_TRIM_AT_TOKENS: String(trimAt), CONTEXT_TRIM_TO_TOKENS: String(Math.ceil(0.5 * trimAt)),
     CONTEXT_CLEAR_KEEP_RESULTS: "0", CONTEXT_CHARS_PER_TOKEN: "1", CONTEXT_COMPRESS_OVER_TOKENS: "0",
     CONTEXT_STANDING_INSTRUCTION: "0", CONTEXT_PROGRESS_NOTE: "0", CONTEXT_MASK_OBSERVATIONS: "0", CONTEXT_SCRATCHPAD: "0",
-    SMARTER_COMPACT_STATE_DIR: home, ...env }, home);
+    CONTEXT_TRIM_MIN_GAIN_TOKENS: "0", SMARTER_COMPACT_STATE_DIR: home, ...env }, home);
   return trimContext({ sessionID: sid, messages: structuredClone(messages) }, settings);
 }
 
@@ -763,7 +799,7 @@ function dupTurns(outs) {
 async function dupRun(home, messages, env = {}) {
   const settings = trimSettings({ CONTEXT_COMPRESS_OVER_TOKENS: "0", CONTEXT_STANDING_INSTRUCTION: "0", CONTEXT_PROGRESS_NOTE: "0",
     CONTEXT_MASK_OBSERVATIONS: "0", CONTEXT_SCRATCHPAD: "0", CONTEXT_CLEAR_KEEP_RESULTS: "0", CONTEXT_STRIP_OLD_REASONING: "0",
-    CONTEXT_CHARS_PER_TOKEN: "1", SMARTER_COMPACT_STATE_DIR: home, ...env }, home);
+    CONTEXT_CHARS_PER_TOKEN: "1", CONTEXT_TRIM_MIN_GAIN_TOKENS: "0", SMARTER_COMPACT_STATE_DIR: home, ...env }, home);
   return trimContext({ sessionID: SID, messages: structuredClone(messages) }, settings);
 }
 

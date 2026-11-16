@@ -19,7 +19,7 @@ from smarter_compact import Settings, process_request  # noqa: E402
 from smarter_compact.adapters import _litellm_thinking, wrap_note  # noqa: E402
 from smarter_compact.compress import blob_id, compress_text  # noqa: E402
 from smarter_compact.core import (  # noqa: E402
-    STANDING_INSTRUCTION, pointer_text, reasoning_text, recall_tool_names, request_tool_names,
+    STANDING_INSTRUCTION, later_pointer_text, pointer_text, reasoning_text, recall_tool_names, request_tool_names,
 )
 
 SID = "sess-1"
@@ -89,13 +89,18 @@ class Base(unittest.TestCase):
         # Prose strip, masking and progress note have theirs (test_trim_experiments); off, at 0.3 of trim_at, the gap
         # counts stay small. The scratchpad has its own tests (test_scratchpad); off here keeps the nudge out.
         base = dict(trim_at_tokens=BIG, compress_over_tokens=0, context_dir=self.ctx, standing_instruction=False,
-                    strip_prose=False, progress_note=False, mask_observations=False, scratchpad=False)
+                    strip_prose=False, progress_note=False, mask_observations=False, scratchpad=False,
+                    trim_min_gain_tokens=0)
         base.update(kw)
         base.setdefault("trim_to_tokens", math.ceil(0.3 * base["trim_at_tokens"]))
         return Settings(**base)
 
     def ptr(self, dropped, sid=SID):
         return wrap_note(pointer_text(sid, dropped))
+
+    def later_ptr(self, dropped, sid=SID):
+        """The pointer of a thread's second and later trims."""
+        return wrap_note(later_pointer_text(sid, dropped))
 
     def run_req(self, data, call_type="anthropic_messages", **kw):
         return process_request(data, call_type, self.settings(**kw))
@@ -269,7 +274,7 @@ class AnthropicTrimTests(Base):
         self.assertEqual(len(out), 4)
         self.assertEqual(out[0], msgs[0])
         self.assertEqual(out[1], msgs[11])
-        self.assertEqual(out[2]["content"], [{"type": "text", "text": self.ptr(10)},
+        self.assertEqual(out[2]["content"], [{"type": "text", "text": self.later_ptr(10)},
                                              {"type": "text", "text": "brand new question"}])
 
     def test_force_flag_trims_and_is_deleted(self):
@@ -522,10 +527,27 @@ class FirstUserPinTests(Base):
         moved = self.run_req(anth_request(copy.deepcopy(msgs)), trim_at_tokens=1)["messages"]
         self.assertEqual(moved[0], msgs[0])
         self.assertEqual(moved[1], msgs[11])
-        self.assertEqual(moved[2]["content"][0]["text"], self.ptr(10))
+        self.assertEqual(moved[2]["content"][0]["text"], self.later_ptr(10))
         self.assertEqual(moved[2]["content"][1], {"type": "text", "text": "follow-up"})
         self.assertFalse(any(r["text"].startswith("question 0") for r in self.log_rows()))
         self.assertEqual([r["seq"] for r in self.log_rows()], sorted({r["seq"] for r in self.log_rows()}))
+
+    def test_pointer_orders_a_search_once_per_thread(self):
+        # A pointer that re-orders a search on every trim makes the agent search after each one.
+        msgs = anth_history(3)
+        first = self.run_req(anth_request(copy.deepcopy(msgs)), trim_at_tokens=1)["messages"]
+        self.assertIn("You MUST call smart_compact_search", first[2]["content"][0]["text"])
+        msgs += anth_history(1) + [{"role": "user", "content": "follow-up"}]
+        moved = self.run_req(anth_request(copy.deepcopy(msgs)), trim_at_tokens=1)["messages"]
+        note = moved[2]["content"][0]["text"]
+        self.assertTrue(note.startswith("<system-reminder>\n[smarter-compact: continuing session sess-1;"))
+        self.assertNotIn("MUST", note)
+        self.assertNotIn("before changing course", note)
+        self.assertIn('smart_compact_search(session_id="sess-1"', note)
+        self.assertIn('smart_compact_sql(session_id="sess-1"', note)
+        # Another session still gets the full pointer on its first trim.
+        other = self.run_req(anth_request(copy.deepcopy(msgs), sid="s2"), trim_at_tokens=1)["messages"]
+        self.assertIn("You MUST call smart_compact_search", other[2]["content"][0]["text"])
 
     def test_anthropic_first_user_with_reminder_blocks_is_pinned(self):
         msgs = anth_history(2)
@@ -651,7 +673,7 @@ class InTurnGapTests(Base):
         self.assertEqual(quiet[len(first):], msgs[-2:])
         # Over the threshold again with no newer user turn: the gap moves forward, the cut stays.
         grown = self.run_req(anth_request(copy.deepcopy(msgs)), trim_at_tokens=1)["messages"]
-        self.assertEqual(grown[2]["content"][0]["text"], self.ptr(12))
+        self.assertEqual(grown[2]["content"][0]["text"], self.later_ptr(12))
         self.assertEqual(json.dumps(grown[3:]), json.dumps(strip_thinking(msgs)[15:]))
         self.assertEqual([r["seq"] for r in self.log_rows()], sorted({r["seq"] for r in self.log_rows()}))
 
@@ -897,7 +919,8 @@ class SafetyTests(Base):
             self.assertEqual((s.trim_to_for("claude-haiku-5"), s.trim_to_for("claude-sonnet-5")), (50000, 66000), bad)
 
     def test_trim_min_gain_from_env(self):
-        self.assertEqual(Settings.from_env({}).trim_min_gain_tokens, 0)
+        self.assertEqual(Settings.from_env({}).trim_min_gain_tokens, 15000)
+        self.assertEqual(Settings().trim_min_gain_tokens, 15000)
         self.assertEqual(Settings.from_env({"CONTEXT_TRIM_MIN_GAIN_TOKENS": "5000"}).trim_min_gain_tokens, 5000)
 
     def test_trim_at_by_model(self):
@@ -982,6 +1005,15 @@ class StandingInstructionTests(Base):
                          'Every message of this session is '
                          'stored and '
                          'queryable with smart_compact_search and smart_compact_sql(session_id="s1", sql=...).]')
+
+    def test_later_pointer_text_contract(self):
+        # Same string as tests/context-trim.test.mjs "the later pointer states what is gone without ordering a search".
+        self.assertEqual(later_pointer_text("s1", 3),
+                         "[smarter-compact: continuing session s1; 3 earlier messages are not in your context. "
+                         "They are stored unsummarized. "
+                         "The tools smart_compact_search and smart_compact_sql are available to you in this request. "
+                         'They stay searchable with smart_compact_search(session_id="s1", query=... or pattern=...) '
+                         'and smart_compact_sql(session_id="s1", sql=...).]')
 
     def test_prefixed_tool_names_reach_the_model(self):
         # OpenCode namespaces MCP tools as `<server>.<tool>`, so the request carries
