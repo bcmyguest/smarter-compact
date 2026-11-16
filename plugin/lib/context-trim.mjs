@@ -190,6 +190,8 @@ const LOG_MAX = 512;
 // the least a cold trim must free; settings.DEFAULT_COLD_TRIM_SECONDS / DEFAULT_COLD_TRIM_MIN_GAIN_TOKENS.
 export const DEFAULT_COLD_TRIM_SECONDS = 3600;
 export const DEFAULT_COLD_TRIM_MIN_GAIN_TOKENS = 5000;
+// A trim freeing less than this waits for a bigger one; settings.DEFAULT_TRIM_MIN_GAIN_TOKENS.
+export const DEFAULT_TRIM_MIN_GAIN_TOKENS = 15000;
 // An idle gap longer than Anthropic's default 5-minute cache lifetime (adapters.SHORT_TTL_SECONDS).
 const SHORT_TTL_SECONDS = 300;
 // Per thread root, the last request's arrival (epoch seconds) and idle gaps over 5 minutes; core.LAST_REQUEST_KEY.
@@ -260,7 +262,7 @@ export function trimSettings(env = process.env, home = env.HOME) {
     trimFamilies: overrides.families,
     trimToTokens: positiveInt("CONTEXT_TRIM_TO_TOKENS", DEFAULT_TRIM_TO_TOKENS),
     trimToByModel: positiveInt("CONTEXT_TRIM_TO_TOKENS", null) === null,
-    trimMinGainTokens: int("CONTEXT_TRIM_MIN_GAIN_TOKENS", 0),
+    trimMinGainTokens: int("CONTEXT_TRIM_MIN_GAIN_TOKENS", DEFAULT_TRIM_MIN_GAIN_TOKENS),
     // After an idle gap over coldTrimSeconds the prompt cache is cold: trim to the target below the threshold too.
     coldTrim: flag("CONTEXT_COLD_TRIM", "0"),
     coldTrimSeconds: positiveInt("CONTEXT_COLD_TRIM_SECONDS", DEFAULT_COLD_TRIM_SECONDS),
@@ -993,6 +995,17 @@ export function pointerText(sid, dropped, names = LEGACY_RECALL_NAMES) {
     + "and re-read only the lines you still lack (offset/limit). "
     + "Every message of this session is stored and queryable with "
     + `${names.search} and ${names.sql}(session_id="${sid}", sql=...).]`;
+}
+
+/**
+ * The pointer of every trim after a thread's first: the first already gave the search rules, and repeating
+ * them on each trim made the agent search after each one. Same text as core.later_pointer_text.
+ */
+export function laterPointerText(sid, dropped, names = LEGACY_RECALL_NAMES) {
+  return `[smarter-compact: continuing session ${sid}; ${dropped} earlier messages are not in your context. `
+    + "They are stored unsummarized. " + availability(names)
+    + `They stay searchable with ${names.search}(session_id="${sid}", query=... or pattern=...) and `
+    + `${names.sql}(session_id="${sid}", sql=...).]`;
 }
 
 export function addStandingInstruction(system, settings, names) {
@@ -1918,7 +1931,10 @@ async function trimSession(request, settings, deps, { original, sid, store, item
           // Stripping earlier reasoning alone drops and masks nothing.
           note = reasoningText(sid);
         } else if (dropped || !masked) {
-          note = pointerText(sid, dropped, toolNames);
+          // The full pointer once per thread; later trims only say what is gone and where.
+          const pointed = Array.isArray(state.pointed) ? state.pointed : [];
+          note = (pointed.includes(root) ? laterPointerText : pointerText)(sid, dropped, toolNames);
+          state.pointed = [...pointed.filter((r) => r !== root), root].slice(-MAX_THREADS);
           if (settings.progressNote) note = withProgress(items, next, nextGap, first, settings, note);
           if (masked) note = `${note}\n${maskText(sid, toolNames)}`;
         } else {

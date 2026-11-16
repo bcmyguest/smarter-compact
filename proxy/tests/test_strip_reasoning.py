@@ -66,7 +66,7 @@ class StripOldReasoningTests(unittest.TestCase):
     def settings(self, **kw):
         base = dict(compress_over_tokens=0, context_dir=self.ctx, standing_instruction=False, strip_prose=False,
                     progress_note=False, mask_observations=False, scratchpad=False, chars_per_token=1.0,
-                    clear_keep_results=0, trim_at_tokens=10_000_000)
+                    clear_keep_results=0, trim_at_tokens=10_000_000, trim_min_gain_tokens=0)
         base.update(kw)
         base.setdefault("trim_to_tokens", math.ceil(0.5 * base["trim_at_tokens"]))
         return Settings(**base)

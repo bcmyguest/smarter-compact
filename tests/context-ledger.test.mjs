@@ -55,7 +55,7 @@ const stateOf = (home) => JSON.parse(fs.readFileSync(path.join(home, "context", 
 async function run(home, messages, env = {}) {
   const settings = trimSettings({ CONTEXT_COMPRESS_OVER_TOKENS: "0", CONTEXT_STANDING_INSTRUCTION: "0", CONTEXT_PROGRESS_NOTE: "0",
     CONTEXT_MASK_OBSERVATIONS: "0", CONTEXT_SCRATCHPAD: "0", CONTEXT_CLEAR_KEEP_RESULTS: "0", CONTEXT_STRIP_OLD_REASONING: "0",
-    CONTEXT_CHARS_PER_TOKEN: "1", CONTEXT_TRIM_AT_TOKENS: "10000000", SMARTER_COMPACT_STATE_DIR: home, ...env }, home);
+    CONTEXT_CHARS_PER_TOKEN: "1", CONTEXT_TRIM_AT_TOKENS: "10000000", CONTEXT_TRIM_MIN_GAIN_TOKENS: "0", SMARTER_COMPACT_STATE_DIR: home, ...env }, home);
   return trimContext({ sessionID: SID, messages: structuredClone(messages) }, settings);
 }
 

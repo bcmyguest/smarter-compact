@@ -53,7 +53,8 @@ class DbBase(unittest.TestCase):
         self.addCleanup(lambda: [sessiondb.drop_session(p) for p in list(sessiondb._open)])
 
     def run_req(self, msgs, sid=SID, **kw):
-        base = dict(trim_at_tokens=BIG, compress_over_tokens=0, context_dir=self.ctx, standing_instruction=False)
+        base = dict(trim_at_tokens=BIG, compress_over_tokens=0, context_dir=self.ctx, standing_instruction=False,
+                    trim_min_gain_tokens=0)
         base.update(kw)
         return process_request(req(msgs, sid), "anthropic_messages", Settings(**base))
 

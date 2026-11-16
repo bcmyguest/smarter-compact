@@ -303,6 +303,18 @@ def pointer_text(sid, dropped, names=None):
     )
 
 
+def later_pointer_text(sid, dropped, names=None):
+    """The pointer of every trim after a thread's first: the first already gave the search rules, and repeating
+    them on each trim made the agent search after each one."""
+    names = names or _LEGACY_NAMES
+    return (
+        f"[smarter-compact: continuing session {sid}; {dropped} earlier messages are not in your context. "
+        f"They are stored unsummarized. " + _availability(names) +
+        f'They stay searchable with {names["search"]}(session_id="{sid}", query=... or pattern=...) and '
+        f'{names["sql"]}(session_id="{sid}", sql=...).]'
+    )
+
+
 def reasoning_text(sid):
     """The note of a trim that only stripped earlier reasoning (CONTEXT_STRIP_OLD_REASONING): no message is gone."""
     return (f"[smarter-compact: session {sid}] Your thinking from earlier steps was moved out to save space; every "
@@ -1440,7 +1452,11 @@ def _rewrite_session(data, adapter, original, items, sid, store, settings, call_
                     # Stripping earlier reasoning alone drops and masks nothing.
                     note = reasoning_text(sid)
                 elif dropped or not masked:
-                    note = pointer_text(sid, dropped, names)
+                    # The full pointer once per thread; later trims only say what is gone and where.
+                    pointed = [r for r in state.get("pointed", []) if r != root]
+                    text = later_pointer_text if root in state.get("pointed", []) else pointer_text
+                    note = text(sid, dropped, names)
+                    state["pointed"] = (pointed + [root])[-MAX_THREADS:]
                     if settings.progress_note:
                         note = _with_progress(adapter, items, new_cut, new_gap, first, settings, note)
                     if masked:

@@ -44,6 +44,8 @@ DEFAULT_STRIP_REASONING_MIN_TOKENS = 8000
 # (OpenAI in_memory retention lasts up to one hour), and the least a cold trim must free.
 DEFAULT_COLD_TRIM_SECONDS = 3600
 DEFAULT_COLD_TRIM_MIN_GAIN_TOKENS = 5000
+# A trim freeing less than this waits for a bigger one: each trim rewrites the prompt cache and the pointer note.
+DEFAULT_TRIM_MIN_GAIN_TOKENS = 15000
 
 
 def _int(env, name, default):
@@ -155,7 +157,7 @@ class Settings:
     # Strip signed reasoning before the latest assistant message, never emptying one, and charge signatures (CONTEXT_STRIP_OLD_REASONING).
     strip_old_reasoning: bool = True
     # A trim that would free fewer estimated tokens than this is skipped; 0 is off (CONTEXT_TRIM_MIN_GAIN_TOKENS).
-    trim_min_gain_tokens: int = 0
+    trim_min_gain_tokens: int = DEFAULT_TRIM_MIN_GAIN_TOKENS
     # After an idle gap longer than the prompt cache lives, trim to the target below the threshold (CONTEXT_COLD_TRIM=1);
     # the lifetime comes from the request's cache_control, else cold_trim_seconds (CONTEXT_COLD_TRIM_SECONDS).
     cold_trim: bool = False
@@ -236,7 +238,7 @@ class Settings:
             clear_inputs_over_chars=max(_int(env, "CONTEXT_CLEAR_INPUTS_OVER_CHARS",
                                              DEFAULT_CLEAR_INPUTS_OVER_CHARS), 0),
             strip_old_reasoning=_flag(env, "CONTEXT_STRIP_OLD_REASONING", "1"),
-            trim_min_gain_tokens=_int(env, "CONTEXT_TRIM_MIN_GAIN_TOKENS", 0),
+            trim_min_gain_tokens=_int(env, "CONTEXT_TRIM_MIN_GAIN_TOKENS", DEFAULT_TRIM_MIN_GAIN_TOKENS),
             cold_trim=_flag(env, "CONTEXT_COLD_TRIM", "0"),
             cold_trim_seconds=_positive_int(env, "CONTEXT_COLD_TRIM_SECONDS", DEFAULT_COLD_TRIM_SECONDS),
             cold_trim_min_gain_tokens=max(_int(env, "CONTEXT_COLD_TRIM_MIN_GAIN_TOKENS",
